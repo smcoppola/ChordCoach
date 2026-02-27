@@ -1,0 +1,9 @@
+pyproject.toml
+src/app.py
+src/chordcoach_companion.egg-info/PKG-INFO
+src/chordcoach_companion.egg-info/SOURCES.txt
+src/chordcoach_companion.egg-info/dependency_links.txt
+src/chordcoach_companion.egg-info/requires.txt
+src/chordcoach_companion.egg-info/top_level.txt
+src/logic/services/gemini_service.py
+src/logic/services/midi_ingestor.py

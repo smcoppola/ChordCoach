@@ -1,0 +1,18 @@
+{
+    "site_package_search_strategy": "all",
+    "source_directories": [
+        "src"
+    ],
+    "search_path": [
+        ".",
+        "src",
+        "venv/Lib/site-packages",
+        "build/src/hardware/Release"
+    ],
+    "exclude": [
+        "venv/.*",
+        "build/.*"
+    ],
+    "python_version": "3.14",
+    "strict": false
+}

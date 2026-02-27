@@ -1,0 +1,6 @@
+PySide6
+google-genai
+asyncio
+pybind11
+mido
+pretty-midi

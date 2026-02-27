@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: chordcoach-companion
+Version: 0.1.0
+Summary: AI-driven piano learning app
+Author-email: Author Name <author@example.com>
+Requires-Dist: PySide6
+Requires-Dist: google-genai
+Requires-Dist: asyncio
+Requires-Dist: pybind11
+Requires-Dist: mido
+Requires-Dist: pretty-midi

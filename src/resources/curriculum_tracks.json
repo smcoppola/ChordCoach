@@ -1,0 +1,439 @@
+{
+    "technique": [
+        {
+            "id": "rh_pentascale_c",
+            "title": "Right Hand C Pentascale",
+            "order": 1,
+            "exercise_types": [
+                "pentascale"
+            ],
+            "unlock_criteria": null,
+            "description": "Play C-D-E-F-G ascending and descending with the right hand.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [],
+            "min_attempts_to_advance": 5,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "rh_major_triads",
+            "title": "Major Triads (C, F, G)",
+            "order": 2,
+            "exercise_types": [
+                "chord"
+            ],
+            "unlock_criteria": "rh_pentascale_c",
+            "description": "Build and play C Major, F Major, and G Major chords using the 4+3 formula.",
+            "target_keys": [
+                "C",
+                "F",
+                "G"
+            ],
+            "target_chords": [
+                "C Major",
+                "F Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 10,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "rh_minor_triads",
+            "title": "Minor Triads (Am, Dm, Em)",
+            "order": 3,
+            "exercise_types": [
+                "chord"
+            ],
+            "unlock_criteria": "rh_major_triads",
+            "description": "Build and play A Minor, D Minor, and E Minor chords using the 3+4 formula.",
+            "target_keys": [
+                "A",
+                "D",
+                "E"
+            ],
+            "target_chords": [
+                "A Minor",
+                "D Minor",
+                "E Minor"
+            ],
+            "min_attempts_to_advance": 10,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "rh_transitions",
+            "title": "Chord Transitions",
+            "order": 4,
+            "exercise_types": [
+                "chord"
+            ],
+            "unlock_criteria": "rh_minor_triads",
+            "description": "Practice smooth transitions between related chords using common-tone pivots.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [
+                "C Major",
+                "A Minor",
+                "F Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 15,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "inversions_intro",
+            "title": "Chord Inversions",
+            "order": 5,
+            "exercise_types": [
+                "chord"
+            ],
+            "unlock_criteria": "rh_transitions",
+            "description": "Learn root position, 1st inversion, and 2nd inversion for major and minor triads.",
+            "target_keys": [
+                "C",
+                "F",
+                "G"
+            ],
+            "target_chords": [
+                "C Major",
+                "F Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 12,
+            "min_accuracy_to_advance": 0.75
+        },
+        {
+            "id": "lh_bass_notes",
+            "title": "Left Hand Bass Notes",
+            "order": 6,
+            "exercise_types": [
+                "chord"
+            ],
+            "unlock_criteria": "inversions_intro",
+            "description": "Play single bass notes with the left hand in octaves 2-3.",
+            "target_keys": [
+                "C",
+                "F",
+                "G"
+            ],
+            "target_chords": [],
+            "min_attempts_to_advance": 8,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "hands_together",
+            "title": "Hands Together Basics",
+            "order": 7,
+            "exercise_types": [
+                "hands_together"
+            ],
+            "unlock_criteria": "lh_bass_notes",
+            "description": "Right hand plays chord while left hand plays the bass root note.",
+            "target_keys": [
+                "C",
+                "F",
+                "G"
+            ],
+            "target_chords": [
+                "C Major",
+                "F Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 12,
+            "min_accuracy_to_advance": 0.75
+        },
+        {
+            "id": "sustain_direct",
+            "title": "Direct Pedaling",
+            "order": 8,
+            "exercise_types": [
+                "sustain_pedal"
+            ],
+            "unlock_criteria": "hands_together",
+            "description": "Press the sustain pedal simultaneously with a chord and release before the next.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [
+                "C Major",
+                "F Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 8,
+            "min_accuracy_to_advance": 0.75
+        },
+        {
+            "id": "sustain_legato",
+            "title": "Legato Pedaling",
+            "order": 9,
+            "exercise_types": [
+                "sustain_pedal"
+            ],
+            "unlock_criteria": "sustain_direct",
+            "description": "Syncopated pedaling: play new chord, then lift and re-press the pedal for smooth transitions.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [
+                "C Major",
+                "F Major",
+                "G Major",
+                "A Minor"
+            ],
+            "min_attempts_to_advance": 10,
+            "min_accuracy_to_advance": 0.70
+        },
+        {
+            "id": "extended_chords",
+            "title": "Extended Chords (7ths)",
+            "order": 10,
+            "exercise_types": [
+                "chord"
+            ],
+            "unlock_criteria": "sustain_legato",
+            "description": "Learn dominant 7th, major 7th, and minor 7th chord formulas.",
+            "target_keys": [
+                "C",
+                "G",
+                "F"
+            ],
+            "target_chords": [
+                "C Major 7th",
+                "G Dominant 7th",
+                "D Minor 7th"
+            ],
+            "min_attempts_to_advance": 12,
+            "min_accuracy_to_advance": 0.75
+        }
+    ],
+    "theory": [
+        {
+            "id": "half_steps",
+            "title": "Understanding Half Steps",
+            "order": 1,
+            "exercise_types": [
+                "theory_concept"
+            ],
+            "unlock_criteria": null,
+            "description": "A half step is the distance between any two adjacent keys on the piano.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 1,
+            "min_accuracy_to_advance": 0.0
+        },
+        {
+            "id": "major_formula",
+            "title": "Major Chord Formula (4+3)",
+            "order": 2,
+            "exercise_types": [
+                "theory_concept"
+            ],
+            "unlock_criteria": "half_steps",
+            "description": "Major chords are built by stacking 4 half steps then 3 half steps from any root.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 1,
+            "min_accuracy_to_advance": 0.0
+        },
+        {
+            "id": "minor_formula",
+            "title": "Minor Chord Formula (3+4)",
+            "order": 3,
+            "exercise_types": [
+                "theory_concept"
+            ],
+            "unlock_criteria": "major_formula",
+            "description": "Minor chords are built by stacking 3 half steps then 4 half steps from any root.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 1,
+            "min_accuracy_to_advance": 0.0
+        },
+        {
+            "id": "roman_numerals",
+            "title": "Roman Numeral Basics (I, IV, V)",
+            "order": 4,
+            "exercise_types": [
+                "theory_concept",
+                "progression"
+            ],
+            "unlock_criteria": "minor_formula",
+            "description": "Roman numerals label chords by their scale degree. I is home, V creates tension, IV is the departure.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [],
+            "min_attempts_to_advance": 5,
+            "min_accuracy_to_advance": 0.70
+        },
+        {
+            "id": "circle_of_fifths",
+            "title": "Circle of Fifths Introduction",
+            "order": 5,
+            "exercise_types": [
+                "key_explorer"
+            ],
+            "unlock_criteria": "roman_numerals",
+            "description": "Navigate the circle of fifths: each step clockwise adds a sharp.",
+            "target_keys": [
+                "C",
+                "G",
+                "D",
+                "F"
+            ],
+            "target_chords": [],
+            "min_attempts_to_advance": 5,
+            "min_accuracy_to_advance": 0.70
+        },
+        {
+            "id": "nashville_numbers",
+            "title": "Nashville Number System",
+            "order": 6,
+            "exercise_types": [
+                "theory_concept",
+                "progression"
+            ],
+            "unlock_criteria": "circle_of_fifths",
+            "description": "The Nashville system uses plain numbers (1-4-5) instead of Roman numerals.",
+            "target_keys": [
+                "C",
+                "G"
+            ],
+            "target_chords": [],
+            "min_attempts_to_advance": 3,
+            "min_accuracy_to_advance": 0.70
+        },
+        {
+            "id": "minor_progressions",
+            "title": "Minor Key Progressions",
+            "order": 7,
+            "exercise_types": [
+                "progression"
+            ],
+            "unlock_criteria": "nashville_numbers",
+            "description": "Am-F-C-G is just as common as C-G-Am-F. Learn progressions rooted in minor keys.",
+            "target_keys": [
+                "A"
+            ],
+            "target_chords": [
+                "A Minor",
+                "F Major",
+                "C Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 8,
+            "min_accuracy_to_advance": 0.75
+        }
+    ],
+    "repertoire": [
+        {
+            "id": "first_song",
+            "title": "Your First Song (I-V-vi-IV)",
+            "order": 1,
+            "exercise_types": [
+                "progression",
+                "song_application"
+            ],
+            "unlock_criteria": null,
+            "description": "Play the most popular chord progression in music: C-G-Am-F.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [
+                "C Major",
+                "G Major",
+                "A Minor",
+                "F Major"
+            ],
+            "min_attempts_to_advance": 8,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "song_breakdown_intro",
+            "title": "Song Breakdown Basics",
+            "order": 2,
+            "exercise_types": [
+                "song_application"
+            ],
+            "unlock_criteria": "first_song",
+            "description": "Analyze a song's chord progression, drill the hard transitions, then play along.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 3,
+            "min_accuracy_to_advance": 0.70
+        },
+        {
+            "id": "dream_song_prep",
+            "title": "Dream Song Preparation",
+            "order": 3,
+            "exercise_types": [
+                "song_application"
+            ],
+            "unlock_criteria": "song_breakdown_intro",
+            "description": "Work toward playing your chosen Dream Song with key-matched exercises.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 10,
+            "min_accuracy_to_advance": 0.70
+        }
+    ],
+    "ear": [
+        {
+            "id": "hear_it_first",
+            "title": "Hear It First",
+            "order": 1,
+            "exercise_types": [
+                "listen"
+            ],
+            "unlock_criteria": null,
+            "description": "Listen to the target chord before you play it. Build the ear-hand connection.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 5,
+            "min_accuracy_to_advance": 0.0
+        },
+        {
+            "id": "major_minor_recognition",
+            "title": "Major vs Minor Recognition",
+            "order": 2,
+            "exercise_types": [
+                "listen"
+            ],
+            "unlock_criteria": "hear_it_first",
+            "description": "Hear a chord and identify whether it is major or minor.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 10,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "chord_quality_id",
+            "title": "Chord Quality Identification",
+            "order": 3,
+            "exercise_types": [
+                "listen"
+            ],
+            "unlock_criteria": "major_minor_recognition",
+            "description": "Identify chord qualities: major, minor, diminished, dominant 7th.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 15,
+            "min_accuracy_to_advance": 0.75
+        },
+        {
+            "id": "root_id_by_ear",
+            "title": "Root Identification by Ear",
+            "order": 4,
+            "exercise_types": [
+                "listen"
+            ],
+            "unlock_criteria": "chord_quality_id",
+            "description": "Hear a chord and name the root note.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 15,
+            "min_accuracy_to_advance": 0.70
+        }
+    ]
+}

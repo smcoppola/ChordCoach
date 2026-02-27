@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Build
+build/
+dist/
+*.spec
+
+# IDEs
+.vscode/
+.idea/
+.pyre/
+.pyright/
+
+# Database
+database/*.db
+database/*.sqlite
+
+# Logs
+*.log

@@ -1,0 +1,17 @@
+[project]
+name = "chordcoach-companion"
+version = "0.1.0"
+description = "AI-driven piano learning app"
+authors = [{ name = "Author Name", email = "author@example.com" }]
+dependencies = [
+    "PySide6",
+    "google-genai",
+    "asyncio",
+    "pybind11",
+    "mido",
+    "pretty-midi",
+]
+
+[build-system]
+requires = ["setuptools", "wheel", "pybind11"]
+build-backend = "setuptools.build_meta"
