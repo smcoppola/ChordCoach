@@ -196,7 +196,7 @@
 - Circle visible in sidebar during all exercises
 - Play notes → matching segment pulses
 - Key Explorer lesson: coach narrates, circle animates, user plays scale
-- Progression Navigator: I-V-vi-IV arcs animate as user plays correctly
+- Progression Navigator: I-V-VI-IV arcs animate as user plays correctly
 - Drag-to-transpose: drag stencil, see new chord names
 
 ---
@@ -266,3 +266,25 @@ graph LR
 | 4 — Ear Training | 3 | 0 | Low-Medium — MIDI output + simple UI |
 | 5 — Circle of Fifths | 3 | 2 | High — QML Canvas + data service |
 | 6 — music21 | 4 | 1 | Medium — library integration |
+
+---
+
+## Important Implementation Notes & Discoveries
+
+As we proceed through the phases, keep these crucial architectural details in mind based on recent learnings:
+
+### 1. Exercise Pacing & Transitions
+- **The 700ms Rule**: In `chord_trainer.py`, when a user successfully completes a chord, the app enters a `_waiting_for_release` state. It is critical to wrap the subsequent `_next_chord()` or `_advance_progression_chord()` calls in a `QTimer.singleShot(700, ...)` delay. This provides a natural pause, allowing the user to reset their hands or mentally prepare for the next step, rather than instantly jumping to the next chord the millisecond the keys are released.
+
+### 2. Pentascale Logic Nuances
+- **Legato Play**: Pentascale exercises handle input differently than block chords. The validation in `handle_midi_note` must allow users to hold previous notes while pressing the next one (legato).
+- **Completion Trigger**: The `_waiting_for_release` logic must specifically check if the `_pentascale_index` has reached the end of the sequence (`>= len(sequence)`) before triggering the transition to the next exercise. If it triggers while the sequence is ongoing, the exercise will hang indefinitely.
+
+### 3. AI Roman Numeral Generation
+- The Gemini model is responsible for generating Roman numeral syntax for progressions (e.g., returning `"numeral": "vi"` for minor chords).
+- The backend and UI do not enforce casing rules locally; they trust the AI's output.
+- **Pronunciation Rules**: The AI must be explicitly instructed on how to pronounce Roman numerals (`"pronounce it as numbers (e.g. 'one, five, six, four'), NOT as letters (e.g. 'eye, vee')"`).
+
+### 4. Interactive Keyboard Elements
+- The `VisualKeyboard.qml` uses a `Canvas` overlay to draw interval arches. These arches are now interactive via a `MouseArea` that triggers a `ToolTip` identifying the musical interval (e.g., "Major 3rd").
+- This interactivity was integrated into a dedicated onboarding tutorial phase, guided by the AI coach.

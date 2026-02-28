@@ -6,7 +6,7 @@ import json
 import threading
 import re
 from typing import Set, List, Dict, Tuple
-from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer # type: ignore
+from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
 
 class ChordTrainerService(QObject):
     # Signals for QML
@@ -20,11 +20,13 @@ class ChordTrainerService(QObject):
     apiConnectivityChanged = Signal(bool)  # True = confirmed, False = lost
     lessonPlanGenerated = Signal()
     midiOutRequested = Signal(list)
+    metronomeTick = Signal()
     
-    def __init__(self, db_manager, curriculum_service=None):
+    def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
         super().__init__()
         self.db = db_manager
         self.curriculum = curriculum_service
+        self.settings = settings_manager
         self._is_active = False
         self._current_track = ""
         self._current_milestone_id = ""
@@ -44,6 +46,10 @@ class ChordTrainerService(QObject):
         self._first_note_time = 0.0
         self._is_simultaneous = False
         
+        # Dashboard and Performance Review
+        self._struggled_items: List[Dict] = []
+        self._current_step_data: Dict = {}
+        
         # Lesson State
         self._is_lesson_mode = False
         self._lesson_playlist = []
@@ -53,14 +59,20 @@ class ChordTrainerService(QObject):
         self._exercise_type = "chord"  # "chord", "pentascale", or "progression"
         self._current_hand = "right"  # "right", "left", or "both"
         self._is_lesson_complete = False
+        self._is_waiting_to_begin = False
         self._is_loading = False
         self._loading_status_text = ""
         self._is_paused_for_speech = False
         self._session_stats: Dict[str, List[float]] = {}
+        self._estimated_gen_ms = 5000.0
         
         # Pentascale State
         self._pentascale_sequence: List[int] = []  # Exact MIDI pitches for the 5-note sequence
         self._pentascale_index = 0
+        self._pentascale_beat_count = 0
+        self._metronome_timer = QTimer()
+        self._metronome_timer.setTimerType(Qt.PreciseTimer)
+        self._metronome_timer.timeout.connect(self._play_metronome_click)
         self._scale_name = ""
         
         # Coach personality settings (set by AppState from SettingsService)
@@ -136,6 +148,14 @@ class ChordTrainerService(QObject):
         return self._is_lesson_complete
         
     @Property(bool, notify=lessonStateChanged)
+    def isWaitingToBegin(self) -> bool:
+        return self._is_waiting_to_begin
+        
+    @Property(str, notify=lessonStateChanged)
+    def currentHand(self):
+        return self._current_hand
+
+    @Property(bool, notify=lessonStateChanged)
     def isLessonMode(self) -> bool:
         return self._is_lesson_mode
         
@@ -155,6 +175,10 @@ class ChordTrainerService(QObject):
     def loadingStatusText(self) -> str:
         return self._loading_status_text
         
+    @Property(float, notify=loadingStatusChanged)
+    def estimatedGenerationMs(self) -> float:
+        return self._estimated_gen_ms
+        
     @Property(str, notify=targetChordChanged)
     def targetChordType(self) -> str:
         return self._target_chord_type
@@ -170,10 +194,18 @@ class ChordTrainerService(QObject):
     @Property(list, notify=targetChordChanged)
     def pentascaleNotes(self) -> list:
         return self._pentascale_sequence
+    @Property("QVariantList", notify=lessonStateChanged)
+    def struggledItems(self):
+        """List of items where user performance was below threshold."""
+        return self._struggled_items
 
     @Property(int, notify=targetChordChanged)
     def currentNoteIndex(self) -> int:
         return self._pentascale_index
+        
+    @Property(int, notify=metronomeTick)
+    def pentascaleBeatCount(self) -> int:
+        return self._pentascale_beat_count
 
     @Property(list, notify=lessonStateChanged)
     def progressionNumerals(self) -> list:
@@ -186,10 +218,6 @@ class ChordTrainerService(QObject):
     @Property(str, notify=targetChordChanged)
     def scaleName(self) -> str:
         return self._scale_name
-
-    @Property(str, notify=targetChordChanged)
-    def currentHand(self) -> str:
-        return self._current_hand
 
     @Slot()
     def start_session(self):
@@ -218,6 +246,12 @@ class ChordTrainerService(QObject):
         self._is_lesson_complete = False
         self._lesson_progress = 0
         self._is_loading = True
+        
+        # Synchronously calculate the estimation so QML has it immediately
+        self._estimated_gen_ms = self.db.get_median_generation_time(last_n=5)
+        if self._estimated_gen_ms <= 0:
+             self._estimated_gen_ms = 5000.0
+             
         self._loading_status_text = "CONNECTING TO YOUR COACH..."
         self.loadingStatusChanged.emit()
         self.lessonStateChanged.emit()
@@ -228,6 +262,7 @@ class ChordTrainerService(QObject):
             
         self._active_pitches.clear()
         self._session_stats.clear()
+        self._struggled_items.clear()
         
         # New Curriculum-Aware Planning
         user_context = ""
@@ -243,13 +278,12 @@ class ChordTrainerService(QObject):
         
     def _query_gemini_for_lesson_plan(self, user_context: str, session_plan: dict = {}):
         """Fetches a dynamic lesson plan from Gemini based on the curriculum session plan."""
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        api_key = self.settings.apiKey if self.settings else os.environ.get("GOOGLE_API_KEY")
         
         fallback_plan = True
         if api_key:
             import urllib.request
             import re
-            api_key = os.environ.get("GOOGLE_API_KEY")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
             
             # (Connectivity check removed for brevity, proceeding to generation)
@@ -299,6 +333,7 @@ For exercise_type "pentascale":
   "octave": integer (usually 4)
   "exercise_name": string
   "spoken_instruction": string
+  "bpm": integer (OPTIONAL - Provide if you want a timed exercise with a metronome, e.g. 80. Omit for free-play)
   "hold_ms": 0
 
 For exercise_type "chord":
@@ -324,6 +359,23 @@ For exercise_type "listen":
   "target_quality": string (e.g. "Major" or "Minor")
   "exercise_name": string
   "spoken_instruction": string
+
+For exercise_type "hands_together":
+  "exercise_type": "hands_together"
+  "root_idx": integer 0-11
+  "chord_type_name": string
+  "exercise_name": string
+  "spoken_instruction": string
+  "hold_ms": integer
+
+For exercise_type "sustain_pedal":
+  "exercise_type": "sustain_pedal"
+  "root_idx": integer 0-11
+  "chord_type_name": string
+  "pedal_type": string ("direct" or "legato")
+  "exercise_name": string
+  "spoken_instruction": string
+  "hold_ms": integer
 
 RULES for spoken_instruction:
 - ONLY the first step of each new exercise_name or block gets spoken.
@@ -351,9 +403,11 @@ RULES for spoken_instruction:
                     def _update_slow_status():
                         self._loading_status_text = "GENERATING LESSON — PLEASE WAIT..."
                         self.loadingStatusChanged.emit()
+                        print(f"ChordTrainer: Gemini generation is taking longer than {slow_threshold_s:.1f}s...")
                     slow_timer = threading.Timer(slow_threshold_s, _update_slow_status)
                     slow_timer.start()
                     
+                    print(f"ChordTrainer: Making Gemini request (attempt {attempt + 1}/{max_retries})...")
                     with urllib.request.urlopen(req, timeout=60) as response:
                         result = json.loads(response.read().decode('utf-8'))
                         text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
@@ -410,14 +464,42 @@ RULES for spoken_instruction:
                                             step.setdefault("octave", 4)
                                             self._lesson_playlist.append(step)
 
-                                    else:
-                                        # Standard chord steps (backward compatible)
-                                        if all(k in step for k in ("root_idx", "chord_type_name", "exercise_name", "hold_ms")):
+                                    elif ex_type == "hands_together":
+                                        if all(k in step for k in ("root_idx", "chord_type_name")):
+                                            c_type = step["chord_type_name"]
+                                            if c_type in self.CHORD_TYPES:
+                                                step.setdefault("track", "technique")
+                                                step.setdefault("milestone_id", "")
+                                                step.setdefault("hand", "both")
+                                                step.setdefault("exercise_name", "Hands Together")
+                                                step.setdefault("hold_ms", 1000)
+                                                step["octave"] = 4
+                                                step["intervals"] = self.CHORD_TYPES[c_type]
+                                                self._lesson_playlist.append(step)
+
+                                    elif ex_type == "sustain_pedal":
+                                        if all(k in step for k in ("root_idx", "chord_type_name")):
                                             c_type = step["chord_type_name"]
                                             if c_type in self.CHORD_TYPES:
                                                 step.setdefault("track", "technique")
                                                 step.setdefault("milestone_id", "")
                                                 step.setdefault("hand", "right")
+                                                step.setdefault("pedal_type", "direct")
+                                                step.setdefault("exercise_name", "Pedal Technique")
+                                                step.setdefault("hold_ms", 3000)
+                                                step["octave"] = 4
+                                                step["intervals"] = self.CHORD_TYPES[c_type]
+                                                self._lesson_playlist.append(step)
+
+                                    else:
+                                        # Standard chord steps (backward compatible)
+                                        if all(k in step for k in ("root_idx", "chord_type_name")):
+                                            c_type = step["chord_type_name"]
+                                            if c_type in self.CHORD_TYPES:
+                                                step.setdefault("track", "technique")
+                                                step.setdefault("milestone_id", "")
+                                                # Allow 'hand' to be passed from the prompt, default to right
+                                                step["hand"] = step.get("hand", "right")
                                                 step["intervals"] = self.CHORD_TYPES[c_type]
                                                 step["octave"] = step.get("octave", 4)
                                                 step["exercise_type"] = "chord"
@@ -425,6 +507,7 @@ RULES for spoken_instruction:
                                                 if "preview_chord" in step:
                                                     step["preview_chord"] = bool(step["preview_chord"])
                                                 self._lesson_playlist.append(step)
+                                print(f"ChordTrainer: Added step to playlist. Current length: {len(self._lesson_playlist)}")
                                 
                                 if len(self._lesson_playlist) > 0:
                                     fallback_plan = False
@@ -433,8 +516,11 @@ RULES for spoken_instruction:
                                     self.db.record_generation_stat(model_name, gen_time_ms, len(self._lesson_playlist), success=True)
                                     slow_timer.cancel()
                                     break
-                        except json.JSONDecodeError:
-                            print(f"ChordTrainer: Could not parse AI lesson JSON: {clean_text}")
+                                else:
+                                    print("ChordTrainer: Generated JSON was valid but resulting playlist was empty.")
+                        except json.JSONDecodeError as e:
+                            print(f"ChordTrainer: Could not parse AI lesson JSON: {e}")
+                            print(f"Raw Text: {clean_text}")
                             slow_timer.cancel()
                             break
                 
@@ -486,16 +572,62 @@ RULES for spoken_instruction:
         if not self._lesson_playlist:
             return
             
+        self._is_waiting_to_begin = True
+        self.lessonStateChanged.emit()
+
+    @Slot()
+    def begin_lesson(self):
+        """Called from UI when user clicks Begin."""
+        if not self._lesson_playlist or not self._is_waiting_to_begin:
+            return
+            
+        self._is_waiting_to_begin = False
         self._is_active = True
         self.activeChanged.emit(self._is_active)
+        self.lessonStateChanged.emit()
+        self._next_chord()
+
+    @Slot()
+    def start_review_session(self):
+        """Starts a mini-lesson focusing only on struggled items."""
+        if not self._struggled_items:
+            return
+            
+        print(f"ChordTrainer: Starting review session with {len(self._struggled_items)} items")
+        
+        # Build a playlist from struggled items
+        review_playlist = []
+        for item in self._struggled_items:
+            # item["chord_data"] is the original AI-generated step
+            step = item["chord_data"].copy()
+            # Clean up metadata if needed
+            step["exercise_name"] = f"Review: {step.get('exercise_name', 'Previous Task')}"
+            step["spoken_instruction"] = f"Let's try {item['name']} again. Focus on accuracy."
+            review_playlist.append(step)
+            
+        # Swap playlist and start
+        self._lesson_playlist = review_playlist
+        # Clear struggled items for the new review run so we can track them again
+        self._struggled_items = []
+        
+        self._lesson_progress = 0
+        self._lesson_total = len(self._lesson_playlist)
+        self._is_lesson_mode = True
+        self._is_lesson_complete = False
+        self._is_active = True
+        self.activeChanged.emit(True)
+        self.lessonStateChanged.emit()
         self._next_chord()
 
     @Slot()
     def stop_session(self):
-        if self._is_active:
+        if self._is_active or self._is_waiting_to_begin:
             self._is_active = False
+            self._is_waiting_to_begin = False
             self._is_paused_for_speech = False
+            self._metronome_timer.stop()
             self.activeChanged.emit(self._is_active)
+            self.lessonStateChanged.emit()
             self._target_chord_name = ""
             self._target_intervals.clear()
             self._target_pitches.clear()
@@ -587,6 +719,7 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                     return
                 
             self._exercise_name = new_exercise_name
+            self._current_step_data = chord_data.copy()
             self._apply_step(chord_data)
         else:
             self._apply_random_step()
@@ -603,6 +736,10 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             self._setup_progression_target(chord_data)
         elif exercise_type == "listen":
             self._setup_listen_target(chord_data)
+        elif exercise_type == "hands_together":
+            self._setup_hands_together_target(chord_data)
+        elif exercise_type == "sustain_pedal":
+            self._setup_sustain_target(chord_data)
         else:
             # Original chord behavior
             root_idx = chord_data["root_idx"]
@@ -658,10 +795,27 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         self._first_note_time = 0.0
         self._is_simultaneous = False
         
+        # Determine if we should optionally use the metronome
+        bpm = chord_data.get("bpm", 0)  # Defaults to 0 (free-play)
+        if bpm > 0:
+            interval_ms = int(60000 / bpm)
+            self._pentascale_beat_count = -4  # 4-beat lead in (-4, -3, -2, -1)
+            self._metronome_timer.start(interval_ms)
+            print(f"ChordTrainer: Started pentascale metronome at {bpm} BPM")
+        else:
+            self._metronome_timer.stop()
+            print("ChordTrainer: Free-play pentascale mode (no metronome)")
+        
         # Set target to the first note in the sequence
         self._target_chord_name = self._scale_name
         self._target_chord_type = "Pentascale"
-        self._target_formula_text = f"{direction.capitalize()}: {' → '.join(self.ROOT_NOTES[(root_idx + i) % 12] for i in pattern)}"
+        
+        # Display the note names in the correct ascending/descending order
+        note_names = [self.ROOT_NOTES[(root_idx + i) % 12] for i in pattern]
+        if direction == "descending":
+            note_names = list(reversed(note_names))
+            
+        self._target_formula_text = f"{direction.capitalize()}: {' → '.join(note_names)}"
         self._target_pitches = sequence  # Show full sequence for QML visualization
         # For validation: match the exact MIDI pitch (not octave-agnostic)
         current_pitch = sequence[0]
@@ -715,10 +869,71 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         
         # Standard chord setup but marked as listen
         self._setup_target(root_idx, chord_type_name, intervals, octave, preview_chord=True)
+        self._target_chord_name = "Listen to the chord"
         self._target_chord_type = "Listen" # UI uses this to show quiz instead of notation
         self._target_formula_text = target_quality # Hidden till answered
         
+        self.targetChordChanged.emit(self._target_chord_name)
+        
         print(f"ChordTrainer: Listen target: {root_idx} {chord_type_name}, quality={target_quality}")
+
+    def _setup_hands_together_target(self, chord_data):
+        """Sets up a hands together exercise: right hand chord + left hand bass note."""
+        root_idx = int(chord_data.get("root_idx", 0))
+        chord_type_name = str(chord_data.get("chord_type_name", "Major"))
+        intervals = self.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
+        octave = int(chord_data.get("octave", 4))
+        
+        self._current_hand = "both"
+        self._setup_target(root_idx, chord_type_name, intervals, octave)
+        
+        # Override formula and type for hands together UI differences
+        self._target_chord_type = "Hands Together"
+        self._target_formula_text = "Bass + Chord"
+        
+        # Inject bass note for UI rendering
+        lh_octave = max(2, min(3, octave - 1))
+        lh_base_pitch = (lh_octave + 1) * 12 + root_idx
+        self._target_pitches.insert(0, lh_base_pitch)
+        
+        self.targetChordChanged.emit(self._target_chord_name)
+
+    def _setup_sustain_target(self, chord_data):
+        """Sets up a sustain pedal exercise."""
+        root_idx = int(chord_data.get("root_idx", 0))
+        chord_type_name = str(chord_data.get("chord_type_name", "Major"))
+        intervals = self.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
+        octave = int(chord_data.get("octave", 4))
+        
+        self._pedal_type = str(chord_data.get("pedal_type", "direct"))
+        self._pedal_satisfied = False
+        
+        self._setup_target(root_idx, chord_type_name, intervals, octave)
+        self._target_chord_type = "Sustain Pedal"
+        self._target_formula_text = f"Pedal: {self._pedal_type.capitalize()}"
+        self.targetChordChanged.emit(self._target_chord_name)
+
+    @Slot(bool)
+    def handle_pedal_event(self, is_down: bool):
+        """Called by AppState when a CC64 sustain pedal event occurs."""
+        if not self._is_active or self._is_lesson_complete:
+            return
+            
+        if self._exercise_type == "sustain_pedal" and not self._pedal_satisfied:
+            if self._pedal_type == "direct":
+                # Pedal should be pressed around the same time as the chord
+                if is_down and self._is_holding:
+                    pedal_timing = (time.time() * 1000.0) - self._hold_start_time
+                    if pedal_timing <= 400: # generous 400ms window
+                        self._pedal_satisfied = True
+                        self._check_input()
+                    else:
+                        self.speakInstruction.emit("Try to press the pedal *exactly* when you strike the keys for a 'direct' pedal technique.")
+            elif self._pedal_type == "legato":
+                # Pedal should be pressed after the chord starts
+                if is_down and self._is_holding:
+                    self._pedal_satisfied = True
+                    self._check_input()
 
     @Slot()
     def replay_preview(self):
@@ -882,14 +1097,17 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         if self._waiting_for_release:
             if len(self._active_pitches) == 0:
                 self._waiting_for_release = False
-                if self._exercise_type == "pentascale" and self._pentascale_index < len(self._pentascale_sequence):
-                    # Still in the pentascale sequence — just continue, don't call _next_chord
-                    pass
+                if self._exercise_type == "pentascale":
+                    if self._pentascale_index < len(self._pentascale_sequence):
+                        # Still in the pentascale sequence — just continue, don't call _next_chord
+                        pass
+                    else:
+                        QTimer.singleShot(700, self._next_chord)
                 elif self._exercise_type == "progression" and self._progression_index < len(self._progression_steps):
-                    # Advance to next chord in progression
-                    self._advance_progression_chord()
+                    # Advance to next chord in progression, adding a short pause so user can reset hands
+                    QTimer.singleShot(700, self._advance_progression_chord)
                 else:
-                    self._next_chord()
+                    QTimer.singleShot(700, self._next_chord)
             return
             
         self._check_input()
@@ -903,6 +1121,10 @@ DO NOT just say 'Great job!'. {feedback_style}"""
 
     def _check_pentascale(self):
         """Validates single-note input for pentascale exercises."""
+        # Wait until the lead-in is complete if we are running a metronome
+        if self._metronome_timer.isActive() and self._pentascale_beat_count < 0:
+            return
+            
         if not self._pentascale_sequence or self._pentascale_index >= len(self._pentascale_sequence):
             return
         
@@ -923,6 +1145,7 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             
             if self._pentascale_index >= len(self._pentascale_sequence):
                 # All 5 notes played correctly — complete the step
+                self._metronome_timer.stop()
                 self._complete_chord()
             else:
                 # Update target intervals to next note (no release wait — allows legato)
@@ -941,6 +1164,12 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         # Check if the currently held keys exactly match the target intervals
         # (Must contain all required notes, and no extra notes)
         if active_intervals == self._target_intervals:
+            if self._exercise_type == "hands_together":
+                # Must be playing at least one note in the bass range (octave 2-3 -> pitches 36-59)
+                has_bass = any(p < 60 for p in self._active_pitches)
+                if not has_bass:
+                    return # Keep waiting for them to add the left hand
+
             if not self._is_holding:
                 self._is_holding = True
                 self._hold_start_time = time.time() * 1000.0
@@ -951,9 +1180,20 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                     self._is_simultaneous = (delta < 150) # 150ms is a generous 'block chord' threshold
                 
                 if self._required_hold_ms > 0:
+                    if self._exercise_type == "sustain_pedal" and not self._pedal_satisfied:
+                        return # Wait for the pedal to be engaged
                     self._hold_tick_timer.start()
                 else:
+                    if self._exercise_type == "sustain_pedal" and not self._pedal_satisfied:
+                        return # Wait for the pedal to be engaged
                     self._complete_chord()
+            else:
+                # We are already holding. Re-evaluate if pedal satisfaction unlocked progression
+                if self._exercise_type == "sustain_pedal" and self._pedal_satisfied:
+                    if self._required_hold_ms > 0 and not self._hold_tick_timer.isActive():
+                        self._hold_tick_timer.start()
+                    elif self._required_hold_ms == 0:
+                        self._complete_chord()
         else:
             # If they are holding the correct NUMBER of keys but they are not the right intervals,
             # we consider this a "failed attempt" and emit a subtle feedback signal.
@@ -995,13 +1235,12 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         latency_ms = (time.time() - self._prompt_time) * 1000.0
         print(f"ChordTrainer: SUCCESS! {self._target_chord_name} matched in {latency_ms:.1f}ms")
         
-        # Record success in DB and local session stats (skip for pentascale — already recorded per-note)
-        if self._exercise_type != "pentascale":
-            self.db.record_chord_attempt(self._target_chord_name, True, latency_ms, 
-                                       self._wrong_notes_count, self._is_simultaneous)
-            if self.curriculum:
-                self.curriculum.complete_exercise(self._target_chord_name, True, 
-                                                 self._current_track, self._current_milestone_id)
+        # Record success in DB and local session stats
+        self.db.record_chord_attempt(self._target_chord_name, True, latency_ms, 
+                                   self._wrong_notes_count, self._is_simultaneous)
+        if self.curriculum:
+            self.curriculum.complete_exercise(self._target_chord_name, True, 
+                                             self._current_track, self._current_milestone_id)
         
         # Record in session stats
         stat_key = self._target_chord_name
@@ -1010,6 +1249,20 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         if stat_key not in self._session_stats:
             self._session_stats[stat_key] = []
         self._session_stats[stat_key].append(latency_ms)
+        
+        # Track items for Dashboard "Quick Review" 
+        # Threshold: Latency > 4s OR > 2 wrong notes
+        if latency_ms > 4000 or self._wrong_notes_count > 2:
+            item = {
+                "name": self._target_chord_name,
+                "type": self._exercise_type,
+                "latency": latency_ms,
+                "wrong_notes": self._wrong_notes_count,
+                "chord_data": self._current_step_data
+            }
+            # Avoid duplicates
+            if not any(s["name"] == item["name"] for s in self._struggled_items):
+                self._struggled_items.append(item)
         
         # Notify UI
         self.chordSuccess.emit(self._target_chord_name, latency_ms)
@@ -1034,5 +1287,15 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                 return
             # else: progression complete, fall through to _next_chord
             
-        print("ChordTrainer: Waiting for user to release all keys...")
-        self._waiting_for_release = True
+        if self._exercise_type == "listen":
+            # For listening quizzes, the user answers via UI, not keys. Pause briefly then move on.
+            QTimer.singleShot(700, self._next_chord)
+        else:
+            print("ChordTrainer: Waiting for user to release all keys...")
+            self._waiting_for_release = True
+
+    @Slot()
+    def _play_metronome_click(self):
+        """Called periodically by QTimer for timed exercises."""
+        self._pentascale_beat_count += 1
+        self.metronomeTick.emit()

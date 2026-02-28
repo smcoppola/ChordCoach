@@ -1,5 +1,6 @@
-import QtQuick
-import QtQuick.Layouts
+import QtQuick 2.15
+import QtQuick.Layouts 1.15
+import QtQuick.Controls 2.15
 
 Rectangle {
     id: root
@@ -25,6 +26,17 @@ Rectangle {
         console.log("VisualKeyboard targetKeys updated via function:", keys);
         mathOverlay.requestPaint();
     }
+
+    function getIntervalName(halfSteps) {
+        var names = {
+            1: "Minor 2nd", 2: "Major 2nd", 3: "Minor 3rd", 4: "Major 3rd",
+            5: "Perfect 4th", 6: "Tritone", 7: "Perfect 5th", 8: "Minor 6th",
+            9: "Major 6th", 10: "Minor 7th", 11: "Major 7th", 12: "Octave"
+        };
+        return names[halfSteps] || (halfSteps + " half-steps");
+    }
+
+    signal archClicked()
 
     Row {
         id: keyboardRow
@@ -126,6 +138,68 @@ Rectangle {
                 
                 // Draw Math Text
                 ctx.fillText("+" + diff, midX, yStart - (archHeight/2) - 5);
+            }
+        }
+        
+        // ToolTip for clicked arches
+        ToolTip {
+            id: intervalToolTip
+            delay: 0
+            timeout: 2000
+            contentItem: Text {
+                text: intervalToolTip.text
+                color: "#ffffff"
+                font.pixelSize: 14 * mainWindow.uiScale
+                font.bold: true
+            }
+            background: Rectangle {
+                color: "#4CAF50"
+                radius: 4 * mainWindow.uiScale
+                border.color: "#388E3C"
+                border.width: 1
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onMouseXChanged: {
+                if (!root.targetKeys || root.targetKeys.length < 2) {
+                    cursorShape = Qt.ArrowCursor;
+                    return;
+                }
+                var sorted = root.targetKeys.slice().sort((a,b)=>a-b);
+                var overArch = false;
+                for (var i = 0; i < sorted.length - 1; i++) {
+                    var x1 = ((sorted[i] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
+                    var x2 = ((sorted[i+1] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
+                    if (mouseX > x1 + 5 && mouseX < x2 - 5 && mouseY > 0 && mouseY < 50 * mainWindow.uiScale) {
+                        overArch = true;
+                        break;
+                    }
+                }
+                cursorShape = overArch ? Qt.PointingHandCursor : Qt.ArrowCursor;
+            }
+            onClicked: {
+                if (!root.targetKeys || root.targetKeys.length < 2) return;
+                var sorted = root.targetKeys.slice().sort((a,b)=>a-b);
+                
+                for (var i = 0; i < sorted.length - 1; i++) {
+                    var x1 = ((sorted[i] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
+                    var x2 = ((sorted[i+1] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
+                    
+                    // Allow clicking in the upper area above the keys between x1 and x2
+                    if (mouseX > x1 + 5 && mouseX < x2 - 5 && mouseY > 0 && mouseY < 50 * mainWindow.uiScale) {
+                        var diff = sorted[i+1] - sorted[i];
+                        var ix = mouseX;
+                        var iy = mouseY;
+                        intervalToolTip.show(root.getIntervalName(diff));
+                        intervalToolTip.x = ix - (intervalToolTip.width / 2);
+                        intervalToolTip.y = iy - intervalToolTip.height - 10;
+                        root.archClicked();
+                        break;
+                    }
+                }
             }
         }
     }

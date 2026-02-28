@@ -108,7 +108,7 @@ The Curriculum Engine replaces monolithic per-session lesson generation with a s
 5. Minor key progressions, secondary dominants, modulation
 
 **Repertoire Track** — dynamically linked to Dream Songs:
-1. First song application (I-V-vi-IV) with backing track
+1. First song application (I-V-VI-IV) with backing track
 2. Song Breakdown lessons: analyze progression → drill transitions → play along
 3. Verse/chorus/bridge structure awareness
 4. Dream Song preparation: key-matched exercises, targeted transitions
@@ -155,7 +155,7 @@ The skill matrix tracks more than chord accuracy:
 - **"Hear It First" Previews:** Play target chord through MIDI output before the drill. Cheapest ear training win.
 - **Song Application Phase:** After learning a progression, play it over a backing track or simplified arrangement.
 - **"Theory in Context" Mini-Lessons:** 2-minute interactive explainers woven into technique drills.
-- **Sustain Pedal Drills:** Three progressive techniques: (1) "Clean Hold" — direct pedaling, press with the chord, release before the next; (2) "Smooth Switch" — legato pedaling, foot follows hands (play new chord → lift pedal → re-press), validated within a ~300ms window; (3) "Pedal + Progression" — full I-V-vi-IV with legato pedaling, scored for blur vs. clean transitions. Requires MIDI CC64 input capture from the Roland FP-30X. A "sustain lane" visualization below the notation shows when the pedal should be down. Over-pedaling detection warns when the pedal stays down across chord changes.
+- **Sustain Pedal Drills:** Three progressive techniques: (1) "Clean Hold" — direct pedaling, press with the chord, release before the next; (2) "Smooth Switch" — legato pedaling, foot follows hands (play new chord → lift pedal → re-press), validated within a ~300ms window; (3) "Pedal + Progression" — full I-V-VI-IV with legato pedaling, scored for blur vs. clean transitions. Requires MIDI CC64 input capture from the Roland FP-30X. A "sustain lane" visualization below the notation shows when the pedal should be down. Over-pedaling detection warns when the pedal stays down across chord changes.
 - **Sight-Reading Sprint (future):** Short 4-8 bar excerpts, timed reading, depends on MusicXML support.
 
 ## 7. Circle of Fifths — Interactive Learning Device
@@ -169,7 +169,7 @@ A QML Canvas-rendered, rotatable wheel driven by music21 data (`key.Key`, `roman
 
 **Lesson Type A — "Key Explorer":** Navigate the circle clockwise, adding sharps. Play scales, see diatonic chords light up, understand shared notes between adjacent keys.
 
-**Lesson Type B — "Progression Navigator":** See I-V-vi-IV as arcs on the circle. II-V-I stencil overlay draggable to any key. Drag-to-transpose a learned progression and see new chord names + fingerings.
+**Lesson Type B — "Progression Navigator":** See I-V-VI-IV as arcs on the circle. II-V-I stencil overlay draggable to any key. Drag-to-transpose a learned progression and see new chord names + fingerings.
 
 **Gamified Modes:** "Around the World" (timed I-IV-V-I in every key), Key Signature Flash (recognition speed), Relative Minor Finder (inner/outer ring connection).
 

@@ -31,7 +31,22 @@ Item {
         }
     }
     
+    property string exerciseType: "chord"
+    property string currentHand: "right"
+    
+    Connections {
+        target: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer : null
+        function onLessonStateChanged() {
+            root.exerciseType = appState.chordTrainer.exerciseType || "chord";
+            root.currentHand = appState.chordTrainer.currentHand || "right";
+        }
+    }
+    
     function getColorForPitch(pitch) {
+        if (root.exerciseType === "hands_together") {
+            return pitch < 60 ? "#E040FB" : "#2196F3"; // Purple for LH, Blue for RH
+        }
+        
         var colors = [
             "#FF5252", // C - Red
             "#FF9800", // C# - Orange

@@ -19,10 +19,11 @@ Rectangle {
     }
     
     // Data bindings
-    property bool midiConnected: typeof appState !== "undefined" && appState && appState.midiConnected
-    property string midiDevice: midiConnected ? appState.midiDeviceName : ""
-    property bool aiConnected: typeof appState !== "undefined" && appState && appState.aiConnected
-    property bool isLessonActive: typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.isActive
+    // Data bindings - Pure bindings to service properties
+    property bool midiConnected: (typeof appState !== "undefined" && appState) ? appState.midiConnected : false
+    property string midiDevice: midiConnected ? appState.midiDeviceName : "No MIDI device"
+    property bool aiConnected: (typeof appState !== "undefined" && appState) ? appState.aiConnected : false
+    property bool isLessonActive: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer.isActive : false
     property bool isLessonMode: isLessonActive && appState.chordTrainer.isLessonMode
     property int lessonProgress: isLessonMode ? appState.chordTrainer.lessonProgress : 0
     property int lessonTotal: isLessonMode ? appState.chordTrainer.lessonTotal : 0
@@ -39,21 +40,8 @@ Rectangle {
     
     Connections {
         target: (typeof appState !== "undefined" && appState) ? appState.chordTrainer : null
-        function onLessonStateChanged() {
-            if (appState && appState.chordTrainer) {
-                root.isLessonActive = appState.chordTrainer.isActive;
-                root.isLessonMode = appState.chordTrainer.isActive && appState.chordTrainer.isLessonMode;
-                root.lessonProgress = appState.chordTrainer.lessonProgress;
-                root.lessonTotal = appState.chordTrainer.lessonTotal;
-                root.exerciseName = appState.chordTrainer.exerciseName;
-                root.exerciseType = appState.chordTrainer.exerciseType || "chord";
-            }
-        }
-        function onTargetChordChanged() {
-            if (appState && appState.chordTrainer) {
-                root.lessonProgress = appState.chordTrainer.lessonProgress;
-            }
-        }
+        // Manual updates removed here because properties now use direct bindings above.
+        // This prevents "breaking" the bindings with explicit assignments.
     }
     
     ColumnLayout {
@@ -125,65 +113,6 @@ Rectangle {
         
         Item { Layout.preferredHeight: 20 }
 
-        // ── Current Lesson ──
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: lessonContent.implicitHeight + 24
-            color: root.isLessonMode ? "#1e2a1e" : "#222222"
-            radius: 8
-            border.color: root.isLessonMode ? "#4CAF5040" : "#333333"
-            border.width: 1
-            
-            ColumnLayout {
-                id: lessonContent
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 8
-                
-                Text {
-                    text: root.isLessonMode ? "CURRENT LESSON" : "SESSION"
-                    color: "#888888"
-                    font.pixelSize: 10 * mainWindow.uiScale
-                    font.bold: true
-                    font.letterSpacing: 2 * mainWindow.uiScale
-                }
-                
-                Text {
-                    text: root.isLessonMode ? root.exerciseName : (root.isLessonActive ? "Free Practice" : "Ready to begin")
-                    color: "#ffffff"
-                    font.pixelSize: 14 * mainWindow.uiScale
-                    font.bold: true
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-                
-                // Progress bar
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 6
-                    radius: 3
-                    color: "#333333"
-                    visible: root.isLessonMode
-                    
-                    Rectangle {
-                        width: root.lessonTotal > 0 ? parent.width * (root.lessonProgress / root.lessonTotal) : 0
-                        height: parent.height
-                        radius: 3
-                        color: "#4CAF50"
-                        
-                        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutQuad } }
-                    }
-                }
-                
-                Text {
-                    text: root.lessonProgress + " / " + root.lessonTotal + " steps"
-                    color: "#888888"
-                    font.pixelSize: 11 * mainWindow.uiScale
-                    visible: root.isLessonMode
-                }
-            }
-        }
-        
         Item { Layout.preferredHeight: 16 }
 
         // ── Curriculum Progress ──
@@ -295,86 +224,8 @@ Rectangle {
         
         Item { Layout.preferredHeight: 16 }
 
-        // ── Skill Snapshot ──
-        Text {
-            text: "SKILL SNAPSHOT"
-            color: "#888888"
-            font.pixelSize: 10 * mainWindow.uiScale
-            font.bold: true
-            font.letterSpacing: 2 * mainWindow.uiScale
-        }
-        
-        Item { Layout.preferredHeight: 8 }
-        
-        // Stats summary
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: statsCol.implicitHeight + 24
-            color: "#222222"
-            radius: 8
-            border.color: "#333333"
-            border.width: 1
-            
-            ColumnLayout {
-                id: statsCol
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 6
-                
-                // Compute stats from chord data
-                property int totalAttempts: {
-                    var total = 0;
-                    var stats = root.chordStats;
-                    if (stats && stats.length) {
-                        for (var i = 0; i < stats.length; i++) {
-                            total += (stats[i].success_count || 0) + (stats[i].fail_count || 0);
-                        }
-                    }
-                    return total;
-                }
-                property int totalSuccesses: {
-                    var total = 0;
-                    var stats = root.chordStats;
-                    if (stats && stats.length) {
-                        for (var i = 0; i < stats.length; i++) {
-                            total += stats[i].success_count || 0;
-                        }
-                    }
-                    return total;
-                }
-                property real accuracy: totalAttempts > 0 ? (totalSuccesses / totalAttempts * 100) : 0
-                property int chordsLearned: {
-                    var count = 0;
-                    var stats = root.chordStats;
-                    if (stats && stats.length) {
-                        for (var i = 0; i < stats.length; i++) {
-                            if ((stats[i].success_count || 0) >= 3) count++;
-                        }
-                    }
-                    return count;
-                }
-                
-                Row {
-                    spacing: 8 * mainWindow.uiScale
-                    Text { text: "Chords Learned:"; color: "#888888"; font.pixelSize: 12 * mainWindow.uiScale }
-                    Text { text: statsCol.chordsLearned.toString(); color: "#ffffff"; font.pixelSize: 12 * mainWindow.uiScale; font.bold: true }
-                }
-                Row {
-                    spacing: 8 * mainWindow.uiScale
-                    Text { text: "Total Attempts:"; color: "#888888"; font.pixelSize: 12 * mainWindow.uiScale }
-                    Text { text: statsCol.totalAttempts.toString(); color: "#ffffff"; font.pixelSize: 12 * mainWindow.uiScale; font.bold: true }
-                }
-                Row {
-                    spacing: 8 * mainWindow.uiScale
-                    Text { text: "Accuracy:"; color: "#888888"; font.pixelSize: 12 * mainWindow.uiScale }
-                    Text { 
-                        text: statsCol.totalAttempts > 0 ? statsCol.accuracy.toFixed(1) + "%" : "—"
-                        color: statsCol.accuracy >= 80 ? "#4CAF50" : (statsCol.accuracy >= 50 ? "#FFC107" : "#F44336")
-                        font.pixelSize: 12 * mainWindow.uiScale; font.bold: true 
-                    }
-                }
-            }
-        }
+        // Replaced Skill Snapshot with just a spacer
+        Item { Layout.preferredHeight: 16 }
         
         Item { Layout.fillHeight: true }
 

@@ -7,6 +7,7 @@ class SettingsService(QObject):
     skillMatrixSummaryChanged = Signal()
     statsChanged = Signal()
     coachSettingsChanged = Signal()
+    invertPedalChanged = Signal()
 
     def __init__(self, db_manager, project_root):
         super().__init__()
@@ -64,7 +65,7 @@ class SettingsService(QObject):
 
     @Property(str, notify=coachSettingsChanged)
     def coachVoice(self) -> str:
-        return self._get_env("COACH_VOICE", "Puck")
+        return self._get_env("COACH_VOICE", "Kore")
 
     @coachVoice.setter # type: ignore
     def coachVoice(self, val: str):

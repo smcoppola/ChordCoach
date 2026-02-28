@@ -13,9 +13,10 @@ class AdaptiveEngineService(QObject):
     bottleneckChanged = Signal()
     loadingChanged = Signal()
 
-    def __init__(self, db_manager):
+    def __init__(self, db_manager, settings_manager=None):
         super().__init__()
         self.db = db_manager
+        self.settings = settings_manager
         self._video_url = ""
         self._description = ""
         self._is_loading = False
@@ -51,7 +52,7 @@ class AdaptiveEngineService(QObject):
         threading.Thread(target=self._query_gemini_for_lesson, args=(user_context,), daemon=True).start()
 
     def _query_gemini_for_lesson(self, user_context: str):
-        api_key = os.environ.get("GOOGLE_API_KEY")
+        api_key = self.settings.apiKey if self.settings else os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             self._set_error("No API key found. Cannot connect to AI Coach.")
             return

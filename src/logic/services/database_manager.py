@@ -301,6 +301,31 @@ class DatabaseManager:
             result = cursor.fetchone()
             return result[0] if result and result[0] else 0.0
 
+    def get_median_generation_time(self, last_n: int = 5) -> float:
+        """Returns the median generation time in ms for the last N successful generations."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT generation_time_ms FROM generation_stats 
+                WHERE success = 1 
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            ''', (last_n,))
+            results = [row[0] for row in cursor.fetchall()]
+            
+            if not results:
+                return 0.0
+                
+            sorted_times = sorted(results)
+            n = len(sorted_times)
+            mid = n // 2
+            
+            if n % 2 == 0:
+                return (sorted_times[mid - 1] + sorted_times[mid]) / 2.0
+            else:
+                return sorted_times[mid]
+
+
     def get_coach_context(self):
         """Retrieves relevant data formatted for the Gemini AI system prompt."""
         context = "User Practice Context:\n"
@@ -366,7 +391,7 @@ class DatabaseManager:
                         pass  # Already exists
             conn.commit()
 
-    def get_curriculum_state(self, track_name: str = None) -> list:
+    def get_curriculum_state(self, track_name: str | None = None) -> list:
         """Returns milestone states, optionally filtered by track."""
         with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
@@ -471,6 +496,9 @@ class DatabaseManager:
                 # Update ease factor
                 ef = max(1.3, ef + 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
 
+            # Cap the interval to prevent OverflowError in SQLite/Python dates (~10 years)
+            interval = min(interval, 3650.0)
+            
             next_review = (now + timedelta(days=interval)).isoformat()
             count += 1
 

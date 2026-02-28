@@ -127,7 +127,7 @@ class LowLevelMidiOutput:
 
 from logic.services.gemini_service import GeminiService # type: ignore
 from logic.services.midi_ingestor import MidiIngestor # type: ignore
-from logic.services.repertoire_crawler import RepertoireCrawler # type: ignore
+# from logic.services.repertoire_crawler import RepertoireCrawler # type: ignore
 from logic.services.database_manager import DatabaseManager # type: ignore
 from logic.services.chord_trainer import ChordTrainerService # type: ignore
 from logic.services.evaluation_service import EvaluationService # type: ignore
@@ -140,21 +140,23 @@ class AppState(QObject):
     aiTranscriptReceived = Signal(str)
     aiConnectedChanged = Signal(bool)
     evalIntroPendingChanged = Signal(bool)
+    sustainPedalChanged = Signal(bool)
     
     def __init__(self):
         super().__init__()
         self._ai_connected = False
         self._eval_intro_pending = False
         self._eval_audio_received = False
+        self._is_sustain_pedal_down = False
         self._gemini = GeminiService()
         self.midi_ingestor = MidiIngestor()
-        self.crawler = RepertoireCrawler()
+        # self.crawler = RepertoireCrawler()
         self.db = DatabaseManager(project_root / "database" / "userdata.db")
         self.settings = SettingsService(self.db, project_root)
         self.curriculum = CurriculumService(self.db, project_root / "src" / "resources")
-        self.chord_trainer = ChordTrainerService(self.db, self.curriculum)
+        self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings)
         self.evaluation_engine = EvaluationService(self.db, project_root)
-        self.adaptive_engine = AdaptiveEngineService(self.db)
+        self.adaptive_engine = AdaptiveEngineService(self.db, self.settings)
         self._lesson_plan_waiting = False
         
         # Low-level MIDI output for hardware feedback
@@ -181,11 +183,13 @@ class AppState(QObject):
         
         # Dispatch MIDI events to the appropriate engine on the main thread
         self.midiNoteReceived.connect(self._dispatch_midi_note)
+        self.sustainPedalChanged.connect(self.chord_trainer.handle_pedal_event)
         
         # Connect the chord trainer to Gemini Live so it can speak instructions
         self.chord_trainer.speakInstruction.connect(self._gemini.send_prompt)
         self.chord_trainer.lessonPlanGenerated.connect(self._on_lesson_plan_generated)
         self.chord_trainer.midiOutRequested.connect(self._on_midi_out_requested)
+        self.chord_trainer.metronomeTick.connect(self._on_metronome_tick_from_chord_trainer)
         
         # Connect AI audio completion back to chord trainer to resume lesson
         self._gemini.aiFinishedSpeaking.connect(self.chord_trainer.resume_lesson)
@@ -285,7 +289,7 @@ class AppState(QObject):
             # Only start a new lesson if one isn't already in progress and evaluation isn't running
             if not self.chord_trainer.isActive and not self.evaluation_engine.isRunning:
                 self._sync_coach_settings()
-                self.chord_trainer.start_lesson_plan()
+                # self.chord_trainer.start_lesson_plan() # Disabled auto-start; user now triggers from Dashboard
         elif not connected and self.hw_midi:
             # Only play sad tone if all reconnect attempts are exhausted
             if not self._is_reconnecting:
@@ -302,7 +306,7 @@ class AppState(QObject):
     @Slot(int, int)
     def _on_ai_reconnecting(self, attempt: int, max_attempts: int):
         self._is_reconnecting = True
-        print(f"AppState: AI reconnecting ({attempt}/{max_attempts})...")
+        print(f"AppState: Gemini is reconnecting ({attempt}/{max_attempts})...")
         # Play a subtle single-note ping on each attempt
         if self._ll_midi_out:
             self._ll_midi_out.send_message([0x90, 72, 40])  # Soft C5
@@ -374,6 +378,28 @@ class AppState(QObject):
                 self._ll_midi_out.send_message([0x89, note, 0])
         QTimer.singleShot(80, note_off)
         
+    @Slot()
+    def _on_metronome_tick_from_chord_trainer(self):
+        """Play a MIDI click for the chord trainer exercises."""
+        # Use the ChordTrainer's beat count to figure out if it's an accent (beat 1)
+        beat_num = getattr(self.chord_trainer, '_pentascale_beat_count', 0)
+        
+        # Determine the logical measure beat (assuming 4/4 time for now)
+        # For a negative lead in (-4, -3, -2, -1) we can map it. 
+        # But a simple accent on every 4th beat is fine.
+        measure_beat = (beat_num % 4)
+        if measure_beat == 0:
+            measure_beat = 4 # Map to 1-4
+            
+        # We'll accent "1" (the target beat) and "-3", but honestly just routing to the same func is easier
+        # Let's map negative lead-in numbers to positive 1-4 for the click
+        if beat_num < 0:
+            logical_beat = 4 + beat_num + 1 # -4 -> 1, -3 -> 2, -2 -> 3, -1 -> 4
+        else:
+            logical_beat = (beat_num % 4) + 1 # 0 -> 1, 1 -> 2
+            
+        self._on_metronome_tick(logical_beat)
+        
     @Slot(list)
     def _on_midi_out_requested(self, pitches: list):
         """Play a list of MIDI pitches through the hardware for feedback or preview."""
@@ -442,6 +468,20 @@ class AppState(QObject):
             self.evaluation_engine.startEvaluation(paused=False)
 
     @Slot()
+    def startArchTutorialWithIntro(self):
+        """Prompt the AI to explain the keyboard arches, used in onboarding phase 3."""
+        if self._ai_connected and self._gemini.connected:
+            self._gemini.send_prompt(
+                "[System Note]: The user has just finished the onboarding evaluation. "
+                "Now, we are teaching them how the app works. "
+                "Give a brief, extremely conversational and friendly 2-sentence explanation. "
+                "Explain that the green arches on the virtual keyboard below represent musical intervals "
+                "(the number of half-steps between the notes). Tell them to click an arch below to see its name."
+            )
+        else:
+            print("AppState: AI not connected, skipping arch tutorial voice intro.")
+
+    @Slot()
     def _evaluation_safety_start(self):
         """Fallback to start evaluation if AI intro hangs."""
         if self._eval_intro_pending:
@@ -485,6 +525,15 @@ class AppState(QObject):
             pitch = message[1]
             self.midiNoteReceived.emit(pitch, False)
 
+        elif status == 0xB0: # Control Change
+            controller = message[1]
+            value = message[2] if len(message) > 2 else 0
+            if controller == 64: # Sustain Pedal
+                is_down = value >= 64
+                if is_down != self._is_sustain_pedal_down:
+                    self._is_sustain_pedal_down = is_down
+                    self.sustainPedalChanged.emit(is_down)
+
     @Slot(int, bool)
     def _dispatch_midi_note(self, pitch: int, is_on: bool):
         """Called on main UI thread via queued connection from midiNoteReceived signal."""
@@ -520,6 +569,10 @@ class AppState(QObject):
     @Property(str, constant=True)
     def midiDeviceName(self):
         return self._midi_device_name
+
+    @Property(bool, notify=sustainPedalChanged)
+    def isSustainPedalDown(self):
+        return self._is_sustain_pedal_down
 
     @Property(QObject, constant=True)
     def chordTrainer(self):

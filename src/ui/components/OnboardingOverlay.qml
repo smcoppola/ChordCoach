@@ -12,7 +12,7 @@ Rectangle {
     
     signal completed()
     
-    property int phase: 0  // 0=welcome, 1=evaluation, 2=results
+    property int phase: 0  // 0=welcome, 1=evaluation, 2=results, 3=arch_tutorial
     property bool isRunning: false
     
     property var evalEngine: {
@@ -412,6 +412,99 @@ Rectangle {
                 
                 MouseArea {
                     id: startMA
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.phase = 3;
+                        if (typeof appState !== "undefined" && appState !== null) {
+                            appState.startArchTutorialWithIntro();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // ── Phase 3: Keyboard Arches Tutorial ──
+    Item {
+        anchors.fill: parent
+        visible: root.phase === 3
+        
+        property bool archHasBeenClicked: false
+        
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 30
+            width: Math.min(parent.width * 0.9, 800)
+            
+            Text {
+                text: "The Virtual Keyboard"
+                color: "#ffffff"
+                font.pixelSize: 28 * mainWindow.uiScale
+                font.bold: true
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Text {
+                text: "During lessons, the keyboard shows the notes you need to play. The <font color='#4CAF50'><b>green arches</b></font> above the keys show the musical interval—the number of half-steps between the notes."
+                color: "#aaaaaa"
+                font.pixelSize: 16 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                lineHeight: 1.5
+                horizontalAlignment: Text.AlignHCenter
+                textFormat: Text.RichText
+            }
+            
+            Text {
+                text: "Try clicking an arch below to see its interval name!"
+                color: "#2196F3"
+                font.pixelSize: 16 * mainWindow.uiScale
+                font.bold: true
+                font.italic: true
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: 10 * mainWindow.uiScale
+            }
+            
+            Item { Layout.preferredHeight: 15 * mainWindow.uiScale }
+            
+            Components.VisualKeyboard {
+                id: tutorialKeyboard
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: parent.width
+                Layout.preferredHeight: 150 * mainWindow.uiScale
+                targetKeys: [60, 64, 67] // C Major Chord (C4, E4, G4)
+                
+                onArchClicked: {
+                    parent.parent.archHasBeenClicked = true;
+                }
+            }
+            
+            Item { Layout.preferredHeight: 15 * mainWindow.uiScale }
+            
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 260 * mainWindow.uiScale
+                Layout.preferredHeight: 54 * mainWindow.uiScale
+                radius: 27 * mainWindow.uiScale
+                color: finishMA.containsMouse ? "#43A047" : "#4CAF50"
+                opacity: parent.parent.archHasBeenClicked ? 1.0 : 0.0
+                visible: opacity > 0
+                
+                Behavior on opacity { NumberAnimation { duration: 400 } }
+                
+                Text {
+                    anchors.centerIn: parent
+                    text: "Finish Setup"
+                    color: "#ffffff"
+                    font.pixelSize: 16 * mainWindow.uiScale
+                    font.bold: true
+                }
+                
+                MouseArea {
+                    id: finishMA
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor

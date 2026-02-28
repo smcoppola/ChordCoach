@@ -94,8 +94,8 @@ Rectangle {
                             Layout.fillWidth: true
                             model: ["Puck", "Kore", "Charon", "Fenrir", "Aoede", "Leda"]
                             currentIndex: {
-                                var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachVoice : "Puck";
-                                return model.indexOf(v) >= 0 ? model.indexOf(v) : 0;
+                                var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachVoice : "Kore";
+                                return model.indexOf(v) >= 0 ? model.indexOf(v) : 2;
                             }
                             onActivated: {
                                 if (typeof appState !== "undefined" && appState !== null && appState.settingsService)
@@ -128,9 +128,9 @@ Rectangle {
                         ComboBox {
                             id: personalityCombo
                             Layout.fillWidth: true
-                            model: ["Encouraging", "Old-School"]
+                            model: ["Balanced", "Encouraging", "Old-School"]
                             currentIndex: {
-                                var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachPersonality : "Encouraging";
+                                var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachPersonality : "Balanced";
                                 return model.indexOf(v) >= 0 ? model.indexOf(v) : 0;
                             }
                             onActivated: {
@@ -149,6 +149,9 @@ Rectangle {
                 }
             }
         }
+
+        // Hardware Settings Section Removed
+
 
         // Skill Matrix Section
         GroupBox {
@@ -390,11 +393,13 @@ Rectangle {
         x: (parent.width - width) / 2
         y: (parent.height - height) / 2
 
-        contentItem: Label {
+        Label {
             text: "Are you sure you want to reset all your chord progress? This cannot be undone."
             color: "#ffffff"
             padding: 20 * mainWindow.uiScale
             font.pixelSize: 14 * mainWindow.uiScale
+            width: 300 * mainWindow.uiScale
+            wrapMode: Text.WordWrap
         }
 
         onAccepted: {

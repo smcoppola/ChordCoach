@@ -223,7 +223,9 @@ class CurriculumService(QObject):
                         self.db.advance_milestone(track, milestone_id)
                         print(f"CurriculumService: 🎉 Milestone advanced! {track}/{milestone_id} "
                               f"({attempts} attempts, {accuracy:.0%} accuracy)")
-                        self.curriculumChanged.emit()
+            
+            # Notify UI that progress (attempts/accuracy) has changed, even if milestone didn't advance
+            self.curriculumChanged.emit()
 
         # Schedule spaced repetition for this chord
         if chord_name:
@@ -256,12 +258,32 @@ class CurriculumService(QObject):
         result = []
         for ms in active:
             meta = self._get_milestone_meta(ms["track_name"], ms["milestone_id"])
+            attempts = int(ms.get("attempts", 0) or 0)
+            successes = int(ms.get("successes", 0) or 0)
+            
+            # Calculate a normalized progress percentage (0.0 to 1.0)
+            progress = 0.0
+            if meta:
+                min_att = int(meta.get("min_attempts_to_advance", 5))
+                min_acc = float(meta.get("min_accuracy_to_advance", 0.80))
+                
+                # Progress is a mix of doing enough attempts and hitting the accuracy mark
+                att_progress = min(1.0, attempts / min_att) if min_att > 0 else 1.0
+                acc_progress = 0.0
+                if attempts > 0:
+                    current_acc = successes / attempts
+                    acc_progress = min(1.0, current_acc / min_acc) if min_acc > 0 else 1.0
+                
+                # Combine them, weighting completion more if accuracy is lagging
+                progress = float((att_progress * 0.4) + (acc_progress * 0.6))
+            
             result.append({
                 "track": ms["track_name"],
                 "milestoneId": ms["milestone_id"],
                 "title": meta.get("title", ms["milestone_id"]) if meta else ms["milestone_id"],
-                "attempts": ms.get("attempts", 0),
-                "successes": ms.get("successes", 0),
+                "attempts": attempts,
+                "successes": successes,
+                "progress": progress,
                 "status": ms["status"],
             })
         return result

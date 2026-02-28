@@ -20,8 +20,17 @@ Rectangle {
     
     function formatChordTitle(name) {
         if (!name) return "";
-        // Replace accidentally trailing/spaced sharps and flats
-        return name.replace(/#/g, " Sharp").replace(/b( |$)/g, " Flat$1");
+        // 1. Replace accidentally trailing/spaced sharps and flats
+        var formatted = name.replace(/#/g, " Sharp").replace(/b( |$)/g, " Flat$1");
+        
+        // 2. Handle Major/Minor abbreviations for standard notation above the staff
+        // "A Major" -> "A" (standard convention is to omit "Major" for triads)
+        formatted = formatted.replace(/\bMajor\b/gi, "");
+        // "A Minor" -> "Am"
+        formatted = formatted.replace(/\bMinor\b/gi, "m");
+        
+        // 3. Clean up any accidental double spaces left behind
+        return formatted.trim().replace(/\s+/g, ' ');
     }
     
     // Hardcode the pitch colors (matches midi_ingestor.py and VisualKeyboard needs)

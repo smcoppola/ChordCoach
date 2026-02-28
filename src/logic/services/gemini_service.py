@@ -16,9 +16,10 @@ class GeminiService(QObject):
     aiFinishedSpeaking = Signal()
     reconnecting = Signal(int, int)  # (attempt, max_attempts)
 
-    def __init__(self, api_key=None):
+    def __init__(self, settings_manager=None, api_key=None):
         super().__init__()
-        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY")
+        self.settings = settings_manager
+        self.api_key = self.settings.apiKey if self.settings else (api_key or os.environ.get("GOOGLE_API_KEY"))
         self.ws_url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self.api_key}"
         
         self.loop = asyncio.new_event_loop()
@@ -86,12 +87,16 @@ class GeminiService(QObject):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def connect_service(self, coach_context: str = "", voice: str = "Puck",
+    def connect_service(self, coach_context: str = "", voice: str = "Kore",
                         brevity: str = "Normal", personality: str = "Encouraging"):
         """Called by AppState or UI to initiate the WebSocket connection."""
+        # Refresh API key right before connecting in case it changed
+        self.api_key = self.settings.apiKey if self.settings else os.environ.get("GOOGLE_API_KEY")
         if not self.api_key:
             print("Cannot connect: No API Key")
             return
+            
+        self.ws_url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self.api_key}"
         self.coach_context = coach_context
         self._voice = voice
         self._brevity = brevity
@@ -118,7 +123,7 @@ class GeminiService(QObject):
             # Build personality-based system instruction
             personality = getattr(self, '_personality', 'Encouraging')
             brevity = getattr(self, '_brevity', 'Normal')
-            voice = getattr(self, '_voice', 'Puck')
+            voice = getattr(self, '_voice', 'Kore')
             
             if personality == "Old-School":
                 base_instruction = (
@@ -131,6 +136,18 @@ class GeminiService(QObject):
                     "Just speak directly to the student. 2. DO NOT provide verbal feedback after every single chord. "
                     "3. If a student plays correctly, stay silent and let them continue. "
                     "4. When introducing exercises, be matter-of-fact about what they need to do and why."
+                )
+            elif personality == "Balanced":
+                base_instruction = (
+                    "You are 'ChordCoach', an expert AI piano teacher. You strike a balanced, realistic tone. "
+                    "You are encouraging but not overly patronizing, and you are gently critical when the student "
+                    "is struggling or makes repeated mistakes. You focus on practical, actionable advice rather than "
+                    "constant cheerleading. "
+                    "CRITICAL RULES: 1. When a new exercise starts, introduce what to do clearly and practically. "
+                    "2. NEVER narrate what you are doing. NEVER output internal monologue. Just speak directly to the user. "
+                    "3. DO NOT provide verbal feedback after every single chord. "
+                    "4. If a user plays correctly, stay silent and let them continue. "
+                    "5. If a user is struggling, step in with a helpful tip or gentle correction, rather than just telling them to try again."
                 )
             else:  # Encouraging (default)
                 base_instruction = (
@@ -153,6 +170,9 @@ class GeminiService(QObject):
                 base_instruction += " Keep ALL responses to 1 SHORT sentence maximum. No filler words. Be extremely concise."
             else:  # Normal
                 base_instruction += " When speaking, use 1-2 concise sentences per introduction."
+
+            # Global Pronunciation Rules
+            base_instruction += " PRONUNCIATION RULE: Whenever you see a Roman Numeral chord progression (like I-V-vi-IV), pronounce it as numbers (e.g. 'one, five, six, four'), NOT as letters (e.g. 'eye, vee')."
             
             if hasattr(self, 'coach_context') and self.coach_context:
                 base_instruction += "\n\n" + self.coach_context
