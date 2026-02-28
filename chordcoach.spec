@@ -23,7 +23,7 @@ elif is_mac:
     hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so') 
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.dylib'
     portaudio_lib_path = 'build/_deps/portaudio-build/libportaudio.dylib'
-    app_icon = 'resources/icon.icns'
+    app_icon = 'resources/icon.png'
 else:
     hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.so'
@@ -51,9 +51,11 @@ icon_file = (
     'resources'
 )
 
-datas_list = [ui_files, database_folder, icon_file]
+datas_list = [ui_files, database_folder]
 if os.path.exists('.env'):
     datas_list.append(env_file)
+if os.path.exists(app_icon):
+    datas_list.append(icon_file)
 
 a = Analysis(
     ['src/app.py'],
