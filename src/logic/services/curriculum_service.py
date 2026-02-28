@@ -251,6 +251,7 @@ class CurriculumService(QObject):
 
     # ── QML Properties ────────────────────────────────────────────────
 
+    # Must explicitly type as QVariantList for QML Repeater to work correctly
     @Property("QVariantList", notify=curriculumChanged)
     def activeMilestones(self) -> list:
         """Active milestones with metadata for QML display."""
