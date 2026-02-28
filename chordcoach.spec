@@ -4,23 +4,28 @@ block_cipher = None
 
 import sys
 import os
+import glob
 
 is_win = sys.platform.startswith('win')
 is_mac = sys.platform == 'darwin'
 
+def find_file(pattern, default):
+    matches = glob.glob(pattern)
+    return matches[0] if matches else default
+
 if is_win:
-    hw_ext_path = 'build/src/hardware/Release/chordcoach_hw.cp314-win_amd64.pyd'
+    hw_ext_path = find_file('build/src/hardware/Release/chordcoach_hw*.pyd', 'build/src/hardware/Release/chordcoach_hw.pyd')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/Release/rtmidi.dll'
     portaudio_lib_path = 'build/_deps/portaudio-build/Release/portaudio.dll'
     app_icon = 'resources/icon.ico'
 elif is_mac:
     # Use wildcards or assume typical CMake output paths for macOS
-    hw_ext_path = 'build/src/hardware/chordcoach_hw.so' 
+    hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so') 
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.dylib'
     portaudio_lib_path = 'build/_deps/portaudio-build/libportaudio.dylib'
     app_icon = 'resources/icon.icns'
 else:
-    hw_ext_path = 'build/src/hardware/chordcoach_hw.so'
+    hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.so'
     portaudio_lib_path = 'build/_deps/portaudio-build/libportaudio.so'
     app_icon = 'resources/icon.png'
