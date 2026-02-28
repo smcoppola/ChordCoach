@@ -2,48 +2,61 @@ name: macOS Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build:
     runs-on: macos-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Set up Homebrew Dependencies
-      run: |
-        brew install cmake qt6
+      - name: Set up Homebrew Dependencies
+        run: |
+          brew install cmake qt6 create-dmg
 
-    - name: Build C++ Extensions
-      run: |
-        mkdir build
-        cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release
-        make -j$(sysctl -n hw.ncpu)
-        # Note: chordcoach_hw.so will be created in build/src/hardware/
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pybind11 PySide6 google-genai mido pretty-midi websockets requests bs4
 
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pyinstaller pybind11 PySide6 google-genai mido pretty-midi websockets requests bs4
+      - name: Build C++ Extensions
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(sysctl -n hw.ncpu)
+          # Note: chordcoach_hw.so will be created in build/src/hardware/
 
-    - name: Build with PyInstaller
-    # You'll need a macOS specific spec file or a cross-platform one
-      run: |
-        pyinstaller chordcoach.spec --clean --noconfirm
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller chordcoach.spec --clean --noconfirm
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ChordCoach-macOS-App
-        path: dist/ChordCoachCompanion.app
+      - name: Create DMG Package
+        run: |
+          # Creates a DMG file with a shortcut to Applications
+          create-dmg \
+            --volname "ChordCoach Companion" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "ChordCoachCompanion.app" 150 150 \
+            --hide-extension "ChordCoachCompanion.app" \
+            --app-drop-link 450 150 \
+            "ChordCoachCompanion-macOS.dmg" \
+            "dist/"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChordCoach-macOS-Installer
+          path: ChordCoachCompanion-macOS.dmg
