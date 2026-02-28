@@ -51,11 +51,15 @@ icon_file = (
     'resources'
 )
 
+datas_list = [ui_files, database_folder, icon_file]
+if os.path.exists('.env'):
+    datas_list.append(env_file)
+
 a = Analysis(
     ['src/app.py'],
     pathex=['src'],
     binaries=[hw_extension, rtmidi_dll, portaudio_dll],
-    datas=[ui_files, database_folder, env_file, icon_file],
+    datas=datas_list,
     hiddenimports=[
         'PySide6.QtQml', 
         'PySide6.QtQuick', 
