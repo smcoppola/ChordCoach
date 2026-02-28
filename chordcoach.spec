@@ -57,10 +57,16 @@ if os.path.exists('.env'):
 if os.path.exists(app_icon):
     datas_list.append(icon_file)
 
+binaries_list = [hw_extension]
+if os.path.exists(rtmidi_lib_path):
+    binaries_list.append(rtmidi_dll)
+if os.path.exists(portaudio_lib_path):
+    binaries_list.append(portaudio_dll)
+
 a = Analysis(
     ['src/app.py'],
     pathex=['src'],
-    binaries=[hw_extension, rtmidi_dll, portaudio_dll],
+    binaries=binaries_list,
     datas=datas_list,
     hiddenimports=[
         'PySide6.QtQml', 
