@@ -50,8 +50,12 @@ icon_file = (
     app_icon,
     'resources'
 )
+resources_folder = (
+    'src/resources',
+    'src/resources'
+)
 
-datas_list = [ui_files, database_folder]
+datas_list = [ui_files, database_folder, resources_folder]
 if os.path.exists('.env'):
     datas_list.append(env_file)
 if os.path.exists(app_icon):
