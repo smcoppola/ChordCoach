@@ -13,6 +13,7 @@ class ChordTrainerService(QObject):
     activeChanged = Signal(bool)
     targetChordChanged = Signal(str)
     chordSuccess = Signal(str, float) # chord_name, latency_ms
+    pentascaleNoteHit = Signal(int, str) # index, feedback (Fast, Slow, Perfect!)
     chordFailed = Signal()
     lessonStateChanged = Signal()
     loadingStatusChanged = Signal()
