@@ -306,7 +306,7 @@ class ChordTrainerService(QObject):
                     blocks_text = "Here is the SESSION PLAN for today. You must generate 20-40 exercises for EACH block:\n"
                 
                 for i, b in enumerate(session_plan["blocks"]):
-                    blocks_text += f"\nBlock {i+1}: {b['milestone_title']} ({b['track']})\n"
+                    blocks_text += f"\nBlock {i+1}: {b['milestone_title']} (track: '{b['track']}', milestone_id: '{b['milestone_id']}')\n"
                     blocks_text += f"- Goal: {b['milestone_description']}\n"
                     blocks_text += f"- Target Keys: {b['target_keys']}\n"
                     blocks_text += f"- Target Chords: {b['target_chords']}\n"
@@ -399,6 +399,14 @@ For exercise_type "sustain_pedal":
 RULES for spoken_instruction:
 - ONLY the first step of each new exercise_name or block gets spoken.
 - The VERY FIRST step MUST have a 3-4 sentence overview of the session goals.
+
+BEGINNER SAFETY RULES:
+- If 'Global Session Progress' indicates the user is a BEGINNER (low total attempts):
+  - DO NOT use 7th, 9ths, or other extended chords unless explicitly in target_chords.
+  - DO NOT use complex rhythms.
+  - FOCUS on individual notes (pentascale) and basic Triads (Major/Minor).
+  - For 'listen' exercises, ONLY use "Major" and "Minor" as target_quality.
+- ALWAYS prioritize 'target_chords' list over the general 'milestone_description'.
 """
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
@@ -461,8 +469,8 @@ RULES for spoken_instruction:
                                     if ex_type == "pentascale":
                                         # Pentascale steps need root_idx and scale_type
                                         if "root_idx" in step:
-                                            step.setdefault("track", "technique")
-                                            step.setdefault("milestone_id", "")
+                                            step.setdefault("track", step.get("track", "technique"))
+                                            step.setdefault("milestone_id", step.get("milestone_id", ""))
                                             step.setdefault("hand", "right")
                                             step.setdefault("scale_type", "Major")
                                             step.setdefault("direction", "ascending")
@@ -482,8 +490,8 @@ RULES for spoken_instruction:
                                                     valid = False
                                                     break
                                             if valid:
-                                                step.setdefault("track", "theory")
-                                                step.setdefault("milestone_id", "")
+                                                step.setdefault("track", step.get("track", "theory"))
+                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
                                                 step.setdefault("hand", "right")
                                                 step.setdefault("exercise_name", "Chord Progression")
                                                 step.setdefault("hold_ms", 1000)
@@ -492,8 +500,8 @@ RULES for spoken_instruction:
                                     elif ex_type == "listen":
                                         # Parse ear training steps
                                         if "root_idx" in step and "target_quality" in step:
-                                            step.setdefault("track", "ear")
-                                            step.setdefault("milestone_id", "")
+                                            step.setdefault("track", step.get("track", "ear"))
+                                            step.setdefault("milestone_id", step.get("milestone_id", ""))
                                             step.setdefault("hand", "right")
                                             step.setdefault("exercise_name", "Ear Training")
                                             step.setdefault("chord_type_name", step["target_quality"])
@@ -504,8 +512,8 @@ RULES for spoken_instruction:
                                         if all(k in step for k in ("root_idx", "chord_type_name")):
                                             c_type = step["chord_type_name"]
                                             if c_type in self.CHORD_TYPES:
-                                                step.setdefault("track", "technique")
-                                                step.setdefault("milestone_id", "")
+                                                step.setdefault("track", step.get("track", "technique"))
+                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
                                                 step.setdefault("hand", "both")
                                                 step.setdefault("exercise_name", "Hands Together")
                                                 step.setdefault("hold_ms", 1000)
@@ -517,8 +525,8 @@ RULES for spoken_instruction:
                                         if all(k in step for k in ("root_idx", "chord_type_name")):
                                             c_type = step["chord_type_name"]
                                             if c_type in self.CHORD_TYPES:
-                                                step.setdefault("track", "technique")
-                                                step.setdefault("milestone_id", "")
+                                                step.setdefault("track", step.get("track", "technique"))
+                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
                                                 step.setdefault("hand", "right")
                                                 step.setdefault("pedal_type", "direct")
                                                 step.setdefault("exercise_name", "Pedal Technique")
@@ -532,8 +540,8 @@ RULES for spoken_instruction:
                                         if all(k in step for k in ("root_idx", "chord_type_name")):
                                             c_type = step["chord_type_name"]
                                             if c_type in self.CHORD_TYPES:
-                                                step.setdefault("track", "technique")
-                                                step.setdefault("milestone_id", "")
+                                                step.setdefault("track", step.get("track", "technique"))
+                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
                                                 # Allow 'hand' to be passed from the prompt, default to right
                                                 step["hand"] = step.get("hand", "right")
                                                 step["intervals"] = self.CHORD_TYPES[c_type]
@@ -827,6 +835,8 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         self._waiting_for_release = False
         self._hold_tick_timer.stop()
         self._prompt_time = time.time()
+        self._metronome_start_time = 0.0 # Track precise start for timing feedback
+        self._pentascale_bpm = 0
         self._wrong_notes_count = 0
         self._first_note_time = 0.0
         self._is_simultaneous = False
@@ -835,11 +845,15 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         bpm = chord_data.get("bpm", 0)  # Defaults to 0 (free-play)
         if bpm > 0:
             interval_ms = int(60000 / bpm)
+            self._pentascale_bpm = bpm
             self._pentascale_beat_count = -4  # 4-beat lead in (-4, -3, -2, -1)
+            # The beat starts immediately on tick 0
+            self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4) # Time when beat 0 will hit
             self._metronome_timer.start(interval_ms)
             print(f"ChordTrainer: Started pentascale metronome at {bpm} BPM")
         else:
             self._metronome_timer.stop()
+            self._pentascale_bpm = 0
             print("ChordTrainer: Free-play pentascale mode (no metronome)")
         
         # Set target to the first note in the sequence
@@ -1171,6 +1185,25 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         if target_pitch in self._active_pitches:
             # Correct note! Advance to the next note in the sequence
             print(f"ChordTrainer: Pentascale note {self._pentascale_index + 1}/5 correct: {self.ROOT_NOTES[target_pitch % 12]}")
+            
+            # Calculate timing feedback if metronome is active
+            feedback_text = ""
+            if self._pentascale_bpm > 0 and self._metronome_start_time > 0:
+                interval_ms = 60000 / self._pentascale_bpm
+                expected_time_sec = self._metronome_start_time + (self._pentascale_index * (interval_ms / 1000.0))
+                actual_time_sec = time.time()
+                diff_ms = (actual_time_sec - expected_time_sec) * 1000.0
+                
+                if diff_ms < -150:
+                    feedback_text = "Fast"
+                elif diff_ms > 150:
+                    feedback_text = "Slow"
+                else:
+                    feedback_text = "Perfect!"
+                    
+                print(f"ChordTrainer: Timing for note {self._pentascale_index}: expected={expected_time_sec:.2f}, actual={actual_time_sec:.2f}, diff={diff_ms:.0f}ms -> {feedback_text}")
+                
+            self.pentascaleNoteHit.emit(self._pentascale_index, feedback_text)
             
             # Record success for this individual note
             note_name = f"{self.ROOT_NOTES[target_pitch % 12]} (Pentascale)"

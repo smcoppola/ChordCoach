@@ -406,34 +406,6 @@
             "target_chords": [],
             "min_attempts_to_advance": 10,
             "min_accuracy_to_advance": 0.80
-        },
-        {
-            "id": "chord_quality_id",
-            "title": "Chord Quality Identification",
-            "order": 3,
-            "exercise_types": [
-                "listen"
-            ],
-            "unlock_criteria": "major_minor_recognition",
-            "description": "Identify chord qualities: major, minor, diminished, dominant 7th.",
-            "target_keys": [],
-            "target_chords": [],
-            "min_attempts_to_advance": 15,
-            "min_accuracy_to_advance": 0.75
-        },
-        {
-            "id": "root_id_by_ear",
-            "title": "Root Identification by Ear",
-            "order": 4,
-            "exercise_types": [
-                "listen"
-            ],
-            "unlock_criteria": "chord_quality_id",
-            "description": "Hear a chord and name the root note.",
-            "target_keys": [],
-            "target_chords": [],
-            "min_attempts_to_advance": 15,
-            "min_accuracy_to_advance": 0.70
         }
     ]
 }

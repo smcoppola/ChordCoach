@@ -4,10 +4,11 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 class DatabaseManager:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        # Ensure directory exists
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path):
+        self.db_path = Path(db_path) if db_path != ":memory:" else db_path
+        # Ensure directory exists only for file-based DBs
+        if self.db_path != ":memory:":
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _get_connection(self):
@@ -407,9 +408,16 @@ class DatabaseManager:
             
             if total_attempts > 0:
                 ratio = total_successes / total_attempts
-                context += f"\nGlobal Session Progress:\n- Total Lifetime Attempts: {total_attempts}\n- Overall Success Ratio: {ratio:.2f}\n"
+                
+                # Determine human-readable skill level
+                level = "Absolute Beginner"
+                if total_attempts > 500: level = "Intermediate"
+                elif total_attempts > 200: level = "Advanced Beginner"
+                elif total_attempts > 50: level = "Novice"
+                
+                context += f"\nGlobal Session Progress:\n- Skill Level: {level}\n- Total Lifetime Attempts: {total_attempts}\n- Overall Success Ratio: {ratio:.2f}\n"
             else:
-                context += "\nGlobal Session Progress:\n- The user is a brand new beginner with 0 chord attempts. Start with the absolute basics.\n"
+                context += "\nGlobal Session Progress:\n- Skill Level: Absolute Beginner\n- The user is a brand new beginner with 0 chord attempts. Start with the absolute basics.\n"
                     
         return context
 

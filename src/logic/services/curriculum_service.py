@@ -144,6 +144,7 @@ class CurriculumService(QObject):
         self._session_successes = 0
 
         self.sessionPlanReady.emit()
+        self.curriculumChanged.emit() # Redraw curriculum sidebar with only active tracks
         print(f"CurriculumService: Planned session with {len(blocks)} blocks across {list(tracks_used)}, ~{total_steps} steps")
         return self._session_plan
 
@@ -202,6 +203,7 @@ class CurriculumService(QObject):
 
         # Update milestone progress if we know which one
         if track and milestone_id:
+            print(f"CurriculumService: Recording attempt for {track}/{milestone_id} (success={success})")
             self.db.record_milestone_attempt(track, milestone_id, success)
 
             # Check if milestone should advance
@@ -225,6 +227,7 @@ class CurriculumService(QObject):
                               f"({attempts} attempts, {accuracy:.0%} accuracy)")
             
             # Notify UI that progress (attempts/accuracy) has changed, even if milestone didn't advance
+            print(f"CurriculumService: Emitting curriculumChanged signal!")
             self.curriculumChanged.emit()
 
         # Schedule spaced repetition for this chord
@@ -248,6 +251,8 @@ class CurriculumService(QObject):
             print(f"CurriculumService: Session recorded — {self._session_exercises} exercises, "
                   f"{accuracy:.0%} accuracy, {elapsed}s")
             self._session_start_time = 0.0
+            self._session_tracks = []
+            self.curriculumChanged.emit() # Restore full curriculum list in UI
 
     # ── QML Properties ────────────────────────────────────────────────
 
@@ -255,7 +260,15 @@ class CurriculumService(QObject):
     @Property("QVariantList", notify=curriculumChanged)
     def activeMilestones(self) -> list:
         """Active milestones with metadata for QML display."""
+        # If we are NOT in an active session plan, show nothing in the curriculum panel
+        if not self._session_tracks:
+            return []
+            
         active = self.db.get_active_milestones()
+        
+        # Only show the tracks we are focusing on
+        active = [ms for ms in active if ms["track_name"] in self._session_tracks]
+            
         result = []
         for ms in active:
             meta = self._get_milestone_meta(ms["track_name"], ms["milestone_id"])
@@ -287,6 +300,8 @@ class CurriculumService(QObject):
                 "progress": progress,
                 "status": ms["status"],
             })
+            
+        print(f"CurriculumService: Extracted {len(result)} active milestones for QML: {result}")
         return result
 
     @Property(int, notify=curriculumChanged)

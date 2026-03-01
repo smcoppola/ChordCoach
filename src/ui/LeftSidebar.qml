@@ -122,9 +122,10 @@ Rectangle {
             font.pixelSize: 10 * mainWindow.uiScale
             font.bold: true
             font.letterSpacing: 2 * mainWindow.uiScale
+            visible: curriculumRepeater.count > 0
         }
         
-        Item { Layout.preferredHeight: 8 }
+        Item { Layout.preferredHeight: 8; visible: curriculumRepeater.count > 0 }
         
         Rectangle {
             Layout.fillWidth: true
@@ -133,6 +134,7 @@ Rectangle {
             radius: 8
             border.color: "#333333"
             border.width: 1
+            visible: curriculumRepeater.count > 0
             
             ColumnLayout {
                 id: curriculumCol
@@ -142,7 +144,19 @@ Rectangle {
                 
                 // Active Milestones
                 Repeater {
-                    model: (typeof appState !== "undefined" && appState && appState.curriculumEngine) ? appState.curriculumEngine.activeMilestones : []
+                    id: curriculumRepeater
+                    model: typeof appState !== "undefined" && appState && appState.curriculumEngine ? appState.curriculumEngine.activeMilestones : []
+                    
+                    Connections {
+                        target: typeof appState !== "undefined" && appState ? appState.curriculumEngine : null
+                        function onCurriculumChanged() {
+                            // Force QML to redraw the repeater when the Python dicts change
+                            var freshData = appState.curriculumEngine.activeMilestones;
+                            curriculumRepeater.model = null;
+                            curriculumRepeater.model = freshData;
+                        }
+                    }
+                    
                     delegate: ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 4

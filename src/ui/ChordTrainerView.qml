@@ -43,6 +43,7 @@ Rectangle {
     property string currentHand: appState.chordTrainer.currentHand || "right"
     property bool isSustainPedalDown: appState.isSustainPedalDown
     property int pentascaleBeatCount: appState.chordTrainer.pentascaleBeatCount
+    property var pentascaleFeedbackList: ["", "", "", "", ""]
  
     // Internal state for loading animation
     property real loadingProgress: 0.0
@@ -104,8 +105,13 @@ Rectangle {
     Connections {
         target: (typeof appState !== "undefined" && appState) ? appState.chordTrainer : null
         
+        function onChordFailed() {
+            failFlash.start();
+        }
+        
         function onTargetChordChanged(chordName) {
             root.currentTarget = chordName;
+            root.pentascaleFeedbackList = ["", "", "", "", ""]; // Reset feedback on new target
             
             // Re-sync visual keyboard target keys
             var tp = appState.chordTrainer.targetPitches;
@@ -118,17 +124,12 @@ Rectangle {
             console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr);
         }
         
-        function onChordSuccess(chordName, latencyMs) {
-            // Flash background green on success
-            successFlash.start();
-            
-            // Show latency briefly
-            latencyText.text = "+" + Math.round(latencyMs) + "ms";
-            latencyAnim.start();
-        }
-        
-        function onChordFailed() {
-            failFlash.start();
+        function onPentascaleNoteHit(noteIndex, feedbackText) {
+            var newFeedback = root.pentascaleFeedbackList.slice(); // Copy array
+            if (noteIndex >= 0 && noteIndex < 5) {
+                newFeedback[noteIndex] = feedbackText;
+                root.pentascaleFeedbackList = newFeedback;      // Trigger bindings
+            }
         }
         
         // Note: loadingStatusChanged, lessonStateChanged, activeChanged, metronomeTick
@@ -297,20 +298,40 @@ Rectangle {
         // Pentascale Note Progress Indicator  
         Row {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 12 * mainWindow.uiScale
+            spacing: 24 * mainWindow.uiScale
             visible: root.isActive && !root.isLessonComplete && root.exerciseType === "pentascale"
             
             Repeater {
                 model: 5
-                delegate: Rectangle {
-                    width: 16
-                    height: 16
-                    radius: 8
-                    color: index < root.currentNoteIndex ? "#4CAF50" : (index === root.currentNoteIndex ? "#2196F3" : "#333333")
-                    border.color: index === root.currentNoteIndex ? "#64B5F6" : "transparent"
-                    border.width: index === root.currentNoteIndex ? 2 : 0
+                delegate: Column {
+                    spacing: 8 * mainWindow.uiScale
+                    width: 60 * mainWindow.uiScale
                     
-                    Behavior on color { ColorAnimation { duration: 150 } }
+                    Text {
+                        text: root.pentascaleFeedbackList[index]
+                        color: {
+                            if (text === "Perfect!") return "#4CAF50";
+                            if (text === "Fast") return "#FFC107";
+                            if (text === "Slow") return "#FF9800";
+                            return "transparent";
+                        }
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.bold: true
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        height: 16 * mainWindow.uiScale
+                    }
+                    
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 16 * mainWindow.uiScale
+                        height: 16 * mainWindow.uiScale
+                        radius: 8 * mainWindow.uiScale
+                        color: index < root.currentNoteIndex ? "#4CAF50" : (index === root.currentNoteIndex ? "#2196F3" : "#333333")
+                        border.color: index === root.currentNoteIndex ? "#64B5F6" : "transparent"
+                        border.width: index === root.currentNoteIndex ? 2 : 0
+                        
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                    }
                 }
             }
         }
@@ -416,7 +437,7 @@ Rectangle {
                 spacing: 30
                 
                 Text {
-                    text: "YOUR COACH IS READY"
+                    text: "YOUR LESSON IS READY"
                     font.pixelSize: 32 * mainWindow.uiScale
                     font.bold: true
                     font.letterSpacing: 2 * mainWindow.uiScale

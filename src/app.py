@@ -38,7 +38,17 @@ if getattr(sys, 'frozen', False):
     if sys.platform == "win32":
         os.environ["QTWEBENGINEPROCESS_PATH"] = str(bundle_dir / "PySide6" / "QtWebEngineProcess.exe")
     elif sys.platform == "darwin":
-        webengine = bundle_dir / "PySide6" / "Qt" / "lib" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess"
+        # PyInstaller heavily modifies the structure of a macOS .app BUNDLE
+        meipass_path = Path(getattr(sys, '_MEIPASS', bundle_dir))
+        
+        # Try typical PyInstaller fallback locations for macOS
+        possible_paths = [
+            meipass_path / "PySide6" / "Qt" / "lib" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess",
+            meipass_path / "PySide6" / "QtWebEngineProcess",
+            meipass_path.parent / "Frameworks" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess"
+        ]
+        
+        webengine = next((p for p in possible_paths if p.exists()), possible_paths[0])
         if webengine.exists():
             os.environ["QTWEBENGINEPROCESS_PATH"] = str(webengine)
 else:

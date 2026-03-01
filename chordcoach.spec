@@ -116,7 +116,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=not is_mac, # macOS BUNDLEs crash if console=True is used without a terminal
     icon=app_icon,
     disable_windowed_traceback=False,
     argv_emulation=False,
