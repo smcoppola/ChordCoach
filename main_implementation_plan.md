@@ -240,6 +240,29 @@
 
 ---
 
+## Phase 7 — Technical Terms Glossary
+
+**Goal:** Provide a dedicated UI for users to view and hear explanations for all the technical musical terms the AI coach has taught them throughout their lessons.
+
+### Files
+
+#### [NEW] `src/ui/GlossaryView.qml`
+- A searchable, scrollable dictionary view covering all learned technical terms.
+- For each term: Name, text definition, and a "Play Audio" button to hear the coach explain it again.
+
+#### [MODIFY] `src/ui/DashboardView.qml` or `LeftSidebar.qml`
+- Add an entry point / navigation button to open the `GlossaryView`.
+
+#### [MODIFY] `src/logic/services/database_manager.py`
+- Extend the `learned_terms` table retrieval methods to expose definitions and audio caching to the UI.
+
+### Verification
+- Navigate to the Glossary from the main UI.
+- Verify terms learned in previous lessons appear in the list.
+- Click "Play Audio" on a term and verify the text-to-speech explanation works.
+
+---
+
 ## Dependencies Between Phases
 
 ```mermaid

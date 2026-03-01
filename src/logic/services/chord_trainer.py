@@ -272,6 +272,11 @@ class ChordTrainerService(QObject):
             user_context = self.curriculum.get_curriculum_context()
         else:
             user_context = self.db.get_coach_context()
+            
+        learned_terms = self.db.get_learned_term_names()
+        if learned_terms:
+            user_context += f"\n\nALREADY EXPLAINED TERMS (DO NOT explain these again!):\n{', '.join(learned_terms)}\n"
+        user_context += "\nIMPORTANT: For any NEW technical music terms you use in your spoken_instruction that are NOT in the list above, you MUST explain them simply before using them. Add these new terms to the 'new_terms' array in your JSON response."
         
         threading.Thread(target=self._query_gemini_for_lesson_plan, 
                          args=(user_context, session_plan), daemon=True).start()
@@ -289,9 +294,17 @@ class ChordTrainerService(QObject):
             # (Connectivity check removed for brevity, proceeding to generation)
             self._loading_status_text = "GENERATING YOUR LESSON..."
             self.loadingStatusChanged.emit()
+            
+            # Check for developer fast-testing mode
+            dev_mode = os.environ.get("DEV_MODE", "false").lower() in ("true", "1", "yes")
+            
             blocks_text = ""
             if session_plan and "blocks" in session_plan:
-                blocks_text = "Here is the SESSION PLAN for today. You must generate 20-40 exercises for EACH block:\n"
+                if dev_mode:
+                    blocks_text = "Here is the SESSION PLAN for today. You must generate exactly 2 or 3 exercises for EACH block (DEV MODE IS ON - KEEP LESSONS EXTREMELY SHORT!):\n"
+                else:
+                    blocks_text = "Here is the SESSION PLAN for today. You must generate 20-40 exercises for EACH block:\n"
+                
                 for i, b in enumerate(session_plan["blocks"]):
                     blocks_text += f"\nBlock {i+1}: {b['milestone_title']} ({b['track']})\n"
                     blocks_text += f"- Goal: {b['milestone_description']}\n"
@@ -300,7 +313,10 @@ class ChordTrainerService(QObject):
                     blocks_text += f"- Target exercise count for this block: {b['step_count']}\n"
                 
                 if session_plan.get("review_items"):
-                    blocks_text += "\nREVIEW ITEMS (SM-2): Include 2-3 drills for each of these items:\n"
+                    if dev_mode:
+                        blocks_text += "\nREVIEW ITEMS (SM-2): Include EXACTLY 1 drill for each of these items:\n"
+                    else:
+                        blocks_text += "\nREVIEW ITEMS (SM-2): Include 2-3 drills for each of these items:\n"
                     for r in session_plan["review_items"]:
                         blocks_text += f"- {r['item_type']}: {r['item_id']}\n"
             else:
@@ -312,13 +328,16 @@ class ChordTrainerService(QObject):
 
 {blocks_text}
 
-Generate a custom lesson plan as a SINGLE JSON array of steps.
+Generate your response as a SINGLE JSON object with two keys:
+1. "new_terms": an array of objects for any new technical music terms introduced in this lesson that haven't been explained yet, e.g. [{{"term": "Triad", "explanation": "A chord made of three notes..."}}]
+2. "steps": an array of exercise objects.
+
 YOU control the pacing — use repetition, variation, and progressive difficulty.
 Do NOT pad with identical back-to-back steps. Instead, vary voicings, inversions, tempos (via hold_ms), or alternate between related chords.
 
-Return ONLY a raw JSON array.
+Return ONLY a raw JSON object.
 
-STEP SCHEMA - Each step MUST have "exercise_type" and "hand" plus type-specific fields:
+STEP SCHEMA - Each step object in the "steps" array MUST have "exercise_type" and "hand" plus type-specific fields:
 
 EVERY step must include:
   "hand": "right" | "left" | "both"
@@ -412,14 +431,31 @@ RULES for spoken_instruction:
                         result = json.loads(response.read().decode('utf-8'))
                         text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
                         
-                        json_match = re.search(r'\[.*\]', text, re.DOTALL)
+                        # First try to match a JSON object, fallback to array if model disobeyed
+                        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+                        if not json_match:
+                            json_match = re.search(r'\[.*\]', text, re.DOTALL)
+                            
                         clean_text = json_match.group(0) if json_match else text
                         
                         try:
                             data = json.loads(clean_text)
-                            if isinstance(data, list) and len(data) > 0:
+                            steps_data = []
+                            
+                            if isinstance(data, dict):
+                                new_terms = data.get("new_terms", [])
+                                for nt in new_terms:
+                                    term = nt.get("term", "")
+                                    expl = nt.get("explanation", "")
+                                    if term and expl:
+                                        self.db.record_learned_term(term, expl)
+                                steps_data = data.get("steps", [])
+                            elif isinstance(data, list):
+                                steps_data = data
+                                
+                            if len(steps_data) > 0:
                                 self._lesson_playlist = []
-                                for step in data:
+                                for step in steps_data:
                                     ex_type = step.get("exercise_type", "chord")
                                     
                                     if ex_type == "pentascale":
@@ -742,9 +778,9 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             self._setup_sustain_target(chord_data)
         else:
             # Original chord behavior
-            root_idx = chord_data["root_idx"]
-            chord_type_name = chord_data["chord_type_name"]
-            intervals = chord_data["intervals"]
+            root_idx = chord_data.get("root_idx", 0)
+            chord_type_name = chord_data.get("chord_type_name", "Major")
+            intervals = chord_data.get("intervals", self.CHORD_TYPES.get("Major", [0, 4, 7]))
             octave = chord_data.get("octave", 4)
             preview = chord_data.get("preview_chord", False)
             self._setup_target(root_idx, chord_type_name, intervals, octave, preview_chord=preview)

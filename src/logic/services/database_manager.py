@@ -118,6 +118,16 @@ class DatabaseManager:
                 )
             ''')
             
+            # Learned Terms — tracks technical music terms that have been explained to the user
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS learned_terms (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    term TEXT UNIQUE NOT NULL,
+                    explanation TEXT,
+                    learned_at TIMESTAMP NOT NULL
+                )
+            ''')
+            
             conn.commit()
 
     def record_song_play(self, filepath: str, title: str, mastery_gained: float):
@@ -148,6 +158,40 @@ class DatabaseManager:
                 ''', (filepath, title, now, new_mastery))
             
             conn.commit()
+
+    # ── Technical Terms ──────────────────────────────────────────────
+    
+    def record_learned_term(self, term: str, explanation: str = ""):
+        """Records that the coach has explained a technical term to the user."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO learned_terms (term, explanation, learned_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(term) DO UPDATE SET
+                    explanation=excluded.explanation,
+                    learned_at=excluded.learned_at
+            ''', (term, explanation, now))
+            conn.commit()
+
+    def get_learned_terms(self) -> list:
+        """Returns all previously explained technical terms."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT term, explanation, learned_at 
+                FROM learned_terms 
+                ORDER BY learned_at DESC
+            ''')
+            return [{"term": row[0], "explanation": row[1], "learned_at": row[2]} for row in cursor.fetchall()]
+
+    def get_learned_term_names(self) -> list:
+        """Returns just the names of the terms already learned, useful for prompts."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT term FROM learned_terms')
+            return [row[0] for row in cursor.fetchall()]
 
     def record_chord_attempt(self, chord_name: str, success: bool, latency_ms: float = 0.0, 
                              wrong_notes: int = 0, is_simultaneous: bool = False):

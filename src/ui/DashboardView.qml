@@ -84,10 +84,16 @@ Rectangle {
             // 3. Free Practice
             ActionCard {
                 title: "Free Play"
-                description: "Just jam. I'll listen and identify what you play."
+                description: "Just jam. I'll listen and identify what you play. (Coming Soon)"
                 icon: "🎹"
                 accentColor: "#2196F3"
-                onClicked: root.freePractice()
+                enabled: false
+                opacity: 0.4
+                onClicked: {
+                    if (enabled) {
+                        root.freePractice()
+                    }
+                }
             }
         }
         
@@ -181,9 +187,13 @@ Rectangle {
         MouseArea {
             id: mouseArea
             anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: parent.clicked()
+            hoverEnabled: parent.enabled
+            cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (parent.enabled) {
+                    parent.clicked()
+                }
+            }
         }
     }
 }

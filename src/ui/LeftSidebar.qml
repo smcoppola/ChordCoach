@@ -150,21 +150,21 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true
                             Text {
-                                text: modelData.track.toUpperCase()
+                                text: modelData["track"] ? modelData["track"].toUpperCase() : ""
                                 color: "#666666"
                                 font.pixelSize: 9 * mainWindow.uiScale
                                 font.bold: true
                             }
                             Item { Layout.fillWidth: true }
                             Text {
-                                text: Math.round((modelData.progress || 0) * 100) + "%"
+                                text: Math.round((modelData["progress"] || 0) * 100) + "%"
                                 color: "#888888"
                                 font.pixelSize: 10 * mainWindow.uiScale
                             }
                         }
                         
                         Text {
-                            text: modelData.title
+                            text: modelData["title"] || ""
                             color: "#ffffff"
                             font.pixelSize: 12 * mainWindow.uiScale
                             font.bold: true
@@ -179,7 +179,7 @@ Rectangle {
                             color: "#333333"
                             
                             Rectangle {
-                                width: parent.width * (modelData.progress || 0)
+                                width: parent.width * (modelData["progress"] || 0)
                                 height: parent.height
                                 radius: 2
                                 color: "#42A5F5" // Slightly different blue for curriculum

@@ -315,35 +315,7 @@ Rectangle {
             }
         }
         
-        // Count-in Overlay (Metronome Lead-in)
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.fillWidth: true
-            Layout.maximumWidth: 300 * mainWindow.uiScale
-            Layout.preferredHeight: 150 * mainWindow.uiScale
-            color: "transparent"
-            visible: root.isActive && !root.isLessonComplete && root.exerciseType === "pentascale" && root.pentascaleBeatCount < 0
-            
-            Text {
-                anchors.centerIn: parent
-                // Show count down: -4 -> 4, -3 -> 3, etc.
-                text: Math.abs(root.pentascaleBeatCount).toString()
-                font.pixelSize: 120 * mainWindow.uiScale
-                font.bold: true
-                color: "#64B5F6"
-                style: Text.Outline
-                styleColor: "#111111"
-                opacity: 0.8
-                
-                // Add a little punch animation on every beat
-                Behavior on text {
-                    SequentialAnimation {
-                        NumberAnimation { target: parent; property: "scale"; from: 0.8; to: 1.2; duration: 50; easing.type: Easing.OutQuad }
-                        NumberAnimation { target: parent; property: "scale"; to: 1.0; duration: 200; easing.type: Easing.InQuad }
-                    }
-                }
-            }
-        }
+
         
         // Lesson Complete screen overlay
         Rectangle {
@@ -739,5 +711,36 @@ Rectangle {
         }
         
         Item { Layout.fillHeight: true } // Spacer
+    }
+
+    // Count-in Overlay (Metronome Lead-in) moved here to float over layout
+    Rectangle {
+        anchors.centerIn: parent
+        width: 300 * mainWindow.uiScale
+        height: 150 * mainWindow.uiScale
+        color: "transparent"
+        visible: root.isActive && !root.isLessonComplete && root.exerciseType === "pentascale" && root.pentascaleBeatCount < 0
+        z: 100 // Float above other content
+        
+        Text {
+            id: countInText
+            anchors.centerIn: parent
+            // Show count down: -4 -> 4, -3 -> 3, etc.
+            text: Math.abs(root.pentascaleBeatCount).toString()
+            font.pixelSize: 120 * mainWindow.uiScale
+            font.bold: true
+            color: "#64B5F6"
+            style: Text.Outline
+            styleColor: "#111111"
+            opacity: 0.8
+            
+            // Add a little punch animation on every beat
+            Behavior on text {
+                SequentialAnimation {
+                    NumberAnimation { target: countInText; property: "scale"; from: 0.8; to: 1.2; duration: 50; easing.type: Easing.OutQuad }
+                    NumberAnimation { target: countInText; property: "scale"; to: 1.0; duration: 200; easing.type: Easing.InQuad }
+                }
+            }
+        }
     }
 }
