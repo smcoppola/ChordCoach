@@ -14,7 +14,8 @@
     "pythonVersion": "3.14",
     "pythonPlatform": "Windows",
     "extraPaths": [
-        "src",
-        "build/src/hardware/Release"
+        "${workspaceFolder}",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/build/src/hardware/Release"
     ]
 }

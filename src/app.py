@@ -14,6 +14,7 @@ import random
 import ctypes
 from PySide6.QtWebEngineQuick import QtWebEngineQuick # type: ignore
 from pathlib import Path
+from typing import cast
 
 # --- Environment Bootstrap ---
 # This must happen before we try to import chordcoach_hw or load the UI
@@ -30,7 +31,7 @@ from hardware.midi_hardware_service import MidiHardwareService
 
 from logic.services.gemini_service import GeminiService # type: ignore
 from logic.services.midi_ingestor import MidiIngestor # type: ignore
-# from logic.services.repertoire_crawler import RepertoireCrawler # type: ignore
+from logic.services.repertoire_crawler import RepertoireCrawler # type: ignore
 from logic.services.database_manager import DatabaseManager # type: ignore
 from logic.services.chord_trainer import ChordTrainerService # type: ignore
 from logic.services.evaluation_service import EvaluationService # type: ignore
@@ -51,7 +52,7 @@ class AppState(QObject):
         super().__init__()
         self._gemini = GeminiService()
         self.midi_ingestor = MidiIngestor()
-        # self.crawler = RepertoireCrawler()
+        self.crawler = RepertoireCrawler()
         self.db = DatabaseManager(project_root / "database" / "userdata.db")
         self.settings = SettingsService(self.db, project_root)
         self.curriculum = CurriculumService(self.db, project_root / "src" / "resources")
@@ -94,9 +95,9 @@ class AppState(QObject):
         self.coordinator._sync_coach_settings()
         self._gemini.connect_service(
             context,
-            voice=self.settings.coachVoice,
-            brevity=self.settings.coachBrevity,
-            personality=self.settings.coachPersonality
+            voice=cast(str, self.settings.coachVoice),
+            brevity=cast(str, self.settings.coachBrevity),
+            personality=cast(str, self.settings.coachPersonality)
         )
 
     @Slot(bool)

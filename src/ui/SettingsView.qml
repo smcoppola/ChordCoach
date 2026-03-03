@@ -390,16 +390,23 @@ Rectangle {
         title: "Reset Skill Matrix"
         standardButtons: Dialog.Yes | Dialog.No
         
-        anchors.centerIn: parent
-        contentWidth: 300 * mainWindow.uiScale
+        // Use direct positioning and explicit width to break the binding loop
+        x: (root.width - width) / 2
+        y: (root.height - height) / 2
+        width: 340 * mainWindow.uiScale
 
-        Label {
-            text: "Are you sure you want to reset all your chord progress? This cannot be undone."
-            color: "#ffffff"
-            font.pixelSize: 14 * mainWindow.uiScale
-            width: parent.width
-            wrapMode: Text.WordWrap
-            padding: 20 * mainWindow.uiScale
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 10 * mainWindow.uiScale
+            spacing: 15 * mainWindow.uiScale
+
+            Label {
+                text: "Are you sure you want to reset all your chord progress? This cannot be undone."
+                color: "#ffffff"
+                font.pixelSize: 14 * mainWindow.uiScale
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
         }
 
         onAccepted: {

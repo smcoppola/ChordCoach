@@ -1,6 +1,10 @@
 import os
 from pathlib import Path
 from PySide6.QtCore import QObject, Property, Slot, Signal # type: ignore
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .database_manager import DatabaseManager
 
 class SettingsService(QObject):
     apiKeyChanged = Signal()
