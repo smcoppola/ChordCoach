@@ -58,7 +58,7 @@ Rectangle {
                 description: "Practice the items you struggled with today."
                 icon: "🎯"
                 accentColor: "#FF9800"
-                enabled: appState && appState.chordTrainer && appState.chordTrainer.struggledItems.length > 0
+                enabled: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.startReview()
                 
@@ -69,11 +69,11 @@ Rectangle {
                     anchors.margins: -8
                     width: 24; height: 24; radius: 12
                     color: "#F44336"
-                    visible: appState.chordTrainer.struggledItems.length > 0
+                    visible: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
                     
                     Text {
                         anchors.centerIn: parent
-                        text: appState.chordTrainer.struggledItems.length
+                        text: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length : 0
                         color: "#ffffff"
                         font.bold: true
                         font.pixelSize: 12
@@ -96,6 +96,112 @@ Rectangle {
                 }
             }
         }
+        // ── Curriculum Progress ──
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter
+            Layout.maximumWidth: 800 * mainWindow.uiScale
+            spacing: 16
+            visible: (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine) && appState.curriculumEngine.activeMilestones.length > 0
+            
+            Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
+            
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: "YOUR CURRICULUM"
+                    font.pixelSize: 12 * mainWindow.uiScale
+                    font.bold: true
+                    font.letterSpacing: 2 * mainWindow.uiScale
+                    color: "#666666"
+                }
+                
+                Item { Layout.fillWidth: true }
+                
+                Text {
+                    text: "Reviews Due: " + ((typeof appState !== "undefined" && appState !== null && appState.curriculumEngine) ? appState.curriculumEngine.reviewQueueCount : 0)
+                    color: "#FF9800"
+                    font.pixelSize: 12 * mainWindow.uiScale
+                    font.bold: true
+                }
+            }
+            
+            Flow {
+                Layout.fillWidth: true
+                spacing: 16 * mainWindow.uiScale
+                
+                Repeater {
+                    id: dashboardCurriculumRepeater
+                    model: (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine) ? appState.curriculumEngine.activeMilestones : []
+                    
+                    Connections {
+                        target: (typeof appState !== "undefined" && appState !== null) ? appState.curriculumEngine : null
+                        function onCurriculumChanged() {
+                            if (appState && appState.curriculumEngine) {
+                                var freshData = appState.curriculumEngine.activeMilestones;
+                                dashboardCurriculumRepeater.model = null;
+                                dashboardCurriculumRepeater.model = freshData;
+                            }
+                        }
+                    }
+                    
+                    delegate: Rectangle {
+                        width: 250 * mainWindow.uiScale
+                        height: 90 * mainWindow.uiScale
+                        color: "#1c1c1e"
+                        radius: 12
+                        border.color: "#333333"
+                        border.width: 1
+                        
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 16
+                            spacing: 8
+                            
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: modelData["track"] ? modelData["track"].toUpperCase() : ""
+                                    color: "#666666"
+                                    font.pixelSize: 10 * mainWindow.uiScale
+                                    font.bold: true
+                                }
+                                Item { Layout.fillWidth: true }
+                                Text {
+                                    text: Math.round((modelData["progress"] || 0) * 100) + "%"
+                                    color: "#888888"
+                                    font.pixelSize: 10 * mainWindow.uiScale
+                                }
+                            }
+                            
+                            Text {
+                                text: modelData["title"] || ""
+                                color: "#ffffff"
+                                font.pixelSize: 14 * mainWindow.uiScale
+                                font.bold: true
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                            
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 4
+                                radius: 2
+                                color: "#333333"
+                                
+                                Rectangle {
+                                    width: parent.width * (modelData["progress"] || 0)
+                                    height: parent.height
+                                    radius: 2
+                                    color: "#42A5F5"
+                                    Behavior on width { NumberAnimation { duration: 300 } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // ── Performance Summary ──
         ColumnLayout {
@@ -103,7 +209,7 @@ Rectangle {
             Layout.maximumWidth: 800 * mainWindow.uiScale
             Layout.alignment: Qt.AlignHCenter
             spacing: 16
-            visible: appState.chordTrainer.struggledItems.length > 0
+            visible: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
             
             Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
             
@@ -119,7 +225,7 @@ Rectangle {
                 Layout.fillWidth: true
                 spacing: 10
                 Repeater {
-                    model: appState.chordTrainer.struggledItems
+                    model: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems : []
                     delegate: Rectangle {
                         width: tagText.implicitWidth + 24
                         height: 32

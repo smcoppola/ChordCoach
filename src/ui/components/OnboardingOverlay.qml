@@ -68,7 +68,7 @@ Rectangle {
 
     // Direct listener for appState signals to ensure UI update
     Connections {
-        target: (typeof appState !== "undefined") ? appState : null
+        target: (typeof appState !== "undefined" && appState !== null) ? appState : null
         function onEvalIntroPendingChanged() {
             // Force re-evaluation of bindings dependent on appState
             root.isRunning = !root.isRunning;

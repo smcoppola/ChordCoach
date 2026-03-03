@@ -115,121 +115,84 @@ Rectangle {
 
         Item { Layout.preferredHeight: 16 }
 
-        // ── Curriculum Progress ──
-        Text {
-            text: "CURRICULUM"
-            color: "#888888"
-            font.pixelSize: 10 * mainWindow.uiScale
-            font.bold: true
-            font.letterSpacing: 2 * mainWindow.uiScale
-            visible: curriculumRepeater.count > 0
-        }
-        
-        Item { Layout.preferredHeight: 8; visible: curriculumRepeater.count > 0 }
-        
-        Rectangle {
+        // ── Session Playlist (Only visible during active lessons) ──
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: curriculumCol.implicitHeight + 24
-            color: "#222222"
-            radius: 8
-            border.color: "#333333"
-            border.width: 1
-            visible: curriculumRepeater.count > 0
+            visible: root.isLessonMode && typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.lessonPlaylist && appState.chordTrainer.lessonPlaylist.length > 0
+            spacing: 12
             
-            ColumnLayout {
-                id: curriculumCol
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 12
+            Text {
+                text: "SESSION PLAYLIST"
+                color: "#888888"
+                font.pixelSize: 10 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+            }
+            
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: playlistCol.implicitHeight + 24
+                color: "#222222"
+                radius: 8
+                border.color: "#333333"
+                border.width: 1
                 
-                // Active Milestones
-                Repeater {
-                    id: curriculumRepeater
-                    model: typeof appState !== "undefined" && appState && appState.curriculumEngine ? appState.curriculumEngine.activeMilestones : []
+                ColumnLayout {
+                    id: playlistCol
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 8
                     
-                    Connections {
-                        target: typeof appState !== "undefined" && appState ? appState.curriculumEngine : null
-                        function onCurriculumChanged() {
-                            // Force QML to redraw the repeater when the Python dicts change
-                            var freshData = appState.curriculumEngine.activeMilestones;
-                            curriculumRepeater.model = null;
-                            curriculumRepeater.model = freshData;
-                        }
-                    }
-                    
-                    delegate: ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
+                    Repeater {
+                        id: playlistRepeater
+                        model: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer.lessonPlaylist : []
                         
-                        RowLayout {
+                        delegate: RowLayout {
                             Layout.fillWidth: true
-                            Text {
-                                text: modelData["track"] ? modelData["track"].toUpperCase() : ""
-                                color: "#666666"
-                                font.pixelSize: 9 * mainWindow.uiScale
-                                font.bold: true
-                            }
-                            Item { Layout.fillWidth: true }
-                            Text {
-                                text: Math.round((modelData["progress"] || 0) * 100) + "%"
-                                color: "#888888"
-                                font.pixelSize: 10 * mainWindow.uiScale
-                            }
-                        }
-                        
-                        Text {
-                            text: modelData["title"] || ""
-                            color: "#ffffff"
-                            font.pixelSize: 12 * mainWindow.uiScale
-                            font.bold: true
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                        }
-                        
-                        Rectangle {
-                            Layout.fillWidth: true
-                            height: 4
-                            radius: 2
-                            color: "#333333"
+                            spacing: 12
                             
+                            // Status Indicator
                             Rectangle {
-                                width: parent.width * (modelData["progress"] || 0)
-                                height: parent.height
-                                radius: 2
-                                color: "#42A5F5" // Slightly different blue for curriculum
-                                Behavior on width { NumberAnimation { duration: 300 } }
+                                width: 12 * mainWindow.uiScale
+                                height: 12 * mainWindow.uiScale
+                                radius: 6 * mainWindow.uiScale
+                                color: {
+                                    if (index < root.lessonProgress - 1) return "#4CAF50"; // Done
+                                    if (index === root.lessonProgress - 1) return "#2196F3"; // Active
+                                    return "#444444"; // Pending
+                                }
+                                
+                                // Pulse if active
+                                SequentialAnimation on opacity {
+                                    running: index === root.lessonProgress - 1 && !appState.chordTrainer.isPausedForSpeech
+                                    loops: Animation.Infinite
+                                    NumberAnimation { to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
+                                    NumberAnimation { to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
+                                }
                             }
-                        }
-                    }
-                }
-                
-                // Review Queue
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: "#333333"
-                    visible: appState.curriculumEngine.reviewQueueCount > 0
-                }
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: appState.curriculumEngine.reviewQueueCount > 0
-                    
-                    Text {
-                        text: "Reviews Due:"
-                        color: "#888888"
-                        font.pixelSize: 12 * mainWindow.uiScale
-                    }
-                    Item { Layout.fillWidth: true }
-                    Rectangle {
-                        width: 20 * mainWindow.uiScale; height: 18 * mainWindow.uiScale; radius: 4
-                        color: "#FF9800"
-                        Text {
-                            anchors.centerIn: parent
-                            text: appState.curriculumEngine.reviewQueueCount
-                            color: "#000000"
-                            font.pixelSize: 11 * mainWindow.uiScale
-                            font.bold: true
+                            
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                
+                                Text {
+                                    text: modelData.track ? modelData.track.toUpperCase() : ""
+                                    color: index === root.lessonProgress - 1 ? "#64B5F6" : "#666666"
+                                    font.pixelSize: 9 * mainWindow.uiScale
+                                    font.bold: true
+                                }
+                                
+                                Text {
+                                    text: modelData.exercise_name || "Exercise"
+                                    color: index === root.lessonProgress - 1 ? "#ffffff" : (index < root.lessonProgress - 1 ? "#aaaaaa" : "#888888")
+                                    font.pixelSize: 12 * mainWindow.uiScale
+                                    font.bold: index === root.lessonProgress - 1
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    // Strikethrough completed items
+                                    font.strikeout: index < root.lessonProgress - 1
+                                }
+                            }
                         }
                     }
                 }

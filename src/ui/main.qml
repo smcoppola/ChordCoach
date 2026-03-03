@@ -49,11 +49,11 @@ ApplicationWindow {
     // ── Settings Dialog ──
     Popup {
         id: settingsPopup
+        width: Math.min(mainWindow.width * 0.8, 900 * mainWindow.uiScale)
+        height: Math.min(mainWindow.height * 0.8, 700 * mainWindow.uiScale)
         modal: true
         visible: mainWindow.showSettings
         anchors.centerIn: parent
-        width: parent.width * 0.8
-        height: parent.height * 0.85
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: mainWindow.showSettings = false
         
@@ -128,5 +128,69 @@ ApplicationWindow {
                 onboardingOverlay.show();
             }
         }
+    }
+
+    // ── MIDI Disconnected Banner ──
+    Rectangle {
+        id: midiWarningBanner
+        width: parent.width
+        height: 60 * mainWindow.uiScale
+        anchors.bottom: parent.bottom
+        color: "#f44336"
+        visible: (typeof appState !== "undefined" && appState) ? !appState.midiConnected : false
+        z: 999 // Ensure it's above most content
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 20
+            anchors.rightMargin: 20
+            spacing: 15
+
+            Text {
+                text: "⚠️"
+                font.pixelSize: 24 * mainWindow.uiScale
+                color: "white"
+            }
+
+            Text {
+                text: "No MIDI device detected. Please connect your keyboard."
+                color: "white"
+                font.pixelSize: 16 * mainWindow.uiScale
+                font.bold: true
+                Layout.fillWidth: true
+            }
+
+            Text {
+                text: "Polling for devices..."
+                color: "white"
+                font.pixelSize: 14 * mainWindow.uiScale
+                font.italic: true
+            }
+
+            ProgressBar {
+                id: pollingProgress
+                indeterminate: true
+                Layout.preferredWidth: 100 * mainWindow.uiScale
+                background: Rectangle { color: "#ffffff33"; radius: 2 }
+                contentItem: Item {
+                    Rectangle {
+                        id: barIndicator
+                        width: parent.width
+                        height: parent.height
+                        color: "white"
+                        radius: 2
+                        NumberAnimation on x {
+                            from: -barIndicator.width; to: barIndicator.width
+                            duration: 1500
+                            loops: Animation.Infinite
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Entance animation
+        Behavior on opacity { NumberAnimation { duration: 300 } }
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
     }
 }

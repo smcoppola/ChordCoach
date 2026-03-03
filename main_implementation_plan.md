@@ -311,3 +311,6 @@ As we proceed through the phases, keep these crucial architectural details in mi
 ### 4. Interactive Keyboard Elements
 - The `VisualKeyboard.qml` uses a `Canvas` overlay to draw interval arches. These arches are now interactive via a `MouseArea` that triggers a `ToolTip` identifying the musical interval (e.g., "Major 3rd").
 - This interactivity was integrated into a dedicated onboarding tutorial phase, guided by the AI coach.
+
+### 5. Known Hardware Issues / Backlog
+- **MIDI Hot-plugging on Windows**: The application uses `RtMidi` (via `chordcoach_hw`) for MIDI input and `LowLevelMidiOutput` for MIDI output. While we deferred `LowLevelMidiOutput` initialization to avoid locking the Windows MM device list on startup, if a MIDI keyboard is plugged in while the app is running and fails to connect correctly on the very first try, `RtMidi` may fail with `MidiInWinMM::openPort: error creating Windows MM MIDI input port`. This is likely a zombie handle issue in the Windows Multimedia API, `midi_ingestor`, or the `RtMidi` wrapper locking the port exclusively. It is currently placed on the backlog for a future phase focused on hardware robustness.

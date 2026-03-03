@@ -9,17 +9,17 @@ Rectangle {
     signal recalibrateRequested()
 
     Flickable {
+        id: flickable
         anchors.fill: parent
         anchors.margins: 24 * mainWindow.uiScale
-        contentHeight: settingsColumn.height
+        contentHeight: settingsColumn.implicitHeight
         clip: true
-        boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-    ColumnLayout {
-        id: settingsColumn
-        width: parent.width
-        spacing: 20 * mainWindow.uiScale
+        ColumnLayout {
+            id: settingsColumn
+            width: flickable.width - (flickable.anchors.margins * 2)
+            spacing: 20 * mainWindow.uiScale
 
 
 
@@ -390,16 +390,16 @@ Rectangle {
         title: "Reset Skill Matrix"
         standardButtons: Dialog.Yes | Dialog.No
         
-        x: (parent.width - width) / 2
-        y: (parent.height - height) / 2
+        anchors.centerIn: parent
+        contentWidth: 300 * mainWindow.uiScale
 
         Label {
             text: "Are you sure you want to reset all your chord progress? This cannot be undone."
             color: "#ffffff"
-            padding: 20 * mainWindow.uiScale
             font.pixelSize: 14 * mainWindow.uiScale
-            width: 300 * mainWindow.uiScale
+            width: parent.width
             wrapMode: Text.WordWrap
+            padding: 20 * mainWindow.uiScale
         }
 
         onAccepted: {

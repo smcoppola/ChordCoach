@@ -123,6 +123,26 @@ Rectangle {
         }
         return "right";
     }
+    
+    property string pedalType: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.pedalType || "";
+        }
+        return "";
+    }
+    
+    function getHandForTargetPitch(pitch) {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            var pitches = appState.chordTrainer.targetPitches;
+            var hands = appState.chordTrainer.targetHands;
+            if (pitches && hands) {
+                for (var i = 0; i < pitches.length; i++) {
+                    if (pitches[i] === pitch) return hands[i];
+                }
+            }
+        }
+        return currentHand;
+    }
 
     // 1. Draw the Grand Staff Background & Lines
     Item {
@@ -246,9 +266,10 @@ Rectangle {
             Rectangle {
                 visible: root.displayMode === "trainer"
                 property int pitch: modelData
-                property bool isTreble: root.currentHand === "left" ? false :
-                                        root.currentHand === "right" ? true :
-                                        pitch >= 60  // "both" falls back to pitch-based
+                property bool isTreble: {
+                    var h = root.getHandForTargetPitch(pitch);
+                    return h === "left" ? false : h === "right" ? true : pitch >= 60;
+                }
                 property int referencePitch: isTreble ? 71 : 50 // B4 or D3
                 property real referenceY: isTreble ? parent.trebleCenterY : parent.bassCenterY
                 property int steps: root.getDiatonicStepsDifference(referencePitch, pitch)
@@ -333,9 +354,10 @@ Rectangle {
             
             Rectangle {
                 property int pitch: modelData
-                property bool isTreble: root.currentHand === "left" ? false :
-                                        root.currentHand === "right" ? true :
-                                        pitch >= 60
+                property bool isTreble: {
+                    var h = root.getHandForTargetPitch(pitch);
+                    return h === "left" ? false : h === "right" ? true : pitch >= 60;
+                }
                 property int referencePitch: isTreble ? 71 : 50
                 property real referenceY: isTreble ? parent.trebleCenterY : parent.bassCenterY
                 property int steps: root.getDiatonicStepsDifference(referencePitch, pitch)
@@ -393,6 +415,64 @@ Rectangle {
                 }
             }
         }
+        
+        // 3.5 Sustain Pedal Notation
+        Item {
+            anchors.left: parent.left
+            anchors.leftMargin: parent.noteStartX - (20 * mainWindow.uiScale)
+            anchors.right: parent.right
+            y: parent.bassCenterY + (parent.lineSpacing * 3.5)
+            height: parent.lineSpacing * 2
+            visible: root.displayMode === "trainer" && root.exerciseType === "sustain_pedal"
+            
+            Text {
+                id: pedText
+                text: "Ped."
+                font.pixelSize: parent.parent.lineSpacing * 1.5
+                font.italic: true
+                font.bold: true
+                font.family: "Times New Roman"
+                color: "#111111"
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            
+            Text {
+                visible: root.pedalType === "direct"
+                text: "*"
+                font.pixelSize: parent.parent.lineSpacing * 2
+                font.family: "Times New Roman"
+                color: "#111111"
+                anchors.left: pedText.right
+                anchors.leftMargin: 150 * mainWindow.uiScale
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            
+            // Legato Bracket
+            Item {
+                visible: root.pedalType === "legato"
+                anchors.left: pedText.right
+                anchors.leftMargin: 10 * mainWindow.uiScale
+                anchors.verticalCenter: parent.verticalCenter
+                width: 150 * mainWindow.uiScale
+                height: 10 * mainWindow.uiScale
+                
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 2 * mainWindow.uiScale
+                    color: "#111111"
+                }
+                Rectangle {
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    width: 2 * mainWindow.uiScale
+                    height: parent.height
+                    color: "#111111"
+                }
+            }
+        }
 
         // ── 4. Scrolling Evaluation Notes ──────────────────────────────────
         // Visible ONLY in evaluation mode. Notes scroll right → left,
@@ -428,7 +508,7 @@ Rectangle {
                         return "pending";
                     }
 
-                    property bool isTreble: hand === "L" ? false : hand === "R" ? true : pitch >= 60
+                    property bool isTreble: hand === "L" || hand === "left" ? false : hand === "R" || hand === "right" ? true : pitch >= 60
                     property int referencePitch: isTreble ? 71 : 50
                     property real referenceY: isTreble ? staffBackground.trebleCenterY : staffBackground.bassCenterY
                     property int steps: root.getDiatonicStepsDifference(referencePitch, pitch)

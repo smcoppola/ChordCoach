@@ -36,6 +36,8 @@ class ChordTrainerService(QObject):
         self._target_formula_text = ""
         self._target_intervals: Set[int] = set()
         self._target_pitches: List[int] = []
+        self._target_hands: List[str] = []  # "left" or "right" for each target pitch
+        self._pedal_type: str = "" # "direct", "legato", or ""
         
         # Track currently depressed keys (MIDI pitches)
         self._active_pitches: Set[int] = set()
@@ -127,6 +129,14 @@ class ChordTrainerService(QObject):
     @Property(list, notify=targetChordChanged)
     def targetPitches(self) -> list:
         return self._target_pitches
+
+    @Property(list, notify=targetChordChanged)
+    def targetHands(self) -> list:
+        return self._target_hands
+
+    @Property(str, notify=targetChordChanged)
+    def pedalType(self) -> str:
+        return self._pedal_type
         
     @Property(str, notify=lessonStateChanged)
     def exerciseName(self) -> str:
@@ -143,6 +153,10 @@ class ChordTrainerService(QObject):
     @Property(int, notify=lessonStateChanged)
     def lessonTotal(self) -> int:
         return self._lesson_total
+
+    @Property("QVariantList", notify=lessonStateChanged)
+    def lessonPlaylist(self) -> list:
+        return self._lesson_playlist
         
     @Property(bool, notify=lessonStateChanged)
     def isLessonComplete(self) -> bool:
@@ -279,6 +293,10 @@ class ChordTrainerService(QObject):
             user_context += f"\n\nALREADY EXPLAINED TERMS (DO NOT explain these again!):\n{', '.join(learned_terms)}\n"
         user_context += "\nIMPORTANT: For any NEW technical music terms you use in your spoken_instruction that are NOT in the list above, you MUST explain them simply before using them. Add these new terms to the 'new_terms' array in your JSON response."
         
+        seen_exercises = self.db.get_seen_exercise_intros()
+        if seen_exercises:
+            user_context += f"\n\nSEEN EXERCISES (User already knows how to do these):\n{', '.join(seen_exercises)}\n"
+        
         threading.Thread(target=self._query_gemini_for_lesson_plan, 
                          args=(user_context, session_plan), daemon=True).start()
         
@@ -399,7 +417,9 @@ For exercise_type "sustain_pedal":
 
 RULES for spoken_instruction:
 - ONLY the first step of each new exercise_name or block gets spoken.
-- The VERY FIRST step MUST have a 3-4 sentence overview of the session goals.
+- The VERY FIRST step MUST have an extremely brief (1-sentence) overview of the session goals.
+- If an 'exercise_type' is listed in the 'SEEN EXERCISES' list above, provide a 3-5 word reminder (e.g. "C Major Pentascale. Ready?").
+- If an 'exercise_type' is NOT in the 'SEEN EXERCISES' list, provide a clear, brief 1-sentence explanation of how to play it. Avoid filler.
 
 BEGINNER SAFETY RULES:
 - If 'Global Session Progress' indicates the user is a BEGINNER (low total attempts):
@@ -560,6 +580,11 @@ BEGINNER SAFETY RULES:
                                     print(f"ChordTrainer: Successfully generated AI lesson plan with {len(self._lesson_playlist)} steps in {gen_time_ms:.0f}ms.")
                                     self.db.record_generation_stat(model_name, gen_time_ms, len(self._lesson_playlist), success=True)
                                     slow_timer.cancel()
+                                    
+                                    # Record the intros for any exercises we generated so they aren't explained again next time
+                                    for step in self._lesson_playlist:
+                                        self.db.record_exercise_intro(step.get("exercise_type", "chord"))
+                                        
                                     break
                                 else:
                                     print("ChordTrainer: Generated JSON was valid but resulting playlist was empty.")
@@ -676,6 +701,8 @@ BEGINNER SAFETY RULES:
             self._target_chord_name = ""
             self._target_intervals.clear()
             self._target_pitches.clear()
+            self._target_hands.clear()
+            self._pedal_type = ""
             self.targetChordChanged.emit(self._target_chord_name)
             self._hold_tick_timer.stop()
             self._is_holding = False
@@ -718,6 +745,8 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                 self._target_chord_name = ""
                 self._target_intervals.clear()
                 self._target_pitches.clear()
+                self._target_hands.clear()
+                self._pedal_type = ""
                 self._hold_tick_timer.stop()
                 self.lessonStateChanged.emit()
                 self.targetChordChanged.emit(self._target_chord_name)
@@ -740,16 +769,16 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                     if self.coach_personality == "Old-School":
                         style_guidance = "Give a brief, no-nonsense instruction. Be direct and authoritative, like a strict piano professor."
                     else:
-                        style_guidance = "Please give a highly conversational, detailed introduction explaining the music theory behind this exercise and why it will make them a better player."
+                        style_guidance = "Be encouraging but very direct. Focus only on the objective of the exercise."
                     
                     if self.coach_brevity == "Detailed":
-                        length_guidance = "Use 3-4 sentences."
+                        length_guidance = "Use 2 sentences."
                     elif self.coach_brevity == "Terse":
-                        length_guidance = "Use 1 short sentence maximum."
+                        length_guidance = "Use 1 short sentence."
                     else:
-                        length_guidance = "Use 1-2 sentences."
+                        length_guidance = "Use 1 concise sentence."
                     
-                    prompt = f"[System Note]: We are now starting the exercise '{new_exercise_name}'. The objective is: '{spoken_inst}'. {style_guidance} {length_guidance}"
+                    prompt = f"[System Note]: This is a new exercise: '{new_exercise_name}'. Task: '{spoken_inst}'. {style_guidance} {length_guidance}"
                     self._exercise_name = new_exercise_name
                     self._is_paused_for_speech = True
                     self._pending_step = chord_data
@@ -758,6 +787,8 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                     self._target_chord_name = ""
                     self._target_intervals.clear()
                     self._target_pitches.clear()
+                    self._target_hands.clear()
+                    self._pedal_type = ""
                     self._hold_tick_timer.stop()
                     self.lessonStateChanged.emit()
                     self.targetChordChanged.emit(self._target_chord_name)
@@ -868,6 +899,7 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             
         self._target_formula_text = f"{direction.capitalize()}: {' → '.join(note_names)}"
         self._target_pitches = sequence  # Show full sequence for QML visualization
+        self._target_hands = [self._current_hand] * len(sequence)
         # For validation: match the exact MIDI pitch (not octave-agnostic)
         current_pitch = sequence[0]
         self._target_intervals = {current_pitch % 12}
@@ -946,6 +978,7 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         lh_octave = max(2, min(3, octave - 1))
         lh_base_pitch = (lh_octave + 1) * 12 + root_idx
         self._target_pitches.insert(0, lh_base_pitch)
+        self._target_hands.insert(0, "left")
         
         self.targetChordChanged.emit(self._target_chord_name)
 
@@ -961,6 +994,8 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         
         self._setup_target(root_idx, chord_type_name, intervals, octave)
         self._target_chord_type = "Sustain Pedal"
+        # We don't need UI text for pedal type since standard notation will be used,
+        # but keep it in formula text for debugging or fallback if desired.
         self._target_formula_text = f"Pedal: {self._pedal_type.capitalize()}"
         self.targetChordChanged.emit(self._target_chord_name)
 
@@ -1042,6 +1077,11 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         # Calculate the exact MIDI pitches for the staff visualizer
         self._target_pitches = [(base_pitch + interval) for interval in intervals]
         
+        # Populate target hands: left if the exercise specifically calls for it,
+        # otherwise default to right hand for normal chords (or the fallback).
+        hand_tag = "left" if self._current_hand == "left" else "right"
+        self._target_hands = [hand_tag] * len(self._target_pitches)
+        
         # Calculate the absolute intervals (0-11) for the logic evaluator
         self._target_intervals = {(root_idx + interval) % 12 for interval in intervals}
         
@@ -1094,6 +1134,10 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             octave = max(2, min(3, octave))
         base_pitch = (octave + 1) * 12 + root_idx
         self._target_pitches = [(base_pitch + interval) for interval in intervals]
+        
+        hand_tag = "left" if self._current_hand == "left" else "right"
+        self._target_hands = [hand_tag] * len(self._target_pitches)
+        
         self._target_intervals = {(root_idx + interval) % 12 for interval in intervals}
         
         # Calculate formula text

@@ -8,6 +8,7 @@ Rectangle {
     color: "transparent"
 
     property var targetKeys: []
+    property var targetHands: [] // Array of "left" or "right" mapping to targetKeys
     property real keySpacing: 1
     property real keyWidth: (width - (87 * keySpacing)) / 88
 
@@ -20,10 +21,12 @@ Rectangle {
         return colors[pitch % 12];
     }
 
-    function setTargetKeys(keys) {
+    function setTargetKeys(keys, hands) {
         root.targetKeys = []; // Force change signal
+        root.targetHands = [];
         root.targetKeys = keys;
-        console.log("VisualKeyboard targetKeys updated via function:", keys);
+        root.targetHands = hands || [];
+        console.log("VisualKeyboard targetKeys updated via function:", keys, "hands:", hands);
         mathOverlay.requestPaint();
     }
 
@@ -66,8 +69,23 @@ Rectangle {
                     }
                     return false;
                 }
+                
+                property string handTag: {
+                    var midiPitch = index + 21;
+                    for (var i = 0; i < root.targetKeys.length; i++) {
+                        if (root.targetKeys[i] === midiPitch) {
+                            return root.targetHands[i] || "right";
+                        }
+                    }
+                    return "right";
+                }
 
-                property string pitchColor: isTarget ? root.getColorForPitch(index + 21) : "#00BCD4"
+                property string pitchColor: {
+                    if (!isTarget) return "#00BCD4";
+                    // Visually distinguish Left Hand notes (e.g., purple) from Right Hand notes
+                    if (handTag === "left") return "#9C27B0";
+                    return root.getColorForPitch(index + 21);
+                }
 
                 Rectangle {
                     anchors.fill: parent
@@ -108,7 +126,6 @@ Rectangle {
                 arr.push(root.targetKeys[k]);
             }
             var sortedKeys = arr.sort((a, b) => a - b);
-            console.log("Drawing Math Arches for targetKeys:", sortedKeys);
             
             ctx.lineWidth = 2 * mainWindow.uiScale;
             ctx.strokeStyle = "#4CAF50"; // Green for the arch

@@ -7,42 +7,42 @@ Rectangle {
     id: root
     color: "transparent"
     
-    property bool isActive: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer.isActive : false
+    property bool isActive: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isActive : false
     property string currentTarget: ""
     
     signal returnToDashboard()
     
     // Lesson State Properties - Bound directly to service to survive StackView recreation
-    property string exerciseName: appState.chordTrainer.exerciseName
-    property int lessonProgress: appState.chordTrainer.lessonProgress
-    property int lessonTotal: appState.chordTrainer.lessonTotal
-    property bool isLessonComplete: appState.chordTrainer.isLessonComplete
-    property bool isLessonMode: appState.chordTrainer.isLessonMode
-    property real holdProgress: appState.chordTrainer.holdProgress
-    property int requiredHoldMs: appState.chordTrainer.requiredHoldMs
-    property bool isLoading: appState.chordTrainer.isLoading
-    property string loadingStatusText: appState.chordTrainer.loadingStatusText
-    property bool isPausedForSpeech: appState.chordTrainer.isPausedForSpeech
-    property bool isWaitingToBegin: appState.chordTrainer.isWaitingToBegin
-    property real estimatedGenerationMs: appState.chordTrainer.estimatedGenerationMs
+    property string exerciseName: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.exerciseName : ""
+    property int lessonProgress: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.lessonProgress : 0
+    property int lessonTotal: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.lessonTotal : 0
+    property bool isLessonComplete: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLessonComplete : false
+    property bool isLessonMode: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLessonMode : false
+    property real holdProgress: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.holdProgress : 0.0
+    property int requiredHoldMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.requiredHoldMs : 0
+    property bool isLoading: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLoading : false
+    property string loadingStatusText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.loadingStatusText : ""
+    property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
+    property bool isWaitingToBegin: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingToBegin : false
+    property real estimatedGenerationMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.estimatedGenerationMs : 0.0
     
     // AI Coach State Properties
     property bool isAiSpeaking: false
     property string transcriptText: ""
     
     // Formula Properties - Pull these from service on target change
-    property string chordType: appState.chordTrainer.targetChordType
-    property string formulaText: appState.chordTrainer.targetFormulaText
+    property string chordType: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.targetChordType : ""
+    property string formulaText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.targetFormulaText : ""
     
     // New exercise type properties
-    property string exerciseType: appState.chordTrainer.exerciseType || "chord"
-    property var progressionNumerals: appState.chordTrainer.progressionNumerals || []
-    property int currentProgressionIndex: appState.chordTrainer.currentProgressionIndex
-    property int currentNoteIndex: appState.chordTrainer.currentNoteIndex
-    property string scaleName: appState.chordTrainer.scaleName || ""
-    property string currentHand: appState.chordTrainer.currentHand || "right"
-    property bool isSustainPedalDown: appState.isSustainPedalDown
-    property int pentascaleBeatCount: appState.chordTrainer.pentascaleBeatCount
+    property string exerciseType: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? (appState.chordTrainer.exerciseType || "chord") : "chord"
+    property var progressionNumerals: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? (appState.chordTrainer.progressionNumerals || []) : []
+    property int currentProgressionIndex: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.currentProgressionIndex : 0
+    property int currentNoteIndex: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.currentNoteIndex : 0
+    property string scaleName: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? (appState.chordTrainer.scaleName || "") : ""
+    property string currentHand: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? (appState.chordTrainer.currentHand || "right") : "right"
+    property bool isSustainPedalDown: (typeof appState !== "undefined" && appState !== null && appState.hw_service) ? appState.hw_service._is_sustain_pedal_down : false
+    property int pentascaleBeatCount: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.pentascaleBeatCount : 0
     property var pentascaleFeedbackList: ["", "", "", "", ""]
  
     // Internal state for loading animation
@@ -103,7 +103,7 @@ Rectangle {
     }
     
     Connections {
-        target: (typeof appState !== "undefined" && appState) ? appState.chordTrainer : null
+        target: (typeof appState !== "undefined" && appState !== null) ? appState.chordTrainer : null
         
         function onChordFailed() {
             failFlash.start();
@@ -114,14 +114,15 @@ Rectangle {
             root.pentascaleFeedbackList = ["", "", "", "", ""]; // Reset feedback on new target
             
             // Re-sync visual keyboard target keys
-            var tp = appState.chordTrainer.targetPitches;
-            var arr = [];
-            if (tp) {
-                for (var i = 0; i < tp.length; i++) arr.push(tp[i]);
+            if (appState && appState.chordTrainer) {
+                var tp = appState.chordTrainer.targetPitches;
+                var arr = [];
+                if (tp) {
+                    for (var i = 0; i < tp.length; i++) arr.push(tp[i]);
+                }
+                visualKeyboard.setTargetKeys(arr);
+                console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr);
             }
-            visualKeyboard.setTargetKeys(arr);
-            
-            console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr);
         }
         
         function onPentascaleNoteHit(noteIndex, feedbackText) {
@@ -131,9 +132,6 @@ Rectangle {
                 root.pentascaleFeedbackList = newFeedback;      // Trigger bindings
             }
         }
-        
-        // Note: loadingStatusChanged, lessonStateChanged, activeChanged, metronomeTick
-        // are now handled via direct property bindings above.
     }
     
     // Success/Fail flash animation
@@ -233,7 +231,6 @@ Rectangle {
             }
         }
         
-        // Hand and Pedal Telemetry Zone Removed
         // Mathematical Formula Teaching Aid overlay
         Components.ChordFormulaCard {
             targetChordName: root.currentTarget || ""
@@ -308,6 +305,7 @@ Rectangle {
                     width: 60 * mainWindow.uiScale
                     
                     Text {
+                        id: feedbackTextLabel
                         text: root.pentascaleFeedbackList[index]
                         color: {
                             if (text === "Perfect!") return "#4CAF50";
@@ -319,6 +317,28 @@ Rectangle {
                         font.bold: true
                         anchors.horizontalCenter: parent.horizontalCenter
                         height: 16 * mainWindow.uiScale
+                        opacity: 0.0 // Hidden by default now
+                        
+                        onTextChanged: {
+                            if (text !== "") {
+                                opacity = 1.0;
+                                fadeOutTimer.restart();
+                            } else {
+                                opacity = 0.0;
+                            }
+                        }
+                        
+                        Behavior on opacity {
+                            NumberAnimation { duration: 150; easing.type: Easing.OutQuad }
+                        }
+                        
+                        Timer {
+                            id: fadeOutTimer
+                            interval: 300
+                            onTriggered: {
+                                feedbackTextLabel.opacity = 0.0;
+                            }
+                        }
                     }
                     
                     Rectangle {
@@ -335,8 +355,6 @@ Rectangle {
                 }
             }
         }
-        
-
         
         // Lesson Complete screen overlay
         Rectangle {

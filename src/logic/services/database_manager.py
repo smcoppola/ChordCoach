@@ -129,6 +129,15 @@ class DatabaseManager:
                 )
             ''')
             
+            # Exercise Intros - tracks which mechanical exercise types the user has been introduced to
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS exercise_intros (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    exercise_type TEXT UNIQUE NOT NULL,
+                    first_seen_at TIMESTAMP NOT NULL
+                )
+            ''')
+            
             conn.commit()
 
     def record_song_play(self, filepath: str, title: str, mastery_gained: float):
@@ -192,6 +201,26 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT term FROM learned_terms')
+            return [row[0] for row in cursor.fetchall()]
+
+    # ── Exercise Intros ──────────────────────────────────────────────
+
+    def record_exercise_intro(self, exercise_type: str):
+        """Records that the user has seen the detailed instructions for this exercise type."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO exercise_intros (exercise_type, first_seen_at)
+                VALUES (?, ?)
+            ''', (exercise_type, now))
+            conn.commit()
+
+    def get_seen_exercise_intros(self) -> list:
+        """Returns names of all exercise types the user has already been introduced to."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT exercise_type FROM exercise_intros')
             return [row[0] for row in cursor.fetchall()]
 
     def record_chord_attempt(self, chord_name: str, success: bool, latency_ms: float = 0.0, 
@@ -294,6 +323,8 @@ class DatabaseManager:
             cursor.execute('DELETE FROM curriculum_state;')
             cursor.execute('DELETE FROM spaced_repetition;')
             cursor.execute('DELETE FROM session_history;')
+            cursor.execute('DELETE FROM learned_terms;')
+            cursor.execute('DELETE FROM exercise_intros;')
             conn.commit()
 
     def has_completed_onboarding(self) -> bool:
