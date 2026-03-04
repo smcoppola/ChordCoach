@@ -12,7 +12,6 @@ public:
   MidiHandler() {
     try {
       midiIn = new RtMidiIn();
-      midiOut = new RtMidiOut();
       std::cout << "MidiHandler initialized with RtMidi" << std::endl;
 
       // Register our static C++ wrapper callback unconditionally
@@ -23,10 +22,7 @@ public:
     }
   }
 
-  ~MidiHandler() {
-    delete midiIn;
-    delete midiOut;
-  }
+  ~MidiHandler() { delete midiIn; }
 
   void openPort(int port) {
     if (port < midiIn->getPortCount()) {
@@ -34,16 +30,11 @@ public:
       std::cout << "Opened MIDI Input port: " << midiIn->getPortName(port)
                 << std::endl;
     }
-    if (port < midiOut->getPortCount()) {
-      midiOut->openPort(port);
-      std::cout << "Opened MIDI Output port: " << midiOut->getPortName(port)
-                << std::endl;
-    }
   }
 
-  void sendMessage(const std::vector<unsigned char> &message) {
-    if (midiOut && midiOut->isPortOpen()) {
-      midiOut->sendMessage(&message);
+  void setIgnoreTypes(bool sysex, bool timing, bool activeSensing) {
+    if (midiIn) {
+      midiIn->ignoreTypes(sysex, timing, activeSensing);
     }
   }
 
@@ -82,6 +73,5 @@ private:
   }
 
   RtMidiIn *midiIn;
-  RtMidiOut *midiOut;
   std::function<void(double, std::vector<unsigned char>)> pyCallback;
 };

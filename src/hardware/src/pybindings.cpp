@@ -18,9 +18,9 @@ PYBIND11_MODULE(chordcoach_hw, m) {
   py::class_<MidiHandler>(m, "MidiHandler")
       .def(py::init<>())
       .def("openPort", &MidiHandler::openPort)
-      .def("sendMessage", &MidiHandler::sendMessage)
       .def("getPortNames", &MidiHandler::getPortNames)
-      .def("setCallback", &MidiHandler::setCallback);
+      .def("setCallback", &MidiHandler::setCallback)
+      .def("setIgnoreTypes", &MidiHandler::setIgnoreTypes);
 
   py::class_<AudioHandler>(m, "AudioHandler")
       .def(py::init<>())

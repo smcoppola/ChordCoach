@@ -56,6 +56,7 @@ class ChordTrainerService(QObject):
         # Lesson State
         self._is_lesson_mode = False
         self._lesson_playlist = []
+        self._lesson_blocks = []  # Stable snapshot of exercise blocks for sidebar
         self._lesson_progress = 0
         self._lesson_total = 0
         self._exercise_name = "Free Practice"
@@ -155,8 +156,8 @@ class ChordTrainerService(QObject):
         return self._lesson_total
 
     @Property("QVariantList", notify=lessonStateChanged)
-    def lessonPlaylist(self) -> list:
-        return self._lesson_playlist
+    def lessonBlocks(self) -> list:
+        return self._lesson_blocks
         
     @Property(bool, notify=lessonStateChanged)
     def isLessonComplete(self) -> bool:
@@ -632,6 +633,7 @@ BEGINNER SAFETY RULES:
             
         self._lesson_total = len(self._lesson_playlist)
         self._is_loading = False
+        self._compute_lesson_blocks()
         
         self.lessonStateChanged.emit()
         self.lessonPlanGenerated.emit()
@@ -644,6 +646,37 @@ BEGINNER SAFETY RULES:
             
         self._is_waiting_to_begin = True
         self.lessonStateChanged.emit()
+
+    def _compute_lesson_blocks(self):
+        """Build a stable block summary from the current playlist for the sidebar.
+        
+        Groups consecutive steps with the same exercise_name into blocks.
+        Each block tracks its cumulative step range so the QML sidebar can
+        determine which block is active based on lessonProgress.
+        """
+        blocks = []
+        cumulative = 0
+        for step in self._lesson_playlist:
+            name = step.get("exercise_name", "Exercise")
+            track = step.get("track", "")
+            ex_type = step.get("exercise_type", "chord")
+            
+            # Group consecutive steps with the same exercise_name
+            if blocks and blocks[-1]["name"] == name:
+                blocks[-1]["stepCount"] += 1
+                blocks[-1]["endStep"] = cumulative + 1
+            else:
+                blocks.append({
+                    "track": track,
+                    "name": name,
+                    "type": ex_type,
+                    "stepCount": 1,
+                    "startStep": cumulative + 1,  # 1-indexed to match lessonProgress
+                    "endStep": cumulative + 1,
+                })
+            cumulative += 1
+        
+        self._lesson_blocks = blocks
 
     @Slot()
     def begin_lesson(self):
@@ -685,6 +718,7 @@ BEGINNER SAFETY RULES:
         self._is_lesson_mode = True
         self._is_lesson_complete = False
         self._is_active = True
+        self._compute_lesson_blocks()
         self.activeChanged.emit(True)
         self.lessonStateChanged.emit()
         self._next_chord()

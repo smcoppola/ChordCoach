@@ -118,7 +118,7 @@ Rectangle {
         // ── Session Playlist (Only visible during active lessons) ──
         ColumnLayout {
             Layout.fillWidth: true
-            visible: root.isLessonMode && typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.lessonPlaylist && appState.chordTrainer.lessonPlaylist.length > 0
+            visible: root.isLessonMode && typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.lessonBlocks && appState.chordTrainer.lessonBlocks.length > 0
             spacing: 12
             
             Text {
@@ -141,56 +141,76 @@ Rectangle {
                     id: playlistCol
                     anchors.fill: parent
                     anchors.margins: 12
-                    spacing: 8
+                    spacing: 6
                     
                     Repeater {
                         id: playlistRepeater
-                        model: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer.lessonPlaylist : []
+                        model: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer.lessonBlocks : []
                         
-                        delegate: RowLayout {
+                        delegate: ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 12
-                            
-                            // Status Indicator
-                            Rectangle {
-                                width: 12 * mainWindow.uiScale
-                                height: 12 * mainWindow.uiScale
-                                radius: 6 * mainWindow.uiScale
-                                color: {
-                                    if (index < root.lessonProgress - 1) return "#4CAF50"; // Done
-                                    if (index === root.lessonProgress - 1) return "#2196F3"; // Active
-                                    return "#444444"; // Pending
-                                }
-                                
-                                // Pulse if active
-                                SequentialAnimation on opacity {
-                                    running: index === root.lessonProgress - 1 && !appState.chordTrainer.isPausedForSpeech
-                                    loops: Animation.Infinite
-                                    NumberAnimation { to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
-                                    NumberAnimation { to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
-                                }
+                            spacing: 2
+
+                            // Track header — only show when track changes from previous block
+                            Text {
+                                visible: index === 0 || modelData.track !== appState.chordTrainer.lessonBlocks[index - 1].track
+                                text: modelData.track ? ("● " + modelData.track.toUpperCase()) : ""
+                                color: "#64B5F6"
+                                font.pixelSize: 9 * mainWindow.uiScale
+                                font.bold: true
+                                font.letterSpacing: 1.5 * mainWindow.uiScale
+                                Layout.topMargin: index === 0 ? 0 : 8
+                                Layout.bottomMargin: 4
                             }
                             
-                            ColumnLayout {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 2
-                                
+                                Layout.leftMargin: 12 * mainWindow.uiScale
+                                spacing: 8
+
+                                // Status icon
                                 Text {
-                                    text: modelData.track ? modelData.track.toUpperCase() : ""
-                                    color: index === root.lessonProgress - 1 ? "#64B5F6" : "#666666"
-                                    font.pixelSize: 9 * mainWindow.uiScale
+                                    text: {
+                                        if (root.lessonProgress > modelData.endStep) return "✓";
+                                        if (root.lessonProgress >= modelData.startStep && root.lessonProgress <= modelData.endStep) return "→";
+                                        return "○";
+                                    }
+                                    color: {
+                                        if (root.lessonProgress > modelData.endStep) return "#4CAF50";
+                                        if (root.lessonProgress >= modelData.startStep && root.lessonProgress <= modelData.endStep) return "#2196F3";
+                                        return "#555555";
+                                    }
+                                    font.pixelSize: 11 * mainWindow.uiScale
                                     font.bold: true
+
+                                    SequentialAnimation on opacity {
+                                        running: root.lessonProgress >= modelData.startStep && root.lessonProgress <= modelData.endStep
+                                        loops: Animation.Infinite
+                                        NumberAnimation { to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
+                                        NumberAnimation { to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
+                                    }
                                 }
-                                
+
+                                // Exercise name
                                 Text {
-                                    text: modelData.exercise_name || "Exercise"
-                                    color: index === root.lessonProgress - 1 ? "#ffffff" : (index < root.lessonProgress - 1 ? "#aaaaaa" : "#888888")
+                                    text: modelData.name || "Exercise"
+                                    color: {
+                                        if (root.lessonProgress > modelData.endStep) return "#aaaaaa";
+                                        if (root.lessonProgress >= modelData.startStep && root.lessonProgress <= modelData.endStep) return "#ffffff";
+                                        return "#888888";
+                                    }
                                     font.pixelSize: 12 * mainWindow.uiScale
-                                    font.bold: index === root.lessonProgress - 1
+                                    font.bold: root.lessonProgress >= modelData.startStep && root.lessonProgress <= modelData.endStep
+                                    font.strikeout: root.lessonProgress > modelData.endStep
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
-                                    // Strikethrough completed items
-                                    font.strikeout: index < root.lessonProgress - 1
+                                }
+
+                                // Step count
+                                Text {
+                                    text: modelData.stepCount + (modelData.stepCount === 1 ? " drill" : " drills")
+                                    color: "#555555"
+                                    font.pixelSize: 10 * mainWindow.uiScale
                                 }
                             }
                         }

@@ -61,6 +61,7 @@ class MidiHardwareService(QObject):
     midiNoteReceived = Signal(int, bool)
     sustainPedalChanged = Signal(bool)
     connectionStatusChanged = Signal(bool)
+    _probeSucceeded = Signal()
 
     def __init__(self, chordcoach_hw, ll_lib_path):
         super().__init__()
@@ -74,6 +75,10 @@ class MidiHardwareService(QObject):
         self._ll_lib_path = ll_lib_path
         self._ll_midi_out = None
         
+        # SysEx identity probe state
+        self._awaiting_identity_reply = False
+        self._midi_out_verified = False
+        
         # We DO NOT initialize LowLevelMidiOutput here on Windows!
         # Opening ANY MIDI handle locks the Windows MM device list for the process.
         # This prevents hot-plugged USB MIDI devices from being discovered by polling.
@@ -81,10 +86,16 @@ class MidiHardwareService(QObject):
             
         self._polling_timer = QTimer(self)
         self._polling_timer.timeout.connect(self.initialize)
-        self._probe_handler = None
+        
+        self._probe_timeout_timer = QTimer(self)
+        self._probe_timeout_timer.setSingleShot(True)
+        self._probe_timeout_timer.timeout.connect(self._on_probe_timeout)
+        self._probeSucceeded.connect(self._on_probe_success)
             
     def initialize(self):
         """Bind hardware ports and start listening. If no ports found, starts polling."""
+        if self.is_connected:
+            return True
         if not self.hw_module:
             print("MidiHardwareService: chordcoach_hw extension not available.")
             return False
@@ -168,6 +179,13 @@ class MidiHardwareService(QObject):
             else:
                 print("MidiHardwareService: Low-level MIDI output skipped (Not available)")
             
+            # --- SysEx Identity Probe ---
+            # Before sending any MIDI output, verify the device can handle it.
+            # Send a standard Identity Request; if the device replies, it supports input.
+            # If no reply within 500ms, disable output to avoid crashing budget keyboards.
+            if self._ll_midi_out and self._ll_midi_out._port_open:
+                self._run_identity_probe()
+            
             return True
         except Exception as e:
             print(f"MidiHardwareService: MIDI Hardware Init Error: {e}")
@@ -175,10 +193,63 @@ class MidiHardwareService(QObject):
             self.connectionStatusChanged.emit(False)
             return False
 
+    def _run_identity_probe(self):
+        """Send a MIDI SysEx Identity Request to check if the device supports MIDI input."""
+        try:
+            # Enable SysEx reception on the input handler (RtMidi ignores SysEx by default)
+            if self.hw_midi_in:
+                self.hw_midi_in.setIgnoreTypes(False, True, True)
+            
+            self._awaiting_identity_reply = True
+            self._midi_out_verified = False
+            
+            # Send Universal Non-Realtime Identity Request: F0 7E 7F 06 01 F7
+            self._ll_midi_out.send_message([0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7])
+            print("MidiHardwareService: SysEx Identity Request sent, waiting for reply...")
+            
+            # Start timeout — if no reply in 500ms, device doesn't support MIDI input
+            self._probe_timeout_timer.start(500)
+        except Exception as e:
+            print(f"MidiHardwareService: Identity probe error: {e}")
+            self._awaiting_identity_reply = False
+
+    def _on_probe_timeout(self):
+        """Called when the identity probe times out — device didn't respond."""
+        if not self._awaiting_identity_reply:
+            return
+        
+        self._awaiting_identity_reply = False
+        print("MidiHardwareService: Device did not respond to identity probe — MIDI output disabled.")
+        print("MidiHardwareService: (Keyboard does not support receiving MIDI messages)")
+        self._ll_midi_out = None  # Disables all output; existing guards handle this
+        
+        # Re-enable SysEx filtering
+        if self.hw_midi_in:
+            self.hw_midi_in.setIgnoreTypes(True, True, True)
+
+    def _on_probe_success(self):
+        """Called on main thread after device responds to identity probe."""
+        self._probe_timeout_timer.stop()
+        # Re-enable SysEx filtering for normal operation
+        if self.hw_midi_in:
+            self.hw_midi_in.setIgnoreTypes(True, True, True)
+        # Celebrate the connection
+        self.play_startup_riff()
+
     def _on_raw_midi_data(self, deltatime: float, message: list[int]):
         """Called by C++ RtMidi thread (from chordcoach_hw extension)."""
         if not message:
             return
+        
+        # Check for SysEx Identity Reply during probe window
+        if self._awaiting_identity_reply and message[0] == 0xF0:
+            if len(message) >= 5 and message[1] == 0x7E and message[3] == 0x06 and message[4] == 0x02:
+                self._awaiting_identity_reply = False
+                self._midi_out_verified = True
+                print(f"MidiHardwareService: Device responded to identity probe — MIDI output enabled.")
+                # Emit signal to bounce to main thread (QTimer.singleShot doesn't work from non-Qt threads)
+                self._probeSucceeded.emit()
+            return  # Don't process SysEx as note data
             
         status = message[0] & 0xF0
         if status == 0x90: # Note On
@@ -211,20 +282,20 @@ class MidiHardwareService(QObject):
         
         notes = [60, 64, 67, 71, 74]
         for i, n in enumerate(notes):
-             QTimer.singleShot(i * 70, lambda note=n: self._ll_midi_out.send_message([0x90, note, 80]))
+             QTimer.singleShot(i * 70, lambda note=n: self._ll_midi_out.send_message([0x90, note, 80]) if self._ll_midi_out else None)
         
         off_time = len(notes) * 70 + 200
-        QTimer.singleShot(off_time, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in notes])
-        QTimer.singleShot(off_time + 2500, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]))
+        QTimer.singleShot(off_time, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in notes] if self._ll_midi_out else None)
+        QTimer.singleShot(off_time + 2500, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
 
     def play_happy_tone(self):
         """Rising 2-note interval (C5→G5) for AI connected."""
         if not self._ll_midi_out: return
         self._ll_midi_out.send_message([0xB0, 64, 127]) # Sustain ON
         self._ll_midi_out.send_message([0x90, 72, 90])   # C5
-        QTimer.singleShot(120, lambda: self._ll_midi_out.send_message([0x90, 79, 90]))  # G5
-        QTimer.singleShot(600, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in [72, 79]])
-        QTimer.singleShot(2000, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]))
+        QTimer.singleShot(120, lambda: self._ll_midi_out.send_message([0x90, 79, 90]) if self._ll_midi_out else None)  # G5
+        QTimer.singleShot(600, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in [72, 79]] if self._ll_midi_out else None)
+        QTimer.singleShot(2000, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
 
     def play_sad_tone(self):
         """Falling 2-note interval (E♭5→C5) for AI disconnected."""
