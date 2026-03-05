@@ -138,6 +138,14 @@ class DatabaseManager:
                 )
             ''')
             
+            # App settings — simple key/value store for persistent flags (e.g. onboarding_completed)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            ''')
+            
             conn.commit()
 
     def record_song_play(self, filepath: str, title: str, mastery_gained: float):
@@ -325,15 +333,26 @@ class DatabaseManager:
             cursor.execute('DELETE FROM session_history;')
             cursor.execute('DELETE FROM learned_terms;')
             cursor.execute('DELETE FROM exercise_intros;')
+            cursor.execute('DELETE FROM app_settings;')
             conn.commit()
 
     def has_completed_onboarding(self) -> bool:
-        """Returns True if the user has any chord attempt history."""
+        """Returns True if onboarding has been explicitly marked as complete."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM chords")
+            cursor.execute("SELECT value FROM app_settings WHERE key = 'onboarding_completed'")
             row = cursor.fetchone()
-            return row[0] > 0
+            return row is not None and row[0] == '1'
+
+    def mark_onboarding_complete(self):
+        """Persist the onboarding-completed flag."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('onboarding_completed', '1')"
+            )
+            conn.commit()
+        print("DatabaseManager: Onboarding marked as complete.")
 
     def get_all_chord_stats(self):
         """Returns all chord statistics as a list of dictionaries for UI display."""

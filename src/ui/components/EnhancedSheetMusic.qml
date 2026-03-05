@@ -486,12 +486,14 @@ Rectangle {
             // The container x origin is at parent.noteStartX. 
             // We shift it left by currentBeat * pixelsPerBeat.
             x: - (root.evalBeat * root.pixelsPerBeat)
-            
-            Behavior on x { 
-                NumberAnimation { 
-                    duration: 33 // Slight interpolation to bridge 10ms-16ms Python ticks
-                    easing.type: Easing.Linear 
-                } 
+            // Use SmoothedAnimation to interpolate between Python beat ticks.
+            // Python emits at 100fps but QML renders at vsync (~60fps), so
+            // direct binding produces visible jumps. This smooths the gap.
+            Behavior on x {
+                SmoothedAnimation {
+                    velocity: -1  // Match the target as fast as possible
+                    duration: 80  // Enough duration to smooth Windows OS timer jitter
+                }
             }
 
             Repeater {

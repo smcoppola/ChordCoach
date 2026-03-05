@@ -123,6 +123,12 @@ ApplicationWindow {
         id: onboardingOverlay
         anchors.fill: parent
         
+        onCompleted: {
+            // Persist that onboarding is done so it won't show again on next launch
+            appState.settingsService.markOnboardingComplete();
+            mainWindow.showOnboarding = false;
+        }
+        
         Component.onCompleted: {
             if (mainWindow.showOnboarding) {
                 onboardingOverlay.show();

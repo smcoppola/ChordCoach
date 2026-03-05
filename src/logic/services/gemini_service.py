@@ -15,6 +15,8 @@ class GeminiService(QObject):
     audioDataReceived = Signal(bytes)
     aiFinishedSpeaking = Signal()
     reconnecting = Signal(int, int)  # (attempt, max_attempts)
+    exerciseReceived = Signal(dict)   # Fired when model calls set_exercise tool
+    lessonEndReceived = Signal(str)   # Fired when model calls end_lesson tool
 
     def __init__(self, settings_manager=None, api_key=None):
         super().__init__()
@@ -36,6 +38,7 @@ class GeminiService(QObject):
         self._audio_timer.start(10)
         
         self._is_speaking_state = False
+        self._exercise_pending = False  # Track if an exercise is awaiting completion
         
         # Start the asyncio loop in a background thread so we don't block the Qt UI
         self.thread = threading.Thread(target=self._start_loop, daemon=True)
@@ -173,6 +176,16 @@ class GeminiService(QObject):
             # Global Pronunciation Rules
             base_instruction += " PRONUNCIATION RULE: Whenever you see a Roman Numeral chord progression (like I-V-vi-IV), pronounce it as numbers (e.g. 'one, five, six, four'), NOT as letters (e.g. 'eye, vee')."
             
+            # Voice Guidance Rules for exercises
+            base_instruction += (
+                " VOICE RULES: 1. NEVER say raw numbers like BPM, milliseconds, or technical parameters. "
+                "Say 'play slowly and steadily' instead of 'play at 60 BPM'. "
+                "2. The student sees the chord/notes on screen — focus on WHY they're doing this, not WHAT keys to press. "
+                "3. Between exercises of the SAME type, call set_exercise with ZERO audio output — total silence. "
+                "4. Only speak when: introducing a NEW exercise type, giving feedback on struggles, or ending the lesson. "
+                "5. Keep transitions fast. Call set_exercise immediately after receiving performance data. "
+                "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson."
+            )
             if hasattr(self, 'coach_context') and self.coach_context:
                 base_instruction += "\n\n" + self.coach_context
                 
@@ -193,7 +206,117 @@ class GeminiService(QObject):
                         "parts": [{
                             "text": base_instruction
                         }]
-                    }
+                    },
+                    "tools": [{
+                        "functionDeclarations": [
+                            {
+                                "name": "set_exercise",
+                                "description": (
+                                    "Set the next piano exercise for the student. "
+                                    "Call this EXACTLY ONCE per exercise. You MUST call this tool "
+                                    "whenever you are given a lesson plan or asked for "
+                                    "the next exercise. Only speak if introducing a NEW "
+                                    "exercise type. For same-type exercises, call silently. "
+                                    "NEVER call this tool multiple times in the same response."
+                                ),
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "exercise_type": {
+                                            "type": "STRING",
+                                            "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal"
+                                        },
+                                        "exercise_name": {
+                                            "type": "STRING",
+                                            "description": "Human-readable name for this exercise group (e.g. 'Minor Triads')"
+                                        },
+                                        "root_idx": {
+                                            "type": "INTEGER",
+                                            "description": "Root note as semitone offset from C: C=0, C#=1, D=2, ... B=11"
+                                        },
+                                        "chord_type_name": {
+                                            "type": "STRING",
+                                            "description": "Chord quality: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7"
+                                        },
+                                        "hand": {
+                                            "type": "STRING",
+                                            "description": "Which hand: right, left, or both"
+                                        },
+                                        "hold_ms": {
+                                            "type": "INTEGER",
+                                            "description": "How long the student must hold the chord in ms. 0 = strike only, 2000+ = sustain"
+                                        },
+                                        "track": {
+                                            "type": "STRING",
+                                            "description": "Curriculum track: technique, theory, ear, repertoire"
+                                        },
+                                        "milestone_id": {
+                                            "type": "STRING",
+                                            "description": "Curriculum milestone identifier"
+                                        },
+                                        "scale_type": {
+                                            "type": "STRING",
+                                            "description": "For pentascale exercises: Major or Minor"
+                                        },
+                                        "direction": {
+                                            "type": "STRING",
+                                            "description": "For pentascale: ascending or descending"
+                                        },
+                                        "octave": {
+                                            "type": "INTEGER",
+                                            "description": "Octave number, usually 4"
+                                        },
+                                        "bpm": {
+                                            "type": "INTEGER",
+                                            "description": "Metronome BPM for timed exercises. 0 or omit for free play"
+                                        },
+                                        "preview_chord": {
+                                            "type": "BOOLEAN",
+                                            "description": "If true, play the chord on the MIDI keyboard before the student tries"
+                                        },
+                                        "target_quality": {
+                                            "type": "STRING",
+                                            "description": "For listen exercises: Major or Minor"
+                                        },
+                                        "pedal_type": {
+                                            "type": "STRING",
+                                            "description": "For sustain_pedal exercises: direct or legato"
+                                        },
+                                        "progression_steps": {
+                                            "type": "ARRAY",
+                                            "description": "For progression exercises: array of chord steps",
+                                            "items": {
+                                                "type": "OBJECT",
+                                                "properties": {
+                                                    "root_idx": {"type": "INTEGER"},
+                                                    "chord_type_name": {"type": "STRING"},
+                                                    "numeral": {"type": "STRING"}
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "required": ["exercise_type", "exercise_name", "track", "milestone_id"]
+                                }
+                            },
+                            {
+                                "name": "end_lesson",
+                                "description": (
+                                    "End the current lesson. Call this when the student has completed "
+                                    "enough exercises or the session time is up. Speak your closing "
+                                    "feedback AND call this tool."
+                                ),
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "feedback_summary": {
+                                            "type": "STRING",
+                                            "description": "Brief text summary of the student's performance"
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }]
                 }
             }
             await self.ws.send(json.dumps(setup_msg))  # type: ignore
@@ -220,9 +343,43 @@ class GeminiService(QObject):
                 msg = await self.ws.recv()  # type: ignore
                 data = json.loads(msg)
                 
-                # We're looking for serverContent -> modelTurn -> parts -> text
                 if "setupComplete" in data:
                     print("Gemini Service: Setup is complete.")
+
+                # ── Handle tool calls from the model ──
+                if "toolCall" in data:
+                    tool_call = data["toolCall"]
+                    for fc in tool_call.get("functionCalls", []):
+                        fn_name = fc.get("name", "")
+                        fn_args = fc.get("args", {})
+                        fn_id = fc.get("id", "")
+                        print(f"Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
+
+                        tool_response = {"status": "ok"}
+
+                        if fn_name == "set_exercise":
+                            if self._exercise_pending:
+                                # Reject: model sent another set_exercise before student completed the previous one
+                                print(f"Gemini Service: REJECTING duplicate set_exercise — waiting for student completion")
+                                tool_response = {"status": "error", "message": "Exercise already active. WAIT for the student to complete it. You will receive a performance report when they finish. Do NOT call set_exercise again until then."}
+                            else:
+                                self._exercise_pending = True
+                                self.exerciseReceived.emit(fn_args)
+                        elif fn_name == "end_lesson":
+                            self._exercise_pending = False
+                            self.lessonEndReceived.emit(fn_args.get("feedback_summary", ""))
+
+                        # Send toolResponse (required by the API)
+                        tool_resp = {
+                            "toolResponse": {
+                                "functionResponses": [{
+                                    "id": fn_id,
+                                    "name": fn_name,
+                                    "response": tool_response
+                                }]
+                            }
+                        }
+                        await self.ws.send(json.dumps(tool_resp))  # type: ignore
                     
                 if "serverContent" in data:
                     content = data["serverContent"]
@@ -303,6 +460,7 @@ class GeminiService(QObject):
         if not self.connected or not self.ws:
             print("Gemini Service: Not connected.")
             return
+
             
         # Format the message correctly for the Bidi API
         msg = {
@@ -315,6 +473,12 @@ class GeminiService(QObject):
             }
         }
         asyncio.run_coroutine_threadsafe(self.ws.send(json.dumps(msg)), self.loop)  # type: ignore
+
+    @Slot()
+    def clear_exercise_pending(self):
+        """Clear the exercise-pending flag. Call ONLY when the student has
+        completed an exercise and performance data is about to be sent."""
+        self._exercise_pending = False
 
     def send_audio_chunk(self, pcm_data: list[float]):
         """

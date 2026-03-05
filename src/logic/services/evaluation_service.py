@@ -299,6 +299,7 @@ class EvaluationService(QObject):
             time_diff = abs(self._current_beat - note["start_beat"])
             if time_diff <= self._hit_window_beats:
                 self._note_states[i] = "hit"
+                self._update_accuracy()
                 self.noteStateChanged.emit()
                 return
 
@@ -313,4 +314,11 @@ class EvaluationService(QObject):
                 self._note_states[i] = "miss"
                 changed = True
         if changed:
+            self._update_accuracy()
             self.noteStateChanged.emit()
+
+    def _update_accuracy(self):
+        """Recalculate accuracy from current note states (live update)."""
+        resolved = [s for s in self._note_states if s != "pending"]
+        if resolved:
+            self._accuracy = resolved.count("hit") / len(resolved)

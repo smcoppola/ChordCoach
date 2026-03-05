@@ -18,9 +18,9 @@ Rectangle {
     Component {
         id: dashboardComponent
         DashboardView {
-            onStartLesson: {
+            onStartLesson: function(minutes) {
                 if (appState && appState.chordTrainer) {
-                    appState.chordTrainer.start_lesson_plan();
+                    appState.chordTrainer.start_lesson_plan(minutes);
                     workspaceStack.replace(trainerViewComponent);
                 }
             }

@@ -46,6 +46,8 @@ class AppState(QObject):
     aiConnectedChanged = Signal(bool)
     midiConnectedChanged = Signal(bool)
     evalIntroPendingChanged = Signal(bool)
+    archIntroPendingChanged = Signal(bool)
+    isReconnectingChanged = Signal(bool)
     sustainPedalChanged = Signal(bool)
     
     def __init__(self):
@@ -83,6 +85,11 @@ class AppState(QObject):
         # Connect Gemini signals to AppState/QML
         self._gemini.responseReceived.connect(self._on_ai_text)
         self._gemini.connectionStatusChanged.connect(self.aiConnectedChanged)
+        
+        # Forward coordinator signals to AppState so QML receives them
+        self.coordinator.evalIntroPendingChanged.connect(self.evalIntroPendingChanged)
+        self.coordinator.archIntroPendingChanged.connect(self.archIntroPendingChanged)
+        self.coordinator.isReconnectingChanged.connect(self.isReconnectingChanged)
         
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
@@ -138,6 +145,14 @@ class AppState(QObject):
     @Property(bool, notify=evalIntroPendingChanged)
     def evalIntroPending(self):
         return self.coordinator.evalIntroPending
+
+    @Property(bool, notify=archIntroPendingChanged)
+    def archIntroPending(self):
+        return self.coordinator.archIntroPending
+
+    @Property(bool, notify=isReconnectingChanged)
+    def isReconnecting(self):
+        return self.coordinator.isReconnecting
 
     @Property(str, constant=True)
     def midiDeviceName(self):

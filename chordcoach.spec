@@ -93,7 +93,11 @@ a = Analysis(
         'logic.services.chord_trainer', 
         'logic.services.evaluation_service', 
         'logic.services.adaptive_engine', 
-        'logic.services.settings_service'
+        'logic.services.settings_service',
+        'logic.services.curriculum_service',
+        'logic.coordinators.app_coordinator',
+        'hardware.midi_hardware_service',
+        'core.bootstrap'
     ],
     hookspath=[],
     hooksconfig={},

@@ -122,3 +122,9 @@ class SettingsService(QObject):
     def hasCompletedOnboarding(self) -> bool:
         return self.db.has_completed_onboarding()
 
+    @Slot()
+    def markOnboardingComplete(self):
+        """Persist that onboarding has been completed."""
+        self.db.mark_onboarding_complete()
+        self.statsChanged.emit()
+

@@ -82,14 +82,32 @@
             "min_accuracy_to_advance": 0.80
         },
         {
-            "id": "inversions_intro",
-            "title": "Chord Inversions",
+            "id": "lh_bass_notes",
+            "title": "Left Hand Bass Notes",
             "order": 5,
             "exercise_types": [
                 "chord"
             ],
             "unlock_criteria": "rh_transitions",
-            "description": "Learn root position, 1st inversion, and 2nd inversion for major and minor triads.",
+            "description": "Play single bass notes with the left hand in octaves 2-3.",
+            "target_keys": [
+                "C",
+                "F",
+                "G"
+            ],
+            "target_chords": [],
+            "min_attempts_to_advance": 8,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
+            "id": "hands_together",
+            "title": "Hands Together Basics",
+            "order": 6,
+            "exercise_types": [
+                "hands_together"
+            ],
+            "unlock_criteria": "lh_bass_notes",
+            "description": "Right hand plays chord while left hand plays the bass root note.",
             "target_keys": [
                 "C",
                 "F",
@@ -104,32 +122,14 @@
             "min_accuracy_to_advance": 0.75
         },
         {
-            "id": "lh_bass_notes",
-            "title": "Left Hand Bass Notes",
-            "order": 6,
+            "id": "inversions_intro",
+            "title": "Chord Inversions",
+            "order": 7,
             "exercise_types": [
                 "chord"
             ],
-            "unlock_criteria": "inversions_intro",
-            "description": "Play single bass notes with the left hand in octaves 2-3.",
-            "target_keys": [
-                "C",
-                "F",
-                "G"
-            ],
-            "target_chords": [],
-            "min_attempts_to_advance": 8,
-            "min_accuracy_to_advance": 0.80
-        },
-        {
-            "id": "hands_together",
-            "title": "Hands Together Basics",
-            "order": 7,
-            "exercise_types": [
-                "hands_together"
-            ],
-            "unlock_criteria": "lh_bass_notes",
-            "description": "Right hand plays chord while left hand plays the bass root note.",
+            "unlock_criteria": "hands_together",
+            "description": "Learn root position, 1st inversion, and 2nd inversion for major and minor triads.",
             "target_keys": [
                 "C",
                 "F",
@@ -251,14 +251,47 @@
             "min_accuracy_to_advance": 0.0
         },
         {
+            "id": "inversion_theory",
+            "title": "What is an Inversion?",
+            "order": 4,
+            "exercise_types": [
+                "theory_concept"
+            ],
+            "unlock_criteria": "minor_formula",
+            "description": "An inversion is simply reordering the notes of a chord so the root isn't on the bottom.",
+            "target_keys": [],
+            "target_chords": [],
+            "min_attempts_to_advance": 1,
+            "min_accuracy_to_advance": 0.0
+        },
+        {
+            "id": "v_to_i_listen",
+            "title": "Hearing Tension and Release (V -> I)",
+            "order": 5,
+            "exercise_types": [
+                "listen"
+            ],
+            "unlock_criteria": "inversion_theory",
+            "description": "Listen to the tension of the Dominant (V) chord resolving back home to the Tonic (I) chord.",
+            "target_keys": [
+                "C"
+            ],
+            "target_chords": [
+                "C Major",
+                "G Major"
+            ],
+            "min_attempts_to_advance": 5,
+            "min_accuracy_to_advance": 0.80
+        },
+        {
             "id": "roman_numerals",
             "title": "Roman Numeral Basics (I, IV, V)",
-            "order": 4,
+            "order": 6,
             "exercise_types": [
                 "theory_concept",
                 "progression"
             ],
-            "unlock_criteria": "minor_formula",
+            "unlock_criteria": "v_to_i_listen",
             "description": "Roman numerals label chords by their scale degree. I is home, V creates tension, IV is the departure.",
             "target_keys": [
                 "C"
@@ -270,7 +303,7 @@
         {
             "id": "circle_of_fifths",
             "title": "Circle of Fifths Introduction",
-            "order": 5,
+            "order": 7,
             "exercise_types": [
                 "key_explorer"
             ],
@@ -289,7 +322,7 @@
         {
             "id": "nashville_numbers",
             "title": "Nashville Number System",
-            "order": 6,
+            "order": 8,
             "exercise_types": [
                 "theory_concept",
                 "progression"
@@ -307,7 +340,7 @@
         {
             "id": "minor_progressions",
             "title": "Minor Key Progressions",
-            "order": 7,
+            "order": 9,
             "exercise_types": [
                 "progression"
             ],

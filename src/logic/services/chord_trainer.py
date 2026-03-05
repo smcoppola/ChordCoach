@@ -1,10 +1,7 @@
 import os
 import time
 import random
-import urllib.request
 import json
-import threading
-import re
 from typing import Set, List, Dict, Tuple
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
 
@@ -18,10 +15,14 @@ class ChordTrainerService(QObject):
     lessonStateChanged = Signal()
     loadingStatusChanged = Signal()
     speakInstruction = Signal(str)
+    speakBrief = Signal(str)              # Non-blocking brief coach commentary
     apiConnectivityChanged = Signal(bool)  # True = confirmed, False = lost
-    lessonPlanGenerated = Signal()
     midiOutRequested = Signal(list)
     metronomeTick = Signal()
+    
+    # Single-model architecture signals
+    requestLessonStart = Signal(str)    # Emitted with the full lesson prompt for the AI coach
+    reportPerformance = Signal(str)     # Emitted after each exercise with performance data
     
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
         super().__init__()
@@ -67,8 +68,16 @@ class ChordTrainerService(QObject):
         self._is_loading = False
         self._loading_status_text = ""
         self._is_paused_for_speech = False
+        self._pending_exercise = None  # Single-slot queue to prevent rapid-fire overwrites
+        self._listen_preview_pending = False  # Deferred MIDI preview for listen exercises
+        self._metronome_pending = None  # Deferred metronome start {bpm, interval_ms}
+        self._ignore_midi_until = 0.0   # Ignore MIDI input while previewing
         self._session_stats: Dict[str, List[float]] = {}
         self._estimated_gen_ms = 5000.0
+        
+        # Inter-exercise commentary streak tracking
+        self._consecutive_successes = 0
+        self._consecutive_struggles = 0
         
         # Pentascale State
         self._pentascale_sequence: List[int] = []  # Exact MIDI pitches for the 5-note sequence
@@ -253,21 +262,26 @@ class ChordTrainerService(QObject):
         self._next_chord()
         
     @Slot()
-    def start_lesson_plan(self):
-        # Tailored Lesson Plan Mode
+    @Slot(int)
+    def start_lesson_plan(self, available_minutes: int = 10):
+        """Start a new lesson by sending context to the AI coach via WebSocket.
+        
+        Instead of generating the entire plan via REST API, we send the session
+        context to the live voice model and let it generate exercises one at a
+        time via tool calls while speaking instructions.
+        """
         if self._is_loading:
             return
             
         self._is_lesson_mode = True
         self._is_lesson_complete = False
         self._lesson_progress = 0
+        self._lesson_total = 0
         self._is_loading = True
+        self._lesson_playlist = []
+        self._lesson_blocks = []
         
-        # Synchronously calculate the estimation so QML has it immediately
-        self._estimated_gen_ms = self.db.get_median_generation_time(last_n=5)
-        if self._estimated_gen_ms <= 0:
-             self._estimated_gen_ms = 5000.0
-             
+        self._estimated_gen_ms = 3000.0  # Much faster now — single round-trip
         self._loading_status_text = "CONNECTING TO YOUR COACH..."
         self.loadingStatusChanged.emit()
         self.lessonStateChanged.emit()
@@ -279,12 +293,15 @@ class ChordTrainerService(QObject):
         self._active_pitches.clear()
         self._session_stats.clear()
         self._struggled_items.clear()
+        self._pending_exercise = None
+        self._consecutive_successes = 0
+        self._consecutive_struggles = 0
         
-        # New Curriculum-Aware Planning
+        # Build the curriculum context
         user_context = ""
         session_plan = None
         if self.curriculum:
-            session_plan = self.curriculum.plan_session(available_minutes=10)
+            session_plan = self.curriculum.plan_session(available_minutes=available_minutes)
             user_context = self.curriculum.get_curriculum_context()
         else:
             user_context = self.db.get_coach_context()
@@ -292,360 +309,237 @@ class ChordTrainerService(QObject):
         learned_terms = self.db.get_learned_term_names()
         if learned_terms:
             user_context += f"\n\nALREADY EXPLAINED TERMS (DO NOT explain these again!):\n{', '.join(learned_terms)}\n"
-        user_context += "\nIMPORTANT: For any NEW technical music terms you use in your spoken_instruction that are NOT in the list above, you MUST explain them simply before using them. Add these new terms to the 'new_terms' array in your JSON response."
         
         seen_exercises = self.db.get_seen_exercise_intros()
         if seen_exercises:
             user_context += f"\n\nSEEN EXERCISES (User already knows how to do these):\n{', '.join(seen_exercises)}\n"
         
-        threading.Thread(target=self._query_gemini_for_lesson_plan, 
-                         args=(user_context, session_plan), daemon=True).start()
+        # Build the lesson prompt for the live model
+        dev_mode = os.environ.get("DEV_MODE", "false").lower() in ("true", "1", "yes")
         
-    def _query_gemini_for_lesson_plan(self, user_context: str, session_plan: dict = {}):
-        """Fetches a dynamic lesson plan from Gemini based on the curriculum session plan."""
-        api_key = self.settings.apiKey if self.settings else os.environ.get("GOOGLE_API_KEY")
-        
-        fallback_plan = True
-        if api_key:
-            import urllib.request
-            import re
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-            
-            # (Connectivity check removed for brevity, proceeding to generation)
-            self._loading_status_text = "GENERATING YOUR LESSON..."
-            self.loadingStatusChanged.emit()
-            
-            # Check for developer fast-testing mode
-            dev_mode = os.environ.get("DEV_MODE", "false").lower() in ("true", "1", "yes")
-            
-            blocks_text = ""
-            if session_plan and "blocks" in session_plan:
-                if dev_mode:
-                    blocks_text = "Here is the SESSION PLAN for today. You must generate exactly 2 or 3 exercises for EACH block (DEV MODE IS ON - KEEP LESSONS EXTREMELY SHORT!):\n"
-                else:
-                    blocks_text = "Here is the SESSION PLAN for today. You must generate 20-40 exercises for EACH block:\n"
-                
-                for i, b in enumerate(session_plan["blocks"]):
-                    blocks_text += f"\nBlock {i+1}: {b['milestone_title']} (track: '{b['track']}', milestone_id: '{b['milestone_id']}')\n"
-                    blocks_text += f"- Goal: {b['milestone_description']}\n"
-                    blocks_text += f"- Target Keys: {b['target_keys']}\n"
-                    blocks_text += f"- Target Chords: {b['target_chords']}\n"
-                    blocks_text += f"- Target exercise count for this block: {b['step_count']}\n"
-                
-                if session_plan.get("review_items"):
-                    if dev_mode:
-                        blocks_text += "\nREVIEW ITEMS (SM-2): Include EXACTLY 1 drill for each of these items:\n"
-                    else:
-                        blocks_text += "\nREVIEW ITEMS (SM-2): Include 2-3 drills for each of these items:\n"
-                    for r in session_plan["review_items"]:
-                        blocks_text += f"- {r['item_type']}: {r['item_id']}\n"
+        blocks_text = ""
+        if session_plan and "blocks" in session_plan:
+            if dev_mode:
+                blocks_text = "Here is the SESSION PLAN. Generate 2-3 exercises per block (DEV MODE — short session):\n"
             else:
-                blocks_text = "Determine the best basic progression for a beginner (C Major I-IV-V-I)."
-
-            prompt = f"""You are 'ChordCoach', a world-class expert piano instructor. 
+                blocks_text = "Here is the SESSION PLAN. Generate 20-40 exercises per block:\n"
             
+            for i, b in enumerate(session_plan["blocks"]):
+                blocks_text += f"\nBlock {i+1}: {b['milestone_title']} (track: '{b['track']}', milestone_id: '{b['milestone_id']}')\n"
+                blocks_text += f"- Goal: {b['milestone_description']}\n"
+                blocks_text += f"- Target Keys: {b['target_keys']}\n"
+                blocks_text += f"- Target Chords: {b['target_chords']}\n"
+                blocks_text += f"- Target exercise count: {b['step_count']}\n"
+            
+            if session_plan.get("review_items"):
+                if dev_mode:
+                    blocks_text += "\nREVIEW ITEMS (SM-2): Include 1 drill for each:\n"
+                else:
+                    blocks_text += "\nREVIEW ITEMS (SM-2): Include 2-3 drills for each:\n"
+                for r in session_plan["review_items"]:
+                    blocks_text += f"- {r['item_type']}: {r['item_id']}\n"
+        else:
+            blocks_text = "The student is a complete beginner. Start with a C Major Pentascale (C-D-E-F-G)."
+
+        prompt = f"""[System Note]: START A NEW LESSON.
+
 {user_context}
 
 {blocks_text}
 
-Generate your response as a SINGLE JSON object with two keys:
-1. "new_terms": an array of objects for any new technical music terms introduced in this lesson that haven't been explained yet, e.g. [{{"term": "Triad", "explanation": "A chord made of three notes..."}}]
-2. "steps": an array of exercise objects.
+INSTRUCTIONS:
+1. You MUST call the `set_exercise` tool right now to assign the first exercise. Do NOT forget to call the tool.
+2. Speak a brief (1-sentence) welcome and session overview.
+3. Wait for me to report the student's performance before calling the tool again.
+4. When they finish an exercise, I will send you a report. Decide the next step (advance, repeat, or simplify) and call `set_exercise` again.
+5. When the session is complete, call `end_lesson`.
+6. Between exercises of the SAME type, provide ONLY a 1-3 word micro-affirmation (e.g. "Good", "Keep going", "Nice") and immediately call `set_exercise`. Do NOT give long explanations between reps.
+7. Only speak longer sentences when introducing a NEW exercise type, giving feedback on struggles, or ending.
 
-YOU control the pacing — use repetition, variation, and progressive difficulty.
-Do NOT pad with identical back-to-back steps. Instead, vary voicings, inversions, tempos (via hold_ms), or alternate between related chords.
-
-Return ONLY a raw JSON object.
-
-STEP SCHEMA - Each step object in the "steps" array MUST have "exercise_type" and "hand" plus type-specific fields:
-
-EVERY step must include:
-  "hand": "right" | "left" | "both"
-  "track": string (e.g. "technique" or "theory") — IMPORTANT: Match the block track.
-  "milestone_id": string — IMPORTANT: Match the block milestone_id.
-
-For exercise_type "pentascale":
-  "exercise_type": "pentascale"
-  "root_idx": integer 0-11
-  "scale_type": "Major" or "Minor"
-  "direction": "ascending" or "descending"
-  "octave": integer (usually 4)
-  "exercise_name": string
-  "spoken_instruction": string
-  "bpm": integer (OPTIONAL - Provide if you want a timed exercise with a metronome, e.g. 80. Omit for free-play)
-  "hold_ms": 0
-
-For exercise_type "chord":
-  "exercise_type": "chord"
-  "root_idx": integer 0-11
-  "chord_type_name": string (Major, Minor, etc.)
-  "exercise_name": string
-  "spoken_instruction": string
-  "hold_ms": integer (0 for strike, 2000+ for locking)
-  "preview_chord": boolean (OPTIONAL - if true, the coach plays it first for the user)
-
-For exercise_type "progression":
-  "exercise_type": "progression"
-  "exercise_name": string
-  "spoken_instruction": string
-  "hold_ms": integer (1000-2000)
-  "progression_steps": array of objects: {{"root_idx": int, "chord_type_name": str, "numeral": str}}
-
-For exercise_type "listen":
-  "exercise_type": "listen"
-  "root_idx": integer 0-11
-  "chord_type_name": string (e.g. "Major")
-  "target_quality": string (e.g. "Major" or "Minor")
-  "exercise_name": string
-  "spoken_instruction": string
-
-For exercise_type "hands_together":
-  "exercise_type": "hands_together"
-  "root_idx": integer 0-11
-  "chord_type_name": string
-  "exercise_name": string
-  "spoken_instruction": string
-  "hold_ms": integer
-
-For exercise_type "sustain_pedal":
-  "exercise_type": "sustain_pedal"
-  "root_idx": integer 0-11
-  "chord_type_name": string
-  "pedal_type": string ("direct" or "legato")
-  "exercise_name": string
-  "spoken_instruction": string
-  "hold_ms": integer
-
-RULES for spoken_instruction:
-- ONLY the first step of each new exercise_name or block gets spoken.
-- The VERY FIRST step MUST have an extremely brief (1-sentence) overview of the session goals.
-- If an 'exercise_type' is listed in the 'SEEN EXERCISES' list above, provide a 3-5 word reminder (e.g. "C Major Pentascale. Ready?").
-- If an 'exercise_type' is NOT in the 'SEEN EXERCISES' list, provide a clear, brief 1-sentence explanation of how to play it. Avoid filler.
+VOICE GUIDANCE RULES:
+- NEVER reference raw numbers like BPM, milliseconds, or technical parameters.
+- Instead of "play at 60 BPM", say "play slowly and steadily" or "keep a relaxed pace".
+- Focus on WHAT the student should do, not technical specifications.
+- Briefly explain the "why" or context when introducing a new exercise type (e.g., "This pentascale shape is the foundation for pop songs").
+- The student sees the chord/notes on screen — don't describe which keys to press.
+- Keep exercise transitions fast. Call set_exercise immediately, don't narrate between steps.
 
 BEGINNER SAFETY RULES:
-- If 'Global Session Progress' indicates the user is a BEGINNER (low total attempts):
-  - DO NOT use 7th, 9ths, or other extended chords unless explicitly in target_chords.
-  - DO NOT use complex rhythms.
-  - FOCUS on individual notes (pentascale) and basic Triads (Major/Minor).
-  - For 'listen' exercises, ONLY use "Major" and "Minor" as target_quality.
-- ALWAYS prioritize 'target_chords' list over the general 'milestone_description'.
-"""
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2} # Low temp for structured output
-            }
-            
-            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            
-            import urllib.error
-            model_name = "gemini-2.5-flash"
-            generation_start = time.time()
-            
-            # Adaptive slow timer: use historical avg if available, otherwise 5s
-            avg_gen_ms = self.db.get_avg_generation_time(last_n=5)
-            slow_threshold_s = max(5.0, (avg_gen_ms / 1000.0) * 0.5) if avg_gen_ms > 0 else 5.0
-            
-            max_retries = 12
-            for attempt in range(max_retries):
-                try:
-                    # Start a timer to update status if request takes longer than expected
-                    def _update_slow_status():
-                        self._loading_status_text = "GENERATING LESSON — PLEASE WAIT..."
-                        self.loadingStatusChanged.emit()
-                        print(f"ChordTrainer: Gemini generation is taking longer than {slow_threshold_s:.1f}s...")
-                    slow_timer = threading.Timer(slow_threshold_s, _update_slow_status)
-                    slow_timer.start()
-                    
-                    print(f"ChordTrainer: Making Gemini request (attempt {attempt + 1}/{max_retries})...")
-                    with urllib.request.urlopen(req, timeout=60) as response:
-                        result = json.loads(response.read().decode('utf-8'))
-                        text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
-                        
-                        # First try to match a JSON object, fallback to array if model disobeyed
-                        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-                        if not json_match:
-                            json_match = re.search(r'\[.*\]', text, re.DOTALL)
-                            
-                        clean_text = json_match.group(0) if json_match else text
-                        
-                        try:
-                            data = json.loads(clean_text)
-                            steps_data = []
-                            
-                            if isinstance(data, dict):
-                                new_terms = data.get("new_terms", [])
-                                for nt in new_terms:
-                                    term = nt.get("term", "")
-                                    expl = nt.get("explanation", "")
-                                    if term and expl:
-                                        self.db.record_learned_term(term, expl)
-                                steps_data = data.get("steps", [])
-                            elif isinstance(data, list):
-                                steps_data = data
-                                
-                            if len(steps_data) > 0:
-                                self._lesson_playlist = []
-                                for step in steps_data:
-                                    ex_type = step.get("exercise_type", "chord")
-                                    
-                                    if ex_type == "pentascale":
-                                        # Pentascale steps need root_idx and scale_type
-                                        if "root_idx" in step:
-                                            step.setdefault("track", step.get("track", "technique"))
-                                            step.setdefault("milestone_id", step.get("milestone_id", ""))
-                                            step.setdefault("hand", "right")
-                                            step.setdefault("scale_type", "Major")
-                                            step.setdefault("direction", "ascending")
-                                            step.setdefault("octave", 4)
-                                            step.setdefault("exercise_name", "Pentascale Warmup")
-                                            step.setdefault("hold_ms", 0)
-                                            self._lesson_playlist.append(step)
-                                    
-                                    elif ex_type == "progression":
-                                        # Progression steps need progression_steps array
-                                        prog_steps = step.get("progression_steps", [])
-                                        if prog_steps and len(prog_steps) > 0:
-                                            # Validate each sub-step has valid chord types
-                                            valid = True
-                                            for ps in prog_steps:
-                                                if ps.get("chord_type_name", "") not in self.CHORD_TYPES:
-                                                    valid = False
-                                                    break
-                                            if valid:
-                                                step.setdefault("track", step.get("track", "theory"))
-                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
-                                                step.setdefault("hand", "right")
-                                                step.setdefault("exercise_name", "Chord Progression")
-                                                step.setdefault("hold_ms", 1000)
-                                                self._lesson_playlist.append(step)
+- DO NOT use 7th, 9th, or extended chords unless in target_chords.
+- DO NOT use complex rhythms for beginners.
+- For 'listen' exercises, ONLY use Major and Minor.
+- ALWAYS prioritize the 'target_chords' list.
 
-                                    elif ex_type == "listen":
-                                        # Parse ear training steps
-                                        if "root_idx" in step and "target_quality" in step:
-                                            step.setdefault("track", step.get("track", "ear"))
-                                            step.setdefault("milestone_id", step.get("milestone_id", ""))
-                                            step.setdefault("hand", "right")
-                                            step.setdefault("exercise_name", "Ear Training")
-                                            step.setdefault("chord_type_name", step["target_quality"])
-                                            step.setdefault("octave", 4)
-                                            self._lesson_playlist.append(step)
+Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal
+Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
 
-                                    elif ex_type == "hands_together":
-                                        if all(k in step for k in ("root_idx", "chord_type_name")):
-                                            c_type = step["chord_type_name"]
-                                            if c_type in self.CHORD_TYPES:
-                                                step.setdefault("track", step.get("track", "technique"))
-                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
-                                                step.setdefault("hand", "both")
-                                                step.setdefault("exercise_name", "Hands Together")
-                                                step.setdefault("hold_ms", 1000)
-                                                step["octave"] = 4
-                                                step["intervals"] = self.CHORD_TYPES[c_type]
-                                                self._lesson_playlist.append(step)
-
-                                    elif ex_type == "sustain_pedal":
-                                        if all(k in step for k in ("root_idx", "chord_type_name")):
-                                            c_type = step["chord_type_name"]
-                                            if c_type in self.CHORD_TYPES:
-                                                step.setdefault("track", step.get("track", "technique"))
-                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
-                                                step.setdefault("hand", "right")
-                                                step.setdefault("pedal_type", "direct")
-                                                step.setdefault("exercise_name", "Pedal Technique")
-                                                step.setdefault("hold_ms", 3000)
-                                                step["octave"] = 4
-                                                step["intervals"] = self.CHORD_TYPES[c_type]
-                                                self._lesson_playlist.append(step)
-
-                                    else:
-                                        # Standard chord steps (backward compatible)
-                                        if all(k in step for k in ("root_idx", "chord_type_name")):
-                                            c_type = step["chord_type_name"]
-                                            if c_type in self.CHORD_TYPES:
-                                                step.setdefault("track", step.get("track", "technique"))
-                                                step.setdefault("milestone_id", step.get("milestone_id", ""))
-                                                # Allow 'hand' to be passed from the prompt, default to right
-                                                step["hand"] = step.get("hand", "right")
-                                                step["intervals"] = self.CHORD_TYPES[c_type]
-                                                step["octave"] = step.get("octave", 4)
-                                                step["exercise_type"] = "chord"
-                                                # Capture the preview flag if provided
-                                                if "preview_chord" in step:
-                                                    step["preview_chord"] = bool(step["preview_chord"])
-                                                self._lesson_playlist.append(step)
-                                print(f"ChordTrainer: Added step to playlist. Current length: {len(self._lesson_playlist)}")
-                                
-                                if len(self._lesson_playlist) > 0:
-                                    fallback_plan = False
-                                    gen_time_ms = (time.time() - generation_start) * 1000.0
-                                    print(f"ChordTrainer: Successfully generated AI lesson plan with {len(self._lesson_playlist)} steps in {gen_time_ms:.0f}ms.")
-                                    self.db.record_generation_stat(model_name, gen_time_ms, len(self._lesson_playlist), success=True)
-                                    slow_timer.cancel()
-                                    
-                                    # Record the intros for any exercises we generated so they aren't explained again next time
-                                    for step in self._lesson_playlist:
-                                        self.db.record_exercise_intro(step.get("exercise_type", "chord"))
-                                        
-                                    break
-                                else:
-                                    print("ChordTrainer: Generated JSON was valid but resulting playlist was empty.")
-                        except json.JSONDecodeError as e:
-                            print(f"ChordTrainer: Could not parse AI lesson JSON: {e}")
-                            print(f"Raw Text: {clean_text}")
-                            slow_timer.cancel()
-                            break
-                
-                except urllib.error.HTTPError as e:
-                    slow_timer.cancel()
-                    if e.code in (503, 429) and attempt < max_retries - 1:
-                        print(f"ChordTrainer: AI API error: {e}. Retrying {attempt + 1}/{max_retries}...")
-                        self._loading_status_text = f"COACH UNAVAILABLE — RETRYING ({attempt + 1}/{max_retries})..."
-                        self.loadingStatusChanged.emit()
-                        time.sleep(5)
-                        continue
-                    else:
-                        print(f"ChordTrainer: AI API error (non-retryable): {e}")
-                        break
-                            
-                except (TimeoutError, OSError) as e:
-                    slow_timer.cancel()
-                    if attempt < max_retries - 1:
-                        print(f"ChordTrainer: Connection slow/timed out: {e}. Retrying {attempt + 1}/{max_retries}...")
-                        self._loading_status_text = f"CONNECTION SLOW — RETRYING ({attempt + 1}/{max_retries})..."
-                        self.loadingStatusChanged.emit()
-                        time.sleep(5)
-                        continue
-                    else:
-                        print(f"ChordTrainer: AI API error: {e}")
-                        break
-                except Exception as e:
-                    print(f"ChordTrainer: AI API error: {e}")
-                    break
-                    
-        # If we failed to generate an AI plan, gracefully abort the session.
-        if fallback_plan:
-            print("ChordTrainer: Failed to generate lesson plan.")
-            self._is_loading = False
-            self._is_lesson_mode = False
-            self.lessonStateChanged.emit()
-            self.speakInstruction.emit("[System Note]: I'm sorry, your coach is currently unavailable. Please try again later, or enjoy some free practice.")
-            return
-            
-        self._lesson_total = len(self._lesson_playlist)
-        self._is_loading = False
-        self._compute_lesson_blocks()
+Start the lesson now by calling set_exercise and speaking."""
         
+        self.requestLessonStart.emit(prompt)
+
+    @Slot(dict)
+    def receive_exercise(self, exercise_data: dict):
+        """Called when the AI model emits a set_exercise tool call.
+        
+        Validates the exercise and either applies it immediately (if loading
+        or no active exercise) or queues it in _pending_exercise to prevent
+        rapid-fire tool calls from overwriting the current exercise.
+        """
+        ex_type = exercise_data.get("exercise_type", "chord")
+        print(f"ChordTrainer: Received exercise from AI: {exercise_data.get('exercise_name', 'Unknown')} (type={ex_type})")
+        
+        # Apply defaults based on exercise type
+        exercise_data.setdefault("hand", "right")
+        exercise_data.setdefault("track", "technique")
+        exercise_data.setdefault("milestone_id", "")
+        exercise_data.setdefault("hold_ms", 0)
+        exercise_data.setdefault("octave", 4)
+        exercise_data.setdefault("exercise_name", "Exercise")
+        
+        # Validate chord type if applicable
+        if ex_type in ("chord", "hands_together", "sustain_pedal", "listen") and "chord_type_name" in exercise_data:
+            c_type = exercise_data["chord_type_name"]
+            if c_type not in self.CHORD_TYPES:
+                print(f"ChordTrainer: Unknown chord type '{c_type}', skipping")
+                return
+            exercise_data["intervals"] = self.CHORD_TYPES[c_type]
+        
+        # Validate progression steps
+        if ex_type == "progression":
+            prog_steps = exercise_data.get("progression_steps", [])
+            if not prog_steps:
+                return
+            for ps in prog_steps:
+                ct = ps.get("chord_type_name", "Major")
+                if ct not in self.CHORD_TYPES:
+                    return
+        
+        # If this is the first exercise (loading state), apply immediately
+        if self._is_loading:
+            self._is_loading = False
+            self._is_active = True
+            self.activeChanged.emit(True)
+            self._apply_exercise(exercise_data)
+            return
+        
+        # If we already have an active exercise, queue this one for later
+        if self._is_active and self._target_chord_name:
+            print(f"ChordTrainer: Queuing exercise '{exercise_data.get('exercise_name')}' (current: '{self._exercise_name}')")
+            self._pending_exercise = exercise_data
+            return
+        
+        # Otherwise apply immediately
+        self._apply_exercise(exercise_data)
+    
+    def _apply_exercise(self, exercise_data: dict):
+        """Apply a validated exercise: update progress, blocks, and set up the target."""
+        # Record the exercise intro
+        self.db.record_exercise_intro(exercise_data.get("exercise_type", "chord"))
+        
+        # Increment progress
+        self._lesson_progress += 1
+        self._lesson_total = self._lesson_progress  # Grows as exercises arrive
+        
+        # Update current milestone context
+        self._current_track = str(exercise_data.get("track", ""))
+        self._current_milestone_id = str(exercise_data.get("milestone_id", ""))
+        
+        # Update exercise name
+        self._exercise_name = str(exercise_data.get("exercise_name", self._exercise_name))
+        
+        # Incrementally update lesson blocks for the sidebar
+        self._update_lesson_blocks(exercise_data)
+        
+        # Store current step data for performance tracking
+        self._current_step_data = exercise_data.copy()
+        
+        # Apply the exercise
         self.lessonStateChanged.emit()
-        self.lessonPlanGenerated.emit()
+        self._apply_step(exercise_data)
+    
+    @Slot(str)
+    def receive_lesson_end(self, feedback: str):
+        """Called when the AI model emits an end_lesson tool call."""
+        print(f"ChordTrainer: Lesson ended by AI. Feedback: {feedback[:100]}")
+        
+        self._is_lesson_complete = True
+        self._is_active = False
+        self.activeChanged.emit(False)
+        
+        if self.curriculum:
+            self.curriculum.finish_session()
+        
+        self._target_chord_name = ""
+        self._target_intervals.clear()
+        self._target_pitches.clear()
+        self._target_hands.clear()
+        self._pedal_type = ""
+        self._hold_tick_timer.stop()
+        self._metronome_timer.stop()
+        self.lessonStateChanged.emit()
+        self.targetChordChanged.emit(self._target_chord_name)
+    
+    def _update_lesson_blocks(self, exercise_data: dict):
+        """Incrementally add to the lesson blocks sidebar as exercises arrive."""
+        name = exercise_data.get("exercise_name", "Exercise")
+        track = exercise_data.get("track", "")
+        ex_type = exercise_data.get("exercise_type", "chord")
+        
+        if self._lesson_blocks and self._lesson_blocks[-1]["name"] == name:
+            # Extend existing block
+            self._lesson_blocks[-1]["stepCount"] += 1
+            self._lesson_blocks[-1]["endStep"] = self._lesson_progress
+        else:
+            # New block
+            self._lesson_blocks.append({
+                "track": track,
+                "name": name,
+                "type": ex_type,
+                "stepCount": 1,
+                "startStep": self._lesson_progress,
+                "endStep": self._lesson_progress,
+            })
+    
+    def _request_next_exercise(self, context: str = ""):
+        """Send performance data to the AI model and request the next exercise."""
+        # Build performance report from session stats
+        stats_lines = []
+        for chord, latencies in self._session_stats.items():
+            if latencies:
+                avg_lat = sum(latencies) / len(latencies)
+                stats_lines.append(f"- {chord}: {len(latencies)} attempts, avg {avg_lat:.0f}ms")
+        
+        report = f"[System Note]: Student completed exercise #{self._lesson_progress}."
+        
+        if self._current_step_data:
+            last_name = self._current_step_data.get("exercise_name", "")
+            last_type = self._current_step_data.get("exercise_type", "")
+            report += f" Last: '{last_name}' (type={last_type})."
+        
+        # Include specific last-chord performance for the model
+        if self._target_chord_name:
+            last_latencies = self._session_stats.get(self._target_chord_name, [])
+            if last_latencies:
+                report += f" Last chord latency: {last_latencies[-1]:.0f}ms."
+            report += f" Wrong notes this step: {self._wrong_notes_count}."
+        
+        if context:
+            report += f" {context}"
+        
+        if stats_lines:
+            report += f"\nRecent performance:\n" + "\n".join(stats_lines[-5:])  # Last 5 items
+        
+        report += "\n\nCRITICAL INSTRUCTION: Call set_exercise EXACTLY ONCE for the next step, or end_lesson if complete."
+        report += " NEVER call set_exercise multiple times in the same response. Just give me one exercise and WAIT."
+        report += " If the exercise type is the same as previous, you may provide a 1-3 word micro-affirmation, but do NOT give long explanations. Only speak longer sentences for a NEW exercise type or if the student struggled."
+        
+        self.reportPerformance.emit(report)
 
     @Slot()
     def activate_lesson_plan(self):
-        """Called by AppState when it's safe to start the generated lesson."""
-        if not self._lesson_playlist:
-            return
-            
-        self._is_waiting_to_begin = True
-        self.lessonStateChanged.emit()
+        """Legacy method — no longer needed in single-model flow.
+        Kept as a no-op for backward compatibility."""
+        pass
 
     def _compute_lesson_blocks(self):
         """Build a stable block summary from the current playlist for the sidebar.
@@ -740,97 +634,42 @@ BEGINNER SAFETY RULES:
             self.targetChordChanged.emit(self._target_chord_name)
             self._hold_tick_timer.stop()
             self._is_holding = False
+            self._pending_exercise = None
+            self._consecutive_successes = 0
+            self._consecutive_struggles = 0
+
+    def get_resume_context(self) -> str:
+        """Build a prompt for the AI to resume a lesson after reconnection."""
+        lines = ["[System Note]: RESUME LESSON after connection drop."]
+        lines.append(f"Current exercise #{self._lesson_progress}: '{self._exercise_name}' (type={self._exercise_type})")
+        
+        if self._current_step_data:
+            lines.append(f"Last exercise data: {self._current_step_data}")
+        
+        # Include recent performance
+        stats_lines = []
+        for chord, latencies in list(self._session_stats.items())[-5:]:
+            if latencies:
+                avg_lat = sum(latencies) / len(latencies)
+                stats_lines.append(f"- {chord}: {len(latencies)} attempts, avg {avg_lat:.0f}ms")
+        if stats_lines:
+            lines.append("Recent performance:\n" + "\n".join(stats_lines))
+        
+        lines.append("\nCall set_exercise immediately for the next step. You may provide a 1-3 word micro-affirmation (e.g. 'Good', 'Again'), but do NOT give long explanations.")
+        return "\n".join(lines)
 
     def _next_chord(self):
         if self._is_lesson_mode:
-            if not self._lesson_playlist:
-                # Lesson over! Generate tailored feedback based on session stats
-                self._is_lesson_complete = True
-                
-                # Format session stats for the AI
-                stats_lines: List[str] = []
-                for chord, latencies in self._session_stats.items():
-                    if latencies:
-                        avg_lat = sum(latencies) / len(latencies)
-                        stats_lines.append(f"- {chord}: {len(latencies)} attempts, Average Latency {avg_lat:.0f}ms\n")
-                        
-                if not stats_lines:
-                    stats_str = "No successful chords recorded."
-                else:
-                    stats_str = "".join(stats_lines)
-                    
-                    
-                if self.coach_personality == "Old-School":
-                    feedback_style = "Be direct and honest. Point out weaknesses bluntly but acknowledge genuine improvement."
-                else:
-                    feedback_style = "Point out what they played quickly/well, and gently note what chord they struggled with (if any) so they know what to focus on next time."
-                
-                prompt = f"""[System Note]: The user just completed their lesson! 
-Here are their performance statistics for this specific session:
-{stats_str}
-
-Analyze this data and provide a constructive 2-3 sentence verbal feedback message.
-DO NOT just say 'Great job!'. {feedback_style}"""
-                self.speakInstruction.emit(prompt)
-                
-                if self.curriculum:
-                    self.curriculum.finish_session()
-
-                self._target_chord_name = ""
-                self._target_intervals.clear()
-                self._target_pitches.clear()
-                self._target_hands.clear()
-                self._pedal_type = ""
-                self._hold_tick_timer.stop()
-                self.lessonStateChanged.emit()
-                self.targetChordChanged.emit(self._target_chord_name)
-                return
-                
-            chord_data = self._lesson_playlist.pop(0)
-            self._lesson_progress += 1
-            
-            # Update current milestone context
-            self._current_track = str(chord_data.get("track", ""))
-            self._current_milestone_id = str(chord_data.get("milestone_id", ""))
-            
-            new_exercise_name = str(chord_data.get("exercise_name", self._exercise_name)) # type: ignore
-            
-            # If we transitioned to a new exercise section, ask the AI to naturally speak the instruction
-            if new_exercise_name != self._exercise_name and "spoken_instruction" in chord_data:
-                spoken_inst: str = str(chord_data["spoken_instruction"]) # type: ignore
-                # Do not speak if the instruction is empty
-                if spoken_inst.strip():
-                    if self.coach_personality == "Old-School":
-                        style_guidance = "Give a brief, no-nonsense instruction. Be direct and authoritative, like a strict piano professor."
-                    else:
-                        style_guidance = "Be encouraging but very direct. Focus only on the objective of the exercise."
-                    
-                    if self.coach_brevity == "Detailed":
-                        length_guidance = "Use 2 sentences."
-                    elif self.coach_brevity == "Terse":
-                        length_guidance = "Use 1 short sentence."
-                    else:
-                        length_guidance = "Use 1 concise sentence."
-                    
-                    prompt = f"[System Note]: This is a new exercise: '{new_exercise_name}'. Task: '{spoken_inst}'. {style_guidance} {length_guidance}"
-                    self._exercise_name = new_exercise_name
-                    self._is_paused_for_speech = True
-                    self._pending_step = chord_data
-                    self.speakInstruction.emit(prompt)
-                    
-                    self._target_chord_name = ""
-                    self._target_intervals.clear()
-                    self._target_pitches.clear()
-                    self._target_hands.clear()
-                    self._pedal_type = ""
-                    self._hold_tick_timer.stop()
-                    self.lessonStateChanged.emit()
-                    self.targetChordChanged.emit(self._target_chord_name)
-                    return
-                
-            self._exercise_name = new_exercise_name
-            self._current_step_data = chord_data.copy()
-            self._apply_step(chord_data)
+            # In single-model mode: apply queued exercise if one arrived while we were busy,
+            # otherwise send performance data and wait for the model's next tool call.
+            if self._pending_exercise:
+                exercise = self._pending_exercise
+                self._pending_exercise = None
+                print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
+                self._apply_exercise(exercise)
+            else:
+                self._request_next_exercise()
+            return
         else:
             self._apply_random_step()
 
@@ -913,10 +752,14 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             interval_ms = int(60000 / bpm)
             self._pentascale_bpm = bpm
             self._pentascale_beat_count = -4  # 4-beat lead in (-4, -3, -2, -1)
-            # The beat starts immediately on tick 0
-            self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4) # Time when beat 0 will hit
-            self._metronome_timer.start(interval_ms)
-            print(f"ChordTrainer: Started pentascale metronome at {bpm} BPM")
+            # Defer metronome if coach is still speaking (first exercise)
+            if self._is_lesson_mode and self._lesson_progress <= 1:
+                print(f"ChordTrainer: Deferring metronome start ({bpm} BPM) until coach finishes")
+                self._metronome_pending = {"bpm": bpm, "interval_ms": interval_ms}
+            else:
+                self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4) # Time when beat 0 will hit
+                self._metronome_timer.start(interval_ms)
+                print(f"ChordTrainer: Started pentascale metronome at {bpm} BPM")
         else:
             self._metronome_timer.stop()
             self._pentascale_bpm = 0
@@ -1055,12 +898,18 @@ DO NOT just say 'Great job!'. {feedback_style}"""
                     self._pedal_satisfied = True
                     self._check_input()
 
+    def _play_midi_preview(self, pitches):
+        """Emits MIDI out request and ignores incoming MIDI to prevent loopback auto-completion."""
+        # play_chord_preview lasts 1.5s, so we ignore input for 1.6s
+        self._ignore_midi_until = time.time() + 1.6
+        self.midiOutRequested.emit(pitches)
+
     @Slot()
     def replay_preview(self):
         """Re-sends the MIDI preview for the current target chord."""
         if self._target_pitches:
             print(f"ChordTrainer: Replaying MIDI preview for {self._target_pitches}")
-            self.midiOutRequested.emit(self._target_pitches)
+            self._play_midi_preview(self._target_pitches)
 
     @Slot(str)
     def handle_ear_training_answer(self, quality: str):
@@ -1129,20 +978,51 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         print(f"ChordTrainer: Next target is {self._target_chord_name} (intervals: {self._target_intervals}, pitches: {self._target_pitches}, hold={self._required_hold_ms}ms)")
         
         # If preview requested, emit signal for MIDI output
+        # Defer if the AI is still speaking (coach intro) to avoid audio collision
         if preview_chord:
-            print(f"ChordTrainer: Requesting MIDI preview for pitches: {self._target_pitches}")
-            self.midiOutRequested.emit(self._target_pitches)
+            if self._is_lesson_mode and self._lesson_progress <= 1:
+                print(f"ChordTrainer: Deferring MIDI preview until coach finishes speaking")
+                self._listen_preview_pending = True
+            else:
+                print(f"ChordTrainer: Requesting MIDI preview for pitches: {self._target_pitches}")
+                self._play_midi_preview(self._target_pitches)
 
         # Evaluate immediately in case keys are already appropriately held
         self._check_input()
 
     @Slot()
     def resume_lesson(self):
-        if not self._is_paused_for_speech or not hasattr(self, '_pending_step'):
-            return
-        self._is_paused_for_speech = False
-        self.lessonStateChanged.emit()
-        self._apply_step(self._pending_step)
+        """Called when AI finishes speaking. Applies pending exercise if queued,
+        plays deferred listen preview, or resets paused state."""
+        if self._is_paused_for_speech:
+            self._is_paused_for_speech = False
+            self.lessonStateChanged.emit()
+        # Play deferred listen preview now that the coach is done talking
+        if self._listen_preview_pending:
+            self._listen_preview_pending = False
+            if self._target_pitches:
+                print(f"ChordTrainer: Coach done, playing deferred MIDI preview: {self._target_pitches}")
+                self._play_midi_preview(self._target_pitches)
+        # Start deferred metronome now that the coach is done talking
+        if self._metronome_pending:
+            pending = self._metronome_pending
+            self._metronome_pending = None
+            interval_ms = pending["interval_ms"]
+            self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4)
+            self._metronome_timer.start(interval_ms)
+            print(f"ChordTrainer: Coach done, starting deferred metronome at {pending['bpm']} BPM")
+        # If an exercise arrived while the AI was speaking AND the student
+        # isn't currently working on one, apply it now. If they ARE mid-exercise,
+        if self._pending_exercise and self._is_lesson_mode and not self._target_chord_name:
+            exercise = self._pending_exercise
+            self._pending_exercise = None
+            print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
+            self._apply_exercise(exercise)
+            
+        # Failsafe: If the AI spoke its intro but forgot to call set_exercise, re-prompt it
+        if self._is_loading and self._is_lesson_mode:
+            print("ChordTrainer: Coach finished speaking but no exercise was set. Re-prompting.")
+            self.requestLessonStart.emit("[System: You forgot to call the set_exercise tool. Please call it now to start the session.]")
 
     def _advance_progression_chord(self):
         """Sets up the current chord within a progression sequence."""
@@ -1204,6 +1084,9 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         if not self._is_active or self._is_lesson_complete:
             return
 
+        if time.time() < self._ignore_midi_until:
+            return
+
         if is_on:
             self._active_pitches.add(pitch)
             
@@ -1243,6 +1126,10 @@ DO NOT just say 'Great job!'. {feedback_style}"""
 
     def _check_input(self):
         """Routes input validation based on exercise type."""
+        if self._exercise_type == "listen":
+            # Listen exercises are answered via QML UI buttons, not MIDI keyboard
+            return
+            
         if self._exercise_type == "pentascale":
             self._check_pentascale()
         else:
@@ -1400,7 +1287,8 @@ DO NOT just say 'Great job!'. {feedback_style}"""
         
         # Track items for Dashboard "Quick Review" 
         # Threshold: Latency > 4s OR > 2 wrong notes
-        if latency_ms > 4000 or self._wrong_notes_count > 2:
+        is_struggle = latency_ms > 4000 or self._wrong_notes_count > 2
+        if is_struggle:
             item = {
                 "name": self._target_chord_name,
                 "type": self._exercise_type,
@@ -1411,6 +1299,27 @@ DO NOT just say 'Great job!'. {feedback_style}"""
             # Avoid duplicates
             if not any(s["name"] == item["name"] for s in self._struggled_items):
                 self._struggled_items.append(item)
+        
+        # --- Inter-exercise commentary streak tracking ---
+        if is_struggle:
+            self._consecutive_successes = 0
+            self._consecutive_struggles += 1
+            if self._consecutive_struggles >= 2 and self._is_lesson_mode:
+                self.speakBrief.emit(
+                    f"[Brief]: Student has struggled {self._consecutive_struggles} times in a row "
+                    f"(last: {self._target_chord_name}, {latency_ms:.0f}ms, {self._wrong_notes_count} wrong notes). "
+                    "Give a 1-sentence encouraging tip. Do NOT call set_exercise or end_lesson. Do NOT pause the lesson."
+                )
+                self._consecutive_struggles = 0
+        else:
+            self._consecutive_struggles = 0
+            self._consecutive_successes += 1
+            if self._consecutive_successes >= 3 and self._is_lesson_mode:
+                self.speakBrief.emit(
+                    f"[Brief]: Student nailed {self._consecutive_successes} exercises in a row! "
+                    "Give a quick 3-5 word encouragement. Do NOT call set_exercise or end_lesson. Do NOT pause the lesson."
+                )
+                self._consecutive_successes = 0
         
         # Notify UI
         self.chordSuccess.emit(self._target_chord_name, latency_ms)

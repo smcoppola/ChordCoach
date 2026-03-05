@@ -14,6 +14,7 @@ Rectangle {
     
     property int phase: 0  // 0=welcome, 1=evaluation, 2=results, 3=arch_tutorial
     property bool isRunning: false
+    property bool waitingForVoice: false  // gates content until AI finishes speaking
     
     property var evalEngine: {
         if (typeof appState !== "undefined" && appState !== null && appState.evaluationEngine)
@@ -70,9 +71,14 @@ Rectangle {
     Connections {
         target: (typeof appState !== "undefined" && appState !== null) ? appState : null
         function onEvalIntroPendingChanged() {
-            // Force re-evaluation of bindings dependent on appState
-            root.isRunning = !root.isRunning;
-            root.isRunning = !root.isRunning;
+            if (!appState.evalIntroPending) {
+                root.waitingForVoice = false;
+            }
+        }
+        function onArchIntroPendingChanged() {
+            if (!appState.archIntroPending) {
+                root.waitingForVoice = false;
+            }
         }
     }
 
@@ -136,6 +142,7 @@ Rectangle {
                     onClicked: {
                         root.phase = 1;
                         root.isRunning = true;
+                        root.waitingForVoice = true;
                         if (typeof appState !== "undefined" && appState !== null) {
                             appState.startEvaluationWithIntro();
                         }
@@ -169,9 +176,48 @@ Rectangle {
             anchors.margins: 40
             spacing: 30
 
+            // ── Coach Speaking Indicator (visible while waiting for voice) ──
+            ColumnLayout {
+                Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+                Layout.fillHeight: true
+                visible: root.waitingForVoice
+                spacing: 15 * mainWindow.uiScale
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 10 * mainWindow.uiScale
+
+                    Rectangle {
+                        width: 14 * mainWindow.uiScale; height: 14 * mainWindow.uiScale; radius: 7 * mainWindow.uiScale
+                        color: "#2196F3"
+                        SequentialAnimation on opacity {
+                            running: root.waitingForVoice
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0.3; to: 1.0; duration: 800; easing.type: Easing.InOutSine }
+                            NumberAnimation { from: 1.0; to: 0.3; duration: 800; easing.type: Easing.InOutSine }
+                        }
+                    }
+
+                    Text {
+                        text: "Your coach is speaking\u2026"
+                        color: "#2196F3"
+                        font.pixelSize: 18 * mainWindow.uiScale
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "Listen up, then get ready to play!"
+                    color: "#888888"
+                    font.pixelSize: 14 * mainWindow.uiScale
+                    Layout.alignment: Qt.AlignHCenter
+                }
+            }
+
             // ── The "Green Box" Level Card (aligned with ChordFormulaCard design) ──
             Rectangle {
                 id: levelCard
+                visible: !root.waitingForVoice
                 Layout.alignment: Qt.AlignHCenter
                 Layout.fillWidth: true
                 Layout.maximumWidth: 600 * mainWindow.uiScale
@@ -276,6 +322,7 @@ Rectangle {
                 Layout.minimumHeight: 350 * mainWindow.uiScale
                 
                 displayMode: "evaluation"
+                visible: !root.waitingForVoice
                 evalNotes: root.evalEngine ? root.evalEngine.sequenceNotes : []
                 evalBeat: root.evalEngine ? root.evalEngine.currentBeat : 0
                 evalNoteStates: root.evalEngine ? root.evalEngine.noteStates : []
@@ -287,7 +334,7 @@ Rectangle {
                 Layout.preferredHeight: 60 * mainWindow.uiScale
                 Layout.fillWidth: false
                 spacing: 20 * mainWindow.uiScale
-                visible: root.phase === 1 && (typeof appState !== "undefined" && appState !== null)
+                visible: root.phase === 1 && !root.waitingForVoice && (typeof appState !== "undefined" && appState !== null)
                 
                 // Pause/Resume Button
                 Rectangle {
@@ -417,6 +464,7 @@ Rectangle {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         root.phase = 3;
+                        root.waitingForVoice = true;
                         if (typeof appState !== "undefined" && appState !== null) {
                             appState.startArchTutorialWithIntro();
                         }
@@ -437,6 +485,43 @@ Rectangle {
             anchors.centerIn: parent
             spacing: 30
             width: Math.min(parent.width * 0.9, 800)
+
+            // ── Coach Speaking Indicator (visible while waiting for voice) ──
+            ColumnLayout {
+                Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+                visible: root.waitingForVoice
+                spacing: 15 * mainWindow.uiScale
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 10 * mainWindow.uiScale
+
+                    Rectangle {
+                        width: 14 * mainWindow.uiScale; height: 14 * mainWindow.uiScale; radius: 7 * mainWindow.uiScale
+                        color: "#2196F3"
+                        SequentialAnimation on opacity {
+                            running: root.waitingForVoice && root.phase === 3
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0.3; to: 1.0; duration: 800; easing.type: Easing.InOutSine }
+                            NumberAnimation { from: 1.0; to: 0.3; duration: 800; easing.type: Easing.InOutSine }
+                        }
+                    }
+
+                    Text {
+                        text: "Your coach is speaking\u2026"
+                        color: "#2196F3"
+                        font.pixelSize: 18 * mainWindow.uiScale
+                        font.bold: true
+                    }
+                }
+
+                Text {
+                    text: "Listen up \u2014 your coach will explain the keyboard!"
+                    color: "#888888"
+                    font.pixelSize: 14 * mainWindow.uiScale
+                    Layout.alignment: Qt.AlignHCenter
+                }
+            }
             
             Text {
                 text: "The Virtual Keyboard"
@@ -444,6 +529,7 @@ Rectangle {
                 font.pixelSize: 28 * mainWindow.uiScale
                 font.bold: true
                 Layout.alignment: Qt.AlignHCenter
+                visible: !root.waitingForVoice
             }
             
             Text {
@@ -456,6 +542,7 @@ Rectangle {
                 lineHeight: 1.5
                 horizontalAlignment: Text.AlignHCenter
                 textFormat: Text.RichText
+                visible: !root.waitingForVoice
             }
             
             Text {
@@ -466,9 +553,10 @@ Rectangle {
                 font.italic: true
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 10 * mainWindow.uiScale
+                visible: !root.waitingForVoice
             }
             
-            Item { Layout.preferredHeight: 15 * mainWindow.uiScale }
+            Item { Layout.preferredHeight: 15 * mainWindow.uiScale; visible: !root.waitingForVoice }
             
             Components.VisualKeyboard {
                 id: tutorialKeyboard
@@ -476,6 +564,7 @@ Rectangle {
                 Layout.preferredWidth: parent.width
                 Layout.preferredHeight: 150 * mainWindow.uiScale
                 targetKeys: [60, 64, 67] // C Major Chord (C4, E4, G4)
+                visible: !root.waitingForVoice
                 
                 onArchClicked: {
                     parent.parent.archHasBeenClicked = true;

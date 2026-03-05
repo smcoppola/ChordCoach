@@ -6,7 +6,7 @@ Rectangle {
     id: root
     color: "#121212"
     
-    signal startLesson()
+    signal startLesson(int minutes)
     signal startReview()
     signal freePractice()
 
@@ -49,7 +49,7 @@ Rectangle {
                 description: "AI-generated plan based on your curriculum."
                 icon: "✨"
                 accentColor: "#4CAF50"
-                onClicked: root.startLesson()
+                onClicked: durationPicker.open()
             }
             
             // 2. Quick Review (Conditional)
@@ -298,6 +298,91 @@ Rectangle {
             onClicked: {
                 if (parent.enabled) {
                     parent.clicked()
+                }
+            }
+        }
+    }
+    // ── Duration Picker Popup ──
+    Popup {
+        id: durationPicker
+        anchors.centerIn: parent
+        width: 520 * mainWindow.uiScale
+        height: 280 * mainWindow.uiScale
+        modal: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: "#1c1c1e"
+            radius: 16
+            border.color: "#4CAF50"
+            border.width: 1
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -1
+                radius: 16
+                color: "transparent"
+                border.color: "#4CAF50"
+                border.width: 2
+                opacity: 0.3
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 24
+
+            Text {
+                text: "SESSION LENGTH"
+                font.pixelSize: 12 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 4 * mainWindow.uiScale
+                color: "#666666"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Text {
+                text: "How long would you like to practice?"
+                font.pixelSize: 18 * mainWindow.uiScale
+                color: "#ffffff"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 12 * mainWindow.uiScale
+
+                Repeater {
+                    model: [{"mins": 5, "label": "5 min"}, {"mins": 10, "label": "10 min"}, {"mins": 15, "label": "15 min"}, {"mins": 20, "label": "20 min"}]
+
+                    delegate: Rectangle {
+                        Layout.preferredWidth: 110 * mainWindow.uiScale
+                        Layout.preferredHeight: 64 * mainWindow.uiScale
+                        radius: 10
+                        color: durationMouse.containsMouse ? "#4CAF50" : "#2a2a2a"
+                        border.color: durationMouse.containsMouse ? "#66BB6A" : "#444444"
+                        border.width: 1
+
+                        Behavior on color { ColorAnimation { duration: 150 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: durationMouse.containsMouse ? "#ffffff" : "#cccccc"
+                            font.pixelSize: 16 * mainWindow.uiScale
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: durationMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                durationPicker.close();
+                                root.startLesson(modelData.mins);
+                            }
+                        }
+                    }
                 }
             }
         }

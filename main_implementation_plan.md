@@ -82,7 +82,6 @@
 - Technique milestones already defined in Phase 1 — this phase implements the exercises they reference
 
 ### Verification
-- Press sustain pedal on Roland → pedal icon lights up in UI
 - Generate lesson → some steps have `"hand": "left"` or `"hand": "both"`
 - Sustain drill: play chord, press pedal → app validates timing
 - Over-pedaling warning: hold pedal down across two different chords → coach warns

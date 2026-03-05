@@ -109,6 +109,23 @@ Rectangle {
             failFlash.start();
         }
         
+        function onChordSuccess(chordName, latencyMs) {
+            successFlash.start();
+            
+            // Show latency feedback
+            if (latencyMs < 1500) {
+                latencyText.text = "⚡ " + Math.round(latencyMs) + "ms";
+                latencyText.color = "#4CAF50";
+            } else if (latencyMs < 3000) {
+                latencyText.text = Math.round(latencyMs) + "ms";
+                latencyText.color = "#FFC107";
+            } else {
+                latencyText.text = Math.round(latencyMs / 1000.0 * 10) / 10 + "s";
+                latencyText.color = "#FF9800";
+            }
+            latencyAnim.restart();
+        }
+        
         function onTargetChordChanged(chordName) {
             root.currentTarget = chordName;
             root.pentascaleFeedbackList = ["", "", "", "", ""]; // Reset feedback on new target
@@ -256,10 +273,8 @@ Rectangle {
                 color: "#4CAF50"
                 radius: 4
                 
-                // Add a smooth transition so it slides nicely even with 30fps timer tick
-                Behavior on width {
-                    NumberAnimation { duration: 50; easing.type: Easing.Linear }
-                }
+                // No Behavior animation — holdProgress updates at 30fps from Python,
+                // which is already smooth enough for a progress bar.
             }
         }
         
@@ -426,72 +441,6 @@ Rectangle {
             }
         }
         
-        // Begin Lesson screen overlay
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.fillWidth: true
-            Layout.maximumWidth: 700 * mainWindow.uiScale
-            Layout.fillHeight: true
-            Layout.minimumHeight: 350 * mainWindow.uiScale
-            color: "#1c1c1e"
-            border.color: "#4CAF50"
-            border.width: 1 * mainWindow.uiScale
-            radius: 12 * mainWindow.uiScale
-            visible: !root.isActive && root.isWaitingToBegin
-            
-            // Subtle glow effect
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: -1
-                radius: 12
-                color: "transparent"
-                border.color: "#4CAF50"
-                border.width: 2
-                opacity: 0.3
-            }
-            
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 30
-                
-                Text {
-                    text: "YOUR LESSON IS READY"
-                    font.pixelSize: 32 * mainWindow.uiScale
-                    font.bold: true
-                    font.letterSpacing: 2 * mainWindow.uiScale
-                    color: "#ffffff"
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                
-                Button {
-                    text: "BEGIN LESSON"
-                    Layout.alignment: Qt.AlignHCenter
-                    font.pixelSize: 20 * mainWindow.uiScale
-                    font.bold: true
-                    
-                    background: Rectangle {
-                        implicitWidth: 200 * mainWindow.uiScale
-                        implicitHeight: 60 * mainWindow.uiScale
-                        color: parent.down ? "#388E3C" : (parent.hovered ? "#4CAF50" : "#2E7D32")
-                        radius: 8
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#ffffff"
-                        font.pixelSize: 20 * mainWindow.uiScale
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    
-                    onClicked: {
-                        if (appState && appState.chordTrainer) {
-                            appState.chordTrainer.begin_lesson();
-                        }
-                    }
-                }
-            }
-        }
         
         // Center Loading Animation
         Rectangle {
@@ -779,6 +728,80 @@ Rectangle {
                     NumberAnimation { target: countInText; property: "scale"; from: 0.8; to: 1.2; duration: 50; easing.type: Easing.OutQuad }
                     NumberAnimation { target: countInText; property: "scale"; to: 1.0; duration: 200; easing.type: Easing.InQuad }
                 }
+            }
+        }
+    }
+
+    // Reconnecting Overlay — appears over exercise content when AI drops mid-lesson
+    Rectangle {
+        anchors.fill: parent
+        color: "#CC111111"
+        visible: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+        z: 200
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 30
+
+            // Pulsing WiFi/connection indicator
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                width: 80 * mainWindow.uiScale
+                height: 80 * mainWindow.uiScale
+                radius: 40 * mainWindow.uiScale
+                color: "transparent"
+                border.width: 3 * mainWindow.uiScale
+                border.color: "#FFC107"
+
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite
+                    running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                    NumberAnimation { from: 0.6; to: 1.4; duration: 1500; easing.type: Easing.OutCubic }
+                }
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                    NumberAnimation { from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutCubic }
+                }
+
+                // Inner icon dot
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 20 * mainWindow.uiScale
+                    height: 20 * mainWindow.uiScale
+                    radius: 10 * mainWindow.uiScale
+                    color: "#FFC107"
+
+                    SequentialAnimation on scale {
+                        loops: Animation.Infinite
+                        running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                        NumberAnimation { from: 0.8; to: 1.2; duration: 750; easing.type: Easing.InOutSine }
+                        NumberAnimation { from: 1.2; to: 0.8; duration: 750; easing.type: Easing.InOutSine }
+                    }
+                }
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: "RECONNECTING TO YOUR COACH..."
+                color: "#FFC107"
+                font.pixelSize: 18 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 4 * mainWindow.uiScale
+
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                    NumberAnimation { from: 0.4; to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 1.0; to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
+                }
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: "Your lesson will resume automatically."
+                color: "#999999"
+                font.pixelSize: 14 * mainWindow.uiScale
             }
         }
     }
