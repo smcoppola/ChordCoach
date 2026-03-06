@@ -69,12 +69,14 @@ class GeminiService(QObject):
 
     @Slot()
     def _pump_audio(self):
-        # Check if the AI just finished talking (buffer is empty and 1.5s has passed since last chunk)
+        # Check if the AI just finished talking (buffer is empty and hardware playback is complete)
         if self._is_speaking_state and not self._audio_buffer:
-            if time.time() - self._last_audio_write_time > 1.5:
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED")
-                self._is_speaking_state = False
-                self.aiFinishedSpeaking.emit()
+            # If 0.2s has passed AND the hardware sink buffer is fully empty
+            if time.time() - self._last_audio_write_time > 0.2:
+                if self.audio_sink and self.audio_sink.bytesFree() == self.audio_sink.bufferSize():
+                    print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED")
+                    self._is_speaking_state = False
+                    self.aiFinishedSpeaking.emit()
 
         if not self.audio_io or not self.audio_io.isOpen() or not self._audio_buffer:
             return

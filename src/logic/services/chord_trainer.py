@@ -441,6 +441,8 @@ Start the lesson now by calling set_exercise and speaking."""
         if self._waiting_for_ai:
             self._waiting_for_ai = False
             self.lessonStateChanged.emit()
+            self._apply_exercise(exercise_data)
+            return
 
         # If we already have an active exercise and aren't waiting for the AI, queue this one for later
         if self._is_active:
@@ -688,6 +690,7 @@ Start the lesson now by calling set_exercise and speaking."""
         if self._is_lesson_mode:
             # In single-model mode: apply queued exercise if one arrived while we were busy,
             # otherwise send performance data and wait for the model's next tool call.
+            self._target_chord_name = ""
             if self._pending_exercise:
                 exercise = self._pending_exercise
                 self._pending_exercise = None

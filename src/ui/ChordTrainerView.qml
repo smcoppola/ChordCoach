@@ -27,7 +27,7 @@ Rectangle {
     property real estimatedGenerationMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.estimatedGenerationMs : 0.0
     
     // AI Coach State Properties
-    property bool isAiSpeaking: false
+    property bool isAiSpeaking: isPausedForSpeech
     property string transcriptText: ""
     
     // Formula Properties - Pull these from service on target change
@@ -91,15 +91,7 @@ Rectangle {
         target: (typeof appState !== "undefined" && appState !== null) ? appState : null
         function onAiTranscriptReceived(textMsg) {
             root.transcriptText = textMsg;
-            root.isAiSpeaking = true;
-            speakingTimer.restart();
         }
-    }
- 
-    Timer {
-        id: speakingTimer
-        interval: 2500
-        onTriggered: root.isAiSpeaking = false
     }
     
     Connections {
