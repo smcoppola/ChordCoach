@@ -3,6 +3,7 @@ import time
 import random
 import json
 from typing import Set, List, Dict, Tuple
+from datetime import datetime
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
 
 class ChordTrainerService(QObject):
@@ -19,6 +20,7 @@ class ChordTrainerService(QObject):
     apiConnectivityChanged = Signal(bool)  # True = confirmed, False = lost
     midiOutRequested = Signal(list)
     metronomeTick = Signal()
+    inputReady = Signal()                 # Emitted exactly when a drill is ready for user input
     
     # Single-model architecture signals
     requestLessonStart = Signal(str)    # Emitted with the full lesson prompt for the AI coach
@@ -68,6 +70,7 @@ class ChordTrainerService(QObject):
         self._is_loading = False
         self._loading_status_text = ""
         self._is_paused_for_speech = False
+        self._waiting_for_ai = False
         self._pending_exercise = None  # Single-slot queue to prevent rapid-fire overwrites
         self._listen_preview_pending = False  # Deferred MIDI preview for listen exercises
         self._metronome_pending = None  # Deferred metronome start {bpm, interval_ms}
@@ -163,6 +166,10 @@ class ChordTrainerService(QObject):
     @Property(int, notify=lessonStateChanged)
     def lessonTotal(self) -> int:
         return self._lesson_total
+
+    @Property(bool, notify=lessonStateChanged)
+    def isWaitingForAi(self) -> bool:
+        return self._waiting_for_ai
 
     @Property("QVariantList", notify=lessonStateChanged)
     def lessonBlocks(self) -> list:
@@ -278,11 +285,12 @@ class ChordTrainerService(QObject):
         self._lesson_progress = 0
         self._lesson_total = 0
         self._is_loading = True
+        self._waiting_for_ai = False
         self._lesson_playlist = []
         self._lesson_blocks = []
         
         self._estimated_gen_ms = 3000.0  # Much faster now — single round-trip
-        self._loading_status_text = "CONNECTING TO YOUR COACH..."
+        self._loading_status_text = "PREPARING LESSON PLAN..."
         self.loadingStatusChanged.emit()
         self.lessonStateChanged.emit()
         
@@ -320,9 +328,9 @@ class ChordTrainerService(QObject):
         blocks_text = ""
         if session_plan and "blocks" in session_plan:
             if dev_mode:
-                blocks_text = "Here is the SESSION PLAN. Generate 2-3 exercises per block (DEV MODE — short session):\n"
+                blocks_text = "Here is the SESSION PLAN. You will assign 2-3 exercises per block ONE AT A TIME (DEV MODE — short session):\n"
             else:
-                blocks_text = "Here is the SESSION PLAN. Generate 20-40 exercises per block:\n"
+                blocks_text = "Here is the SESSION PLAN. You will assign 20-40 exercises per block ONE AT A TIME:\n"
             
             for i, b in enumerate(session_plan["blocks"]):
                 blocks_text += f"\nBlock {i+1}: {b['milestone_title']} (track: '{b['track']}', milestone_id: '{b['milestone_id']}')\n"
@@ -349,7 +357,7 @@ class ChordTrainerService(QObject):
 
 INSTRUCTIONS:
 1. You MUST call the `set_exercise` tool right now to assign the first exercise. Do NOT forget to call the tool.
-2. Speak a brief (1-sentence) welcome and session overview.
+2. Speak a brief welcome and session overview, AND explicitly explain how to perform the very first exercise you are assigning so the student knows what to do.
 3. Wait for me to report the student's performance before calling the tool again.
 4. When they finish an exercise, I will send you a report. Decide the next step (advance, repeat, or simplify) and call `set_exercise` again.
 5. When the session is complete, call `end_lesson`.
@@ -363,6 +371,12 @@ VOICE GUIDANCE RULES:
 - Briefly explain the "why" or context when introducing a new exercise type (e.g., "This pentascale shape is the foundation for pop songs").
 - The student sees the chord/notes on screen — don't describe which keys to press.
 - Keep exercise transitions fast. Call set_exercise immediately, don't narrate between steps.
+
+CRITICAL RULES FOR EXERCISE GENERATION:
+- You are the conductor. Assign exercises STRICTLY ONE AT A TIME.
+- DO NOT use parallel function calling to dispense the entire block at once.
+- Always wait for me to report the student's performance before giving the next step.
+- For 'exercise_name', provide a descriptive name for the specific drill you are giving (e.g., "C Major Root Position"), NOT the name of the entire lesson block.
 
 BEGINNER SAFETY RULES:
 - DO NOT use 7th, 9th, or extended chords unless in target_chords.
@@ -386,7 +400,7 @@ Start the lesson now by calling set_exercise and speaking."""
         rapid-fire tool calls from overwriting the current exercise.
         """
         ex_type = exercise_data.get("exercise_type", "chord")
-        print(f"ChordTrainer: Received exercise from AI: {exercise_data.get('exercise_name', 'Unknown')} (type={ex_type})")
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Received exercise from AI: {exercise_data.get('exercise_name', 'Unknown')} (type={ex_type})")
         
         # Apply defaults based on exercise type
         exercise_data.setdefault("hand", "right")
@@ -418,12 +432,18 @@ Start the lesson now by calling set_exercise and speaking."""
         if self._is_loading:
             self._is_loading = False
             self._is_active = True
+            self._waiting_for_ai = False
             self.activeChanged.emit(True)
             self._apply_exercise(exercise_data)
             return
         
-        # If we already have an active exercise, queue this one for later
-        if self._is_active and self._target_chord_name:
+        # We received the response, the UI no longer needs to wait/blur
+        if self._waiting_for_ai:
+            self._waiting_for_ai = False
+            self.lessonStateChanged.emit()
+
+        # If we already have an active exercise and aren't waiting for the AI, queue this one for later
+        if self._is_active:
             print(f"ChordTrainer: Queuing exercise '{exercise_data.get('exercise_name')}' (current: '{self._exercise_name}')")
             self._pending_exercise = exercise_data
             return
@@ -433,6 +453,7 @@ Start the lesson now by calling set_exercise and speaking."""
     
     def _apply_exercise(self, exercise_data: dict):
         """Apply a validated exercise: update progress, blocks, and set up the target."""
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Applying exercise to UI: {exercise_data.get('exercise_name', 'Unknown')}")
         # Record the exercise intro
         self.db.record_exercise_intro(exercise_data.get("exercise_type", "chord"))
         
@@ -502,6 +523,7 @@ Start the lesson now by calling set_exercise and speaking."""
     
     def _request_next_exercise(self, context: str = ""):
         """Send performance data to the AI model and request the next exercise."""
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Requesting NEXT exercise from AI...")
         # Build performance report from session stats
         stats_lines = []
         for chord, latencies in self._session_stats.items():
@@ -532,6 +554,9 @@ Start the lesson now by calling set_exercise and speaking."""
         report += "\n\nCRITICAL INSTRUCTION: Call set_exercise EXACTLY ONCE for the next step, or end_lesson if complete."
         report += " NEVER call set_exercise multiple times in the same response. Just give me one exercise and WAIT."
         report += " If the exercise type is the same as previous, you may provide a 1-3 word micro-affirmation, but do NOT give long explanations. Only speak longer sentences for a NEW exercise type or if the student struggled."
+        
+        # Set waiting flag so the incoming exercise is applied immediately instead of queued
+        self._waiting_for_ai = True
         
         self.reportPerformance.emit(report)
 
@@ -622,6 +647,7 @@ Start the lesson now by calling set_exercise and speaking."""
         if self._is_active or self._is_waiting_to_begin:
             self._is_active = False
             self._is_waiting_to_begin = False
+            self._waiting_for_ai = False
             self._is_paused_for_speech = False
             self._metronome_timer.stop()
             self.activeChanged.emit(self._is_active)
@@ -822,7 +848,7 @@ Start the lesson now by calling set_exercise and speaking."""
         """Sets up an ear training exercise: plays a chord, user identifies it."""
         root_idx = int(chord_data.get("root_idx", 0))
         chord_type_name = str(chord_data.get("chord_type_name", "Major"))
-        target_quality = str(chord_data.get("target_quality", "Major"))
+        target_quality = str(chord_data.get("target_quality", chord_type_name))
         
         intervals = self.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
         octave = int(chord_data.get("octave", 4))
@@ -977,26 +1003,37 @@ Start the lesson now by calling set_exercise and speaking."""
         self.targetChordChanged.emit(self._target_chord_name)
         print(f"ChordTrainer: Next target is {self._target_chord_name} (intervals: {self._target_intervals}, pitches: {self._target_pitches}, hold={self._required_hold_ms}ms)")
         
+        # Pause input evaluation until speech finishes in lesson mode
+        if self._is_lesson_mode:
+            self._is_paused_for_speech = True
+            self.lessonStateChanged.emit()
+            
         # If preview requested, emit signal for MIDI output
         # Defer if the AI is still speaking (coach intro) to avoid audio collision
         if preview_chord:
-            if self._is_lesson_mode and self._lesson_progress <= 1:
+            if self._is_lesson_mode:
                 print(f"ChordTrainer: Deferring MIDI preview until coach finishes speaking")
                 self._listen_preview_pending = True
             else:
                 print(f"ChordTrainer: Requesting MIDI preview for pitches: {self._target_pitches}")
                 self._play_midi_preview(self._target_pitches)
 
-        # Evaluate immediately in case keys are already appropriately held
-        self._check_input()
+        if not self._is_paused_for_speech:
+            self.inputReady.emit()
+            # Evaluate immediately in case keys are already appropriately held
+            self._check_input()
 
     @Slot()
     def resume_lesson(self):
         """Called when AI finishes speaking. Applies pending exercise if queued,
         plays deferred listen preview, or resets paused state."""
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speech finished, resuming lesson.")
         if self._is_paused_for_speech:
             self._is_paused_for_speech = False
             self.lessonStateChanged.emit()
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Input unlocked.")
+            self.inputReady.emit()
+            self._check_input() # Evaluate immediately now that speech is done
         # Play deferred listen preview now that the coach is done talking
         if self._listen_preview_pending:
             self._listen_preview_pending = False
@@ -1019,9 +1056,15 @@ Start the lesson now by calling set_exercise and speaking."""
             print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
             self._apply_exercise(exercise)
             
-        # Failsafe: If the AI spoke its intro but forgot to call set_exercise, re-prompt it
+        # Failsafe: If the AI spoke its intro but forgot to call set_exercise, give it 4 seconds to arrive over the network before re-prompting.
         if self._is_loading and self._is_lesson_mode:
-            print("ChordTrainer: Coach finished speaking but no exercise was set. Re-prompting.")
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach finished speaking but no exercise was set. Arming 4s failsafe timer.")
+            QTimer.singleShot(4000, self._check_failsafe)
+
+    def _check_failsafe(self):
+        """Called 4 seconds after audio completes. If loading is STILL true, the tool call never arrived."""
+        if self._is_loading and self._is_lesson_mode:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Failsafe timer popped! Re-prompting AI for missing set_exercise tool.")
             self.requestLessonStart.emit("[System: You forgot to call the set_exercise tool. Please call it now to start the session.]")
 
     def _advance_progression_chord(self):
@@ -1077,11 +1120,16 @@ Start the lesson now by calling set_exercise and speaking."""
         
         self.targetChordChanged.emit(self._target_chord_name)
         print(f"ChordTrainer: Progression chord {self._progression_index + 1}/{len(self._progression_steps)}: {self._target_chord_name}")
+        self.inputReady.emit()
+        self._check_input()
 
     @Slot(int, bool)
     def handle_midi_note(self, pitch: int, is_on: bool):
         """Called by AppState when a MIDI note event occurs."""
         if not self._is_active or self._is_lesson_complete:
+            return
+
+        if self._is_paused_for_speech:
             return
 
         if time.time() < self._ignore_midi_until:

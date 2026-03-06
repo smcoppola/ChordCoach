@@ -5,6 +5,7 @@ import json
 import base64
 import struct
 import time
+from datetime import datetime
 import websockets  # type: ignore
 from PySide6.QtCore import QObject, Signal, Slot, QTimer  # type: ignore
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices # type: ignore
@@ -68,9 +69,10 @@ class GeminiService(QObject):
 
     @Slot()
     def _pump_audio(self):
-        # Check if the AI just finished talking (buffer is empty and 500ms has passed since last chunk)
+        # Check if the AI just finished talking (buffer is empty and 1.5s has passed since last chunk)
         if self._is_speaking_state and not self._audio_buffer:
             if time.time() - self._last_audio_write_time > 1.5:
+                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED")
                 self._is_speaking_state = False
                 self.aiFinishedSpeaking.emit()
 
@@ -84,7 +86,9 @@ class GeminiService(QObject):
             if written > 0:
                 self._audio_buffer = self._audio_buffer[written:] # type: ignore
                 self._last_audio_write_time = time.time()
-                self._is_speaking_state = True
+                if not self._is_speaking_state:
+                    print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback STARTED")
+                    self._is_speaking_state = True
 
     def _start_loop(self):
         asyncio.set_event_loop(self.loop)
@@ -213,11 +217,9 @@ class GeminiService(QObject):
                                 "name": "set_exercise",
                                 "description": (
                                     "Set the next piano exercise for the student. "
-                                    "Call this EXACTLY ONCE per exercise. You MUST call this tool "
-                                    "whenever you are given a lesson plan or asked for "
-                                    "the next exercise. Only speak if introducing a NEW "
-                                    "exercise type. For same-type exercises, call silently. "
-                                    "NEVER call this tool multiple times in the same response."
+                                    "CRITICAL: Call this EXACTLY ONCE per turn. DO NOT use parallel function calling to queue multiple exercises. "
+                                    "You must wait for the user to perform the exercise before calling this tool again. "
+                                    "Multiple simultaneous calls will be ignored."
                                 ),
                                 "parameters": {
                                     "type": "OBJECT",
@@ -349,34 +351,51 @@ class GeminiService(QObject):
                 # ── Handle tool calls from the model ──
                 if "toolCall" in data:
                     tool_call = data["toolCall"]
-                    for fc in tool_call.get("functionCalls", []):
+                    function_calls = tool_call.get("functionCalls", [])
+                    
+                    responses = []
+                    
+                    for i, fc in enumerate(function_calls):
                         fn_name = fc.get("name", "")
                         fn_args = fc.get("args", {})
                         fn_id = fc.get("id", "")
-                        print(f"Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
-
+                        
                         tool_response = {"status": "ok"}
+                        
+                        if i > 0:
+                            # 100% Reject: Parallel function calls are not allowed in this curriculum engine
+                            tool_response = {
+                                "status": "error", 
+                                "message": "Parallel tool calls are strictly forbidden. You must wait for the user to complete the FIRST exercise."
+                            }
+                        else:
+                            print(f"Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
+                            if fn_name == "set_exercise":
+                                if self._exercise_pending:
+                                    print(f"Gemini Service: REJECTING duplicate set_exercise — waiting for student completion")
+                                    tool_response = {"status": "error", "message": "Exercise already active. Wait for user completion."}
+                                else:
+                                    self._exercise_pending = True
+                                    self.exerciseReceived.emit(fn_args)
+                            elif fn_name == "end_lesson":
+                                if self._exercise_pending:
+                                    print(f"Gemini Service: REJECTING early end_lesson — waiting for student completion")
+                                    tool_response = {"status": "error", "message": "Exercise active. Do not call end_lesson yet."}
+                                else:
+                                    self._exercise_pending = False
+                                    self.lessonEndReceived.emit(fn_args.get("feedback_summary", ""))
+                        
+                        responses.append({
+                            "id": fn_id,
+                            "name": fn_name,
+                            "response": tool_response
+                        })
 
-                        if fn_name == "set_exercise":
-                            if self._exercise_pending:
-                                # Reject: model sent another set_exercise before student completed the previous one
-                                print(f"Gemini Service: REJECTING duplicate set_exercise — waiting for student completion")
-                                tool_response = {"status": "error", "message": "Exercise already active. WAIT for the student to complete it. You will receive a performance report when they finish. Do NOT call set_exercise again until then."}
-                            else:
-                                self._exercise_pending = True
-                                self.exerciseReceived.emit(fn_args)
-                        elif fn_name == "end_lesson":
-                            self._exercise_pending = False
-                            self.lessonEndReceived.emit(fn_args.get("feedback_summary", ""))
-
+                    if responses:
                         # Send toolResponse (required by the API)
                         tool_resp = {
                             "toolResponse": {
-                                "functionResponses": [{
-                                    "id": fn_id,
-                                    "name": fn_name,
-                                    "response": tool_response
-                                }]
+                                "functionResponses": responses
                             }
                         }
                         await self.ws.send(json.dumps(tool_resp))  # type: ignore

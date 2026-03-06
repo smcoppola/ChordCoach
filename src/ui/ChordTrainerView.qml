@@ -185,7 +185,7 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             text: {
                 if (!root.isActive) return "CHORD TRAINER";
-                if (root.isLessonMode) return "LESSON: " + root.exerciseName.toUpperCase() + " (" + root.lessonProgress + " OF " + root.lessonTotal + ")";
+                if (root.isLessonMode) return "LESSON: " + root.exerciseName.toUpperCase() + " (EXERCISE " + root.lessonProgress + ")";
                 return "FREE PRACTICE";
             }
             color: root.isActive ? (root.isLessonMode ? "#2196F3" : "#888888") : "#ffffff"

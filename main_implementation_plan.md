@@ -313,3 +313,8 @@ As we proceed through the phases, keep these crucial architectural details in mi
 
 ### 5. Known Hardware Issues / Backlog
 - **MIDI Hot-plugging on Windows**: The application uses `RtMidi` (via `chordcoach_hw`) for MIDI input and `LowLevelMidiOutput` for MIDI output. While we deferred `LowLevelMidiOutput` initialization to avoid locking the Windows MM device list on startup, if a MIDI keyboard is plugged in while the app is running and fails to connect correctly on the very first try, `RtMidi` may fail with `MidiInWinMM::openPort: error creating Windows MM MIDI input port`. This is likely a zombie handle issue in the Windows Multimedia API, `midi_ingestor`, or the `RtMidi` wrapper locking the port exclusively. It is currently placed on the backlog for a future phase focused on hardware robustness.
+
+### 6. Numerical Skill Level Tracking
+- **Future Feature**: The UI should display a persistent, numerical skill level score (similar to the onboarding score, rather than the text-based beginner/intermediate tiers we use internally for AI prompting).
+- **Implementation Strategy**: This involves storing a numeric `current_skill_level` in the database, exposing it to the front-end via `SettingsService`, and calculating points automatically based on performance metrics (e.g., accuracy, time spent) at the conclusion of each lesson or milestone.
+- **AI Prompt Improvement**: The current skill level passed to the AI (Beginner vs Novice vs Intermediate) is far too coarse since it only looks at total lifetime attempts. Once the numerical system is in place, the string identifier passed in the system prompt must be updated to reflect this more granular, performance-based metric so the coach can tailor its feedback more accurately.

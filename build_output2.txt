@@ -1,0 +1,29 @@
+CMake Warning (dev) at C:/Users/scopp/AppData/Roaming/Python/Python314/site-packages/pybind11/share/cmake/pybind11/FindPythonLibsNew.cmake:101 (message):
+  Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+  are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+  the cmake_policy command to set the policy and suppress this warning, or
+  preferably upgrade to using FindPython, either by calling it explicitly
+  before pybind11, or by setting PYBIND11_FINDPYTHON ON before pybind11.
+Call Stack (most recent call first):
+  C:/Users/scopp/AppData/Roaming/Python/Python314/site-packages/pybind11/share/cmake/pybind11/pybind11Tools.cmake:44 (find_package)
+  C:/Users/scopp/AppData/Roaming/Python/Python314/site-packages/pybind11/share/cmake/pybind11/pybind11Common.cmake:237 (include)
+  C:/Users/scopp/AppData/Roaming/Python/Python314/site-packages/pybind11/share/cmake/pybind11/pybind11Config.cmake:257 (include)
+  CMakeLists.txt:15 (find_package)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Found pybind11: C:/Users/scopp/AppData/Roaming/Python/Python314/site-packages/pybind11/include (found version "3.0.2")
+CMake Error: Error: generator : Ninja
+Does not match the generator used previously: Visual Studio 17 2022
+Either remove the CMakeCache.txt file and CMakeFiles directory or choose a different binary directory.
+
+CMake Error at C:/Program Files/CMake/share/cmake-4.2/Modules/FetchContent.cmake:1916 (message):
+  CMake step for rtmidi failed: 1
+Call Stack (most recent call first):
+  C:/Program Files/CMake/share/cmake-4.2/Modules/FetchContent.cmake:1619 (__FetchContent_populateSubbuild)
+  C:/Program Files/CMake/share/cmake-4.2/Modules/FetchContent.cmake:2155:EVAL:2 (__FetchContent_doPopulation)
+  C:/Program Files/CMake/share/cmake-4.2/Modules/FetchContent.cmake:2155 (cmake_language)
+  C:/Program Files/CMake/share/cmake-4.2/Modules/FetchContent.cmake:2394 (__FetchContent_Populate)
+  CMakeLists.txt:25 (FetchContent_MakeAvailable)
+
+
+-- Configuring incomplete, errors occurred!

@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Layouts 1.15
+import Qt5Compat.GraphicalEffects
 
 Rectangle {
     id: root
@@ -10,6 +11,7 @@ Rectangle {
 
     property int middleC: 60
     property string targetChordName: ""
+    property bool isBlurred: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
     
     // Evaluation / scrolling mode properties (generic — reusable for MIDI playback)
     property string displayMode: "trainer"  // "trainer" or "evaluation"
@@ -305,6 +307,39 @@ Rectangle {
                 Behavior on x { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
                 Behavior on y { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
                 
+                // Signal connection triggers animation
+                Connections {
+                    target: (typeof appState !== "undefined" && appState !== null) ? appState.chordTrainer : null
+                    function onInputReady() {
+                        if (visible) {
+                            readyScaleAnim.restart();
+                            readyGlowAnim.restart();
+                        }
+                    }
+                }
+                
+                SequentialAnimation on scale {
+                    id: readyScaleAnim
+                    running: false
+                    NumberAnimation { to: 1.15; duration: 100; easing.type: Easing.OutQuad }
+                    NumberAnimation { to: 1.0; duration: 250; easing.type: Easing.InQuad }
+                }
+                
+                Rectangle {
+                    anchors.fill: parent
+                    color: "#ffffff"
+                    opacity: 0.0
+                    radius: parent.radius
+                    z: 10
+                    
+                    SequentialAnimation on opacity {
+                        id: readyGlowAnim
+                        running: false
+                        NumberAnimation { to: 0.6; duration: 100; easing.type: Easing.OutQuad }
+                        NumberAnimation { to: 0.0; duration: 350; easing.type: Easing.InQuad }
+                    }
+                }
+                
                 // Text label inside the note bar
                 Row {
                     anchors.left: parent.left
@@ -576,5 +611,15 @@ Rectangle {
                 }
             }
         }
+    }
+    
+    // Blur overlay applied when waiting for the next exercise
+    FastBlur {
+        anchors.fill: staffBackground
+        source: staffBackground
+        radius: isBlurred ? (16 * mainWindow.uiScale) : 0
+        visible: radius > 0
+        Behavior on radius { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+        z: 1000
     }
 }
