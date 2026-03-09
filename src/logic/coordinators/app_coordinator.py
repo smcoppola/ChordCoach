@@ -10,7 +10,25 @@ class AppCoordinator(QObject):
     evalIntroPendingChanged = Signal(bool)
     archIntroPendingChanged = Signal(bool)
     isReconnectingChanged = Signal(bool)
-    
+    @Slot()
+    def stopSession(self):
+        """Stops whatever is currently active: Evaluation or Lesson."""
+        if self.evaluation.isRunning:
+            self.evaluation.stop()
+        if self.chord_trainer.isActive:
+            self.chord_trainer.stop_session()
+        
+        # We need to silence any audio that the Gemini model is currently playing back
+        # and clear any pending locks so a future session start isn't blocked.
+        if self.gemini.connected:
+            self.gemini.stop_current_audio()
+            self.gemini.clear_exercise_pending()
+            
+        self._eval_intro_pending = False
+        self._arch_intro_pending = False
+        self.evalIntroPendingChanged.emit(False)
+        self.archIntroPendingChanged.emit(False)
+        
     def __init__(self, gemini_service, eval_engine, chord_trainer, hw_service, settings):
         super().__init__()
         self.gemini = gemini_service

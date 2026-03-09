@@ -110,6 +110,15 @@ class ChordTrainerService(QObject):
         self._hold_tick_timer.setInterval(33) # ~30fps update for smooth progress bar
         self._hold_tick_timer.timeout.connect(self._on_hold_tick)
         
+        # Forgiveness timers for human key slop
+        self._wrong_chord_timer = QTimer(self)
+        self._wrong_chord_timer.setSingleShot(True)
+        self._wrong_chord_timer.timeout.connect(self._on_wrong_chord_timeout)
+        
+        self._sustain_grace_timer = QTimer(self)
+        self._sustain_grace_timer.setSingleShot(True)
+        self._sustain_grace_timer.timeout.connect(self._on_sustain_grace_timeout)
+        
         # A simple library of chords defined by their intervals from a root note (0)
         # 0 = Root, 4 = Major 3rd, 7 = Perfect 5th, etc.
         self.CHORD_TYPES = {
@@ -555,7 +564,7 @@ Start the lesson now by calling set_exercise and speaking."""
         
         report += "\n\nCRITICAL INSTRUCTION: Call set_exercise EXACTLY ONCE for the next step, or end_lesson if complete."
         report += " NEVER call set_exercise multiple times in the same response. Just give me one exercise and WAIT."
-        report += " If the exercise type is the same as previous, you may provide a 1-3 word micro-affirmation, but do NOT give long explanations. Only speak longer sentences for a NEW exercise type or if the student struggled."
+        report += " If the exercise type is the same as previous, provide a 1-3 word micro-affirmation ONLY every 3 to 5 reps to keep up energy. Otherwise, remain completely silent and just call set_exercise. Only speak longer sentences for a NEW exercise type or if the student struggled."
         
         # Set waiting flag so the incoming exercise is applied immediately instead of queued
         self._waiting_for_ai = True
@@ -707,6 +716,11 @@ Start the lesson now by calling set_exercise and speaking."""
         exercise_type = str(chord_data.get("exercise_type", "chord")) # type: ignore
         self._exercise_type = exercise_type
         self._current_hand = str(chord_data.get("hand", "right")) # type: ignore
+        
+        # Pause input evaluation until speech finishes in lesson mode
+        if self._is_lesson_mode:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Pausing for speech (isPausedForSpeech=True) for {self._exercise_name}")
+            self._is_paused_for_speech = True
         
         if exercise_type == "pentascale":
             self._setup_pentascale_target(chord_data)
@@ -1006,11 +1020,6 @@ Start the lesson now by calling set_exercise and speaking."""
         self.targetChordChanged.emit(self._target_chord_name)
         print(f"ChordTrainer: Next target is {self._target_chord_name} (intervals: {self._target_intervals}, pitches: {self._target_pitches}, hold={self._required_hold_ms}ms)")
         
-        # Pause input evaluation until speech finishes in lesson mode
-        if self._is_lesson_mode:
-            self._is_paused_for_speech = True
-            self.lessonStateChanged.emit()
-            
         # If preview requested, emit signal for MIDI output
         # Defer if the AI is still speaking (coach intro) to avoid audio collision
         if preview_chord:
@@ -1032,6 +1041,7 @@ Start the lesson now by calling set_exercise and speaking."""
         plays deferred listen preview, or resets paused state."""
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speech finished, resuming lesson.")
         if self._is_paused_for_speech:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Unpausing speech (isPausedForSpeech=False)")
             self._is_paused_for_speech = False
             self.lessonStateChanged.emit()
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Input unlocked.")
@@ -1129,15 +1139,17 @@ Start the lesson now by calling set_exercise and speaking."""
     @Slot(int, bool)
     def handle_midi_note(self, pitch: int, is_on: bool):
         """Called by AppState when a MIDI note event occurs."""
+        # Unconditionally process Note Off events so we never leak stuck keys.
+        if not is_on:
+            self._active_pitches.discard(pitch)
+            
         if not self._is_active or self._is_lesson_complete:
             return
 
-        if self._is_paused_for_speech:
+        # If it's a Note On, respect the ignore window (loopback prevention)
+        if is_on and time.time() < self._ignore_midi_until:
             return
-
-        if time.time() < self._ignore_midi_until:
-            return
-
+            
         if is_on:
             self._active_pitches.add(pitch)
             
@@ -1145,18 +1157,22 @@ Start the lesson now by calling set_exercise and speaking."""
             if self._first_note_time == 0.0:
                 self._first_note_time = time.time() * 1000.0
                 
-            # Track wrong notes (notes not in target intervals)
-            if self._exercise_type == "pentascale":
-                # For pentascale, check against the exact current target pitch
-                if self._pentascale_sequence and self._pentascale_index < len(self._pentascale_sequence):
-                    if pitch != self._pentascale_sequence[self._pentascale_index]:
+            # Track wrong notes (notes not in target intervals).
+            # We don't increment failure counts if the student is just noodles while the AI is talking.
+            if not self._is_paused_for_speech:
+                if self._exercise_type == "pentascale":
+                    # For pentascale, check against the exact current target pitch
+                    if self._pentascale_sequence and self._pentascale_index < len(self._pentascale_sequence):
+                        if pitch != self._pentascale_sequence[self._pentascale_index]:
+                            self._wrong_notes_count += 1
+                elif self._target_intervals:
+                    if (pitch % 12) not in self._target_intervals:
                         self._wrong_notes_count += 1
-            elif self._target_intervals:
-                if (pitch % 12) not in self._target_intervals:
-                    self._wrong_notes_count += 1
-        else:
-            self._active_pitches.discard(pitch)
-            
+
+        # We must never evaluate input or advance sequences while the AI coach is talking
+        if self._is_paused_for_speech:
+            return
+
         if self._waiting_for_release:
             if len(self._active_pitches) == 0:
                 self._waiting_for_release = False
@@ -1250,6 +1266,9 @@ Start the lesson now by calling set_exercise and speaking."""
         # Check if the currently held keys exactly match the target intervals
         # (Must contain all required notes, and no extra notes)
         if active_intervals == self._target_intervals:
+            self._wrong_chord_timer.stop()
+            self._sustain_grace_timer.stop()
+            
             if self._exercise_type == "hands_together":
                 # Must be playing at least one note in the bass range (octave 2-3 -> pitches 36-59)
                 has_bass = any(p < 60 for p in self._active_pitches)
@@ -1282,19 +1301,38 @@ Start the lesson now by calling set_exercise and speaking."""
                         self._complete_chord()
         else:
             # If they are holding the correct NUMBER of keys but they are not the right intervals,
-            # we consider this a "failed attempt" and emit a subtle feedback signal.
+            # we consider this a "failed attempt". Give a generous 300ms window to adjust sloppy human hands.
             if len(active_intervals) == len(self._target_intervals) and not self._is_holding:
+                if not self._wrong_chord_timer.isActive():
+                    self._wrong_chord_timer.start(300)
+            else:
+                self._wrong_chord_timer.stop()
+                
+            # If they let go or miss-pressed during a hold, cancel the hold
+            # Use a 150ms grace period to handle acoustic key bounce where a human's finger
+            # might hover slightly above the piano actuation point mid-sustain.
+            if self._is_holding and self._required_hold_ms > 0:
+                if not self._sustain_grace_timer.isActive():
+                    self._sustain_grace_timer.start(150)
+
+    @Slot()
+    def _on_wrong_chord_timeout(self):
+        if not self._is_holding and self._target_intervals:
+            active_intervals = {pitch % 12 for pitch in self._active_pitches}
+            if len(active_intervals) == len(self._target_intervals) and active_intervals != self._target_intervals:
                 self.chordFailed.emit()
-                # Record a failure in the DB (pass false for success)
                 latency_ms = (time.time() - self._prompt_time) * 1000.0
                 self.db.record_chord_attempt(self._target_chord_name, False, latency_ms, 
                                            self._wrong_notes_count, False)
                 if self.curriculum:
                     self.curriculum.complete_exercise(self._target_chord_name, False, 
                                                      self._current_track, self._current_milestone_id)
-                
-            # If they let go or miss-pressed during a hold, cancel the hold
-            if self._is_holding and self._required_hold_ms > 0:
+
+    @Slot()
+    def _on_sustain_grace_timeout(self):
+        if self._is_holding and self._required_hold_ms > 0:
+            active_intervals = {pitch % 12 for pitch in self._active_pitches}
+            if active_intervals != self._target_intervals:
                 self._is_holding = False
                 self._hold_progress = 0.0
                 self._hold_tick_timer.stop()

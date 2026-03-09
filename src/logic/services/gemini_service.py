@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 import websockets  # type: ignore
 from PySide6.QtCore import QObject, Signal, Slot, QTimer  # type: ignore
-from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices # type: ignore
+from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices, QAudio # type: ignore
 
 class GeminiService(QObject):
     responseReceived = Signal(str)
@@ -71,15 +71,21 @@ class GeminiService(QObject):
     def _pump_audio(self):
         # Check if the AI just finished talking (buffer is empty and hardware playback is complete)
         if self._is_speaking_state and not self._audio_buffer:
-            # If 0.2s has passed AND the hardware sink buffer is fully empty
-            if time.time() - self._last_audio_write_time > 0.2:
-                if self.audio_sink and self.audio_sink.bytesFree() == self.audio_sink.bufferSize():
+            time_since_last = time.time() - self._last_audio_write_time
+            # If 0.2s has passed AND the hardware sink buffer is essentially empty, OR 1.0s has passed as a strict fallback
+            if time_since_last > 0.2:
+                is_empty = self.audio_sink and self.audio_sink.bytesFree() >= self.audio_sink.bufferSize() * 0.95
+                if is_empty or time_since_last > 1.0:
                     print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED")
                     self._is_speaking_state = False
                     self.aiFinishedSpeaking.emit()
 
-        if not self.audio_io or not self.audio_io.isOpen() or not self._audio_buffer:
+        if not self._audio_buffer:
             return
+            
+        # Restart the active IO device if the QAudioSink has stopped or been suspended (common on underrun)
+        if not self.audio_io or not self.audio_io.isOpen() or self.audio_sink.state() == QAudio.State.StoppedState:
+            self.audio_io = self.audio_sink.start()
             
         free_bytes = self.audio_sink.bytesFree()
         if free_bytes > 0:
@@ -187,8 +193,8 @@ class GeminiService(QObject):
                 " VOICE RULES: 1. NEVER say raw numbers like BPM, milliseconds, or technical parameters. "
                 "Say 'play slowly and steadily' instead of 'play at 60 BPM'. "
                 "2. The student sees the chord/notes on screen — focus on WHY they're doing this, not WHAT keys to press. "
-                "3. Between exercises of the SAME type, call set_exercise with ZERO audio output — total silence. "
-                "4. Only speak when: introducing a NEW exercise type, giving feedback on struggles, or ending the lesson. "
+                "3. Between exercises of the SAME type, provide a 1-3 word micro-affirmation ONLY every 3 to 5 reps. Otherwise, remain COMPLETELY SILENT and just call set_exercise. "
+                "4. Only speak longer sentences when: introducing a NEW exercise type, giving feedback on struggles, or ending the lesson. "
                 "5. Keep transitions fast. Call set_exercise immediately after receiving performance data. "
                 "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson."
             )
@@ -425,6 +431,13 @@ class GeminiService(QObject):
                                 if b64_audio:
                                     audio_bytes = base64.b64decode(b64_audio)
                                     self.audioDataReceived.emit(audio_bytes)
+                                
+                    if content.get("turnComplete"):
+                        # If the model turn is complete but we never started speaking, it was silent!
+                        # But wait to make sure the audio playback buffer is actually empty.
+                        if not self._is_speaking_state and len(self._audio_buffer) == 0:
+                            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Turn complete with NO audio. Emitting finished speaking manually.")
+                            self.aiFinishedSpeaking.emit()
                                 
         except websockets.exceptions.ConnectionClosed as e:
             print(f"Gemini Service: Connection closed by server. Code: {e.code}, Reason: {e.reason}")

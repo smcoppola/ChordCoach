@@ -23,6 +23,10 @@ Rectangle {
     property bool isLoading: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLoading : false
     property string loadingStatusText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.loadingStatusText : ""
     property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
+    
+    onIsPausedForSpeechChanged: {
+        console.log("[TIMING " + new Date().toISOString() + "] QML root.isPausedForSpeech is now: " + root.isPausedForSpeech)
+    }
     property bool isWaitingToBegin: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingToBegin : false
     property real estimatedGenerationMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.estimatedGenerationMs : 0.0
     
@@ -374,7 +378,7 @@ Rectangle {
             border.color: "#00BCD4"
             border.width: 1 * mainWindow.uiScale
             radius: 12 * mainWindow.uiScale
-            visible: root.isActive && root.isLessonComplete
+            visible: root.isLessonComplete
             
             // Subtle glow effect
             Rectangle {
@@ -525,12 +529,9 @@ Rectangle {
         
         // Phase Complete screen overlay (Visible between exercises while AI speaks)
         Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.fillWidth: true
-            Layout.maximumWidth: 1000 * mainWindow.uiScale
-            Layout.fillHeight: true
-            Layout.minimumHeight: 450 * mainWindow.uiScale
-            color: "#1c1c1e"
+            anchors.fill: sheetMusicPane
+            z: 100
+            color: Qt.rgba(0.11, 0.11, 0.12, 0.85) // Dark translucent background for "blur" effect
             border.color: "#00BCD4"
             border.width: 1
             radius: 12
@@ -578,13 +579,14 @@ Rectangle {
         
         // Target display area - Enhanced Sheet Music
         Components.EnhancedSheetMusic {
+            id: sheetMusicPane
             targetChordName: root.currentTarget
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
             Layout.maximumWidth: 1000 * mainWindow.uiScale
             Layout.fillHeight: true
             Layout.minimumHeight: 450 * mainWindow.uiScale
-            visible: root.isActive && !root.isLessonComplete && !root.isPausedForSpeech && root.exerciseType !== "listen"
+            visible: root.isActive && !root.isLessonComplete && root.exerciseType !== "listen"
             
             Text {
                 id: latencyText

@@ -1,0 +1,25 @@
+CurriculumService: Loaded 1 milestones across 1 tracks
+FC:\Users\scopp\OneDrive\Documents\repos\ChordCoach-Companion\tests\test_full_lesson_timing.py:157: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000163D2D2D6C0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\scopp\OneDrive\Documents\repos\ChordCoach-Companion\tests\test_full_lesson_timing.py:157: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000163D2D2D8A0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\scopp\OneDrive\Documents\repos\ChordCoach-Companion\tests\test_full_lesson_timing.py:157: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000163D300E6B0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+
+======================================================================
+FAIL: test_human_finger_lingering (tests.test_full_lesson_timing.TestFullLessonTiming.test_human_finger_lingering)
+3. Simulates sloppy humans releasing a sustained chord *during* the AI's next speech.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\scopp\OneDrive\Documents\repos\ChordCoach-Companion\tests\test_full_lesson_timing.py", line 287, in test_human_finger_lingering
+    self.assertTrue(any("SUCCESS!" in l for l in self.logs), f"Logs: {self.logs}")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : Logs: ['[TIMING 15:59:19.986] ChordTrainer: Received exercise from AI: G Major (type=chord)', "ChordTrainer: Queuing exercise 'G Major' (current: 'Free Practice')", '[TIMING 15:59:19.986] ChordTrainer: Coach speech finished, resuming lesson.', 'ChordTrainer: Applying queued exercise: G Major', '[TIMING 15:59:19.986] ChordTrainer: Applying exercise to UI: G Major', 'ChordTrainer: Next target is G Major (intervals: {2, 11, 7}, pitches: [67, 71, 74], hold=0ms)']
+
+----------------------------------------------------------------------
+Ran 1 test in 0.056s
+
+FAILED (failures=1)

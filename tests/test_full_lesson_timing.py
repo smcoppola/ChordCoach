@@ -7,39 +7,31 @@ import time
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import MagicMock, patch
+import sys
+from PySide6.QtCore import QCoreApplication
 
-# --- 1. Robust PySide6 Mocks ---
+# We must instantiate a QCoreApplication for real Signals to function in a headless test
+if not QCoreApplication.instance():
+    app = QCoreApplication(sys.argv)
+
+import PySide6.QtCore as core
+
+# Original Mock implementation that isolates the OS event loop from the test 
 class MockSignal:
     def __init__(self, *args, **kwargs):
         self.connections = []
     def emit(self, *args, **kwargs):
         for slot in self.connections:
             try:
-                if len(args) == 1: 
-                    slot(args[0])
-                elif len(args) > 1: 
-                    slot(*args)
-                else: 
-                    slot()
-            except Exception:
-                pass
+                if len(args) == 1: slot(args[0])
+                elif len(args) > 1: slot(*args)
+                else: slot()
+            except Exception: pass
     def connect(self, slot):
         if slot not in self.connections: 
             self.connections.append(slot)
 
-def MockProperty(type_hint, notify=None):
-    def decorator(func): return property(func)
-    return decorator
-
-def MockSlot(*args, **kwargs):
-    def decorator(func): return func
-    return decorator
-
-class MockQObject:
-    def __init__(self, parent=None): pass
-    def setParent(self, p): pass
-
-class MockQTimer(MockQObject):
+class MockQTimer(core.QObject):
     PreciseTimer = 1
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,25 +41,19 @@ class MockQTimer(MockQObject):
     def stop(self): self._active = False
     def setInterval(self, ms): pass
     def setTimerType(self, t): pass
+    def setSingleShot(self, single_shot: bool): pass
     def isActive(self): return self._active
     @staticmethod
     def singleShot(ms, slot):
         if not hasattr(sys, '_pending_timers'): sys._pending_timers = []
         sys._pending_timers.append((ms, slot))
 
-mock_qt = MagicMock()
-mock_qt.QtCore.QObject = MockQObject
-mock_qt.QtCore.Signal = MockSignal
-mock_qt.QtCore.Property = MockProperty
-mock_qt.QtCore.Slot = MockSlot
-mock_qt.QtCore.Qt.PreciseTimer = 1
-mock_qt.QtCore.QTimer = MockQTimer
+# Inject into PySide6 to bypass the real timer architecture safely
+core.QTimer = MockQTimer
 
-sys.modules['PySide6'] = mock_qt
-sys.modules['PySide6.QtCore'] = mock_qt.QtCore
-sys.modules['PySide6.QtGui'] = mock_qt
-sys.modules['PySide6.QtQml'] = mock_qt
-sys.modules['PySide6.QtMultimedia'] = MagicMock()
+# We only mock QtMultimedia since we don't want headless tests looking for physical speakers
+mock_qt = MagicMock()
+sys.modules['PySide6.QtMultimedia'] = mock_qt
 
 # --- 2. Now Import Application Services ---
 project_root = Path(__file__).parent.parent
@@ -78,6 +64,39 @@ from logic.services.curriculum_service import CurriculumService
 from logic.services.chord_trainer import ChordTrainerService
 from logic.services.evaluation_service import EvaluationService
 from logic.coordinators.app_coordinator import AppCoordinator
+class MockEvaluationService(core.QObject):
+    evaluationFinished = MockSignal()
+    metronomeTick = MockSignal()
+    def __init__(self):
+        super().__init__()
+        self.isRunning = False
+
+class MockGeminiService(core.QObject):
+    exerciseReceived = MockSignal()
+    aiFinishedSpeaking = MockSignal()
+    audioDataReceived = MockSignal()
+    responseReceived = MockSignal()
+    connectionStatusChanged = MockSignal()
+    reconnecting = MockSignal()
+    lessonEndReceived = MockSignal()
+    def __init__(self):
+        super().__init__()
+        self.connected = True
+        self.send_prompt = MagicMock()
+        self.clear_exercise_pending = MagicMock()
+
+class MockHardwareService(core.QObject):
+    midiNoteReceived = MockSignal()
+    sustainPedalChanged = MockSignal()
+    def __init__(self):
+        super().__init__()
+        self.is_connected = True
+        
+    def play_metronome_tick(self, is_downbeat: bool = False, is_subdivision: bool = False):
+        pass
+        
+    def play_chord_preview(self, pitches: list[int], duration_ms: int = 1500, delay_ms: int = 0):
+        pass
 
 class TestFullLessonTiming(unittest.TestCase):
     def setUp(self):
@@ -115,24 +134,12 @@ class TestFullLessonTiming(unittest.TestCase):
             "Minor": {0, 3, 7}
         }
         
-        self.evaluation = MagicMock(spec=EvaluationService)
-        self.evaluation.isRunning = False
-        self.evaluation.evaluationFinished = MockSignal()
-        self.evaluation.metronomeTick = MockSignal()
+        self.evaluation = MockEvaluationService()
         
         # Mock Gemini
-        self.gemini = MagicMock()
-        for sig in ["exerciseReceived", "aiFinishedSpeaking", "audioDataReceived", 
-                    "responseReceived", "connectionStatusChanged", "reconnecting", "lessonEndReceived"]:
-            setattr(self.gemini, sig, MockSignal())
-        self.gemini.send_prompt = MagicMock()
-        self.gemini.clear_exercise_pending = MagicMock()
-        self.gemini.connected = True
+        self.gemini = MockGeminiService()
         
-        self.hw = MagicMock()
-        self.hw.midiNoteReceived = MockSignal()
-        self.hw.sustainPedalChanged = MockSignal()
-        self.hw.is_connected = True
+        self.hw = MockHardwareService()
         
         self.coordinator = AppCoordinator(self.gemini, self.evaluation, self.trainer, self.hw, self.settings)
         
@@ -150,7 +157,7 @@ class TestFullLessonTiming(unittest.TestCase):
         gc.collect()
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def trigger_pending_timers(self):
+    def trigger_pending_timers(self, wait_ms=None):
         timers = sys._pending_timers[:]
         sys._pending_timers = []
         for _, slot in timers:
@@ -169,6 +176,8 @@ class TestFullLessonTiming(unittest.TestCase):
         self.hw.midiNoteReceived.emit(64, True) # E4
         self.hw.midiNoteReceived.emit(67, True) # G4
         self.assertFalse(any("SUCCESS!" in l for l in self.logs))
+        # Simulate AI speaking for 2 seconds while user tries to spam keys
+        self.trigger_pending_timers(2000)
         
         # Finish audio
         self.gemini.aiFinishedSpeaking.emit()
@@ -180,6 +189,9 @@ class TestFullLessonTiming(unittest.TestCase):
         self.hw.midiNoteReceived.emit(67, True)
         
         self.assertTrue(any("SUCCESS!" in l for l in self.logs), f"Logs: {self.logs}")
+        
+        # Must wait >500ms for the success hold delay to clear before releasing
+        self.trigger_pending_timers(600)
         
         # Release keys
         self.hw.midiNoteReceived.emit(60, False)
@@ -203,6 +215,9 @@ class TestFullLessonTiming(unittest.TestCase):
             ]
         }
         self.gemini.exerciseReceived.emit(prog_data)
+        
+        # Simulate AI streaming audio delay
+        self.trigger_pending_timers(1500)
         self.gemini.aiFinishedSpeaking.emit()
         
         # Chord 1
@@ -211,11 +226,13 @@ class TestFullLessonTiming(unittest.TestCase):
         self.hw.midiNoteReceived.emit(67, True)
         self.assertTrue(any("SUCCESS! C Major (I)" in l for l in self.logs), f"Logs: {self.logs}")
         
+        self.trigger_pending_timers(600)
+        
         # Release to advance
         self.hw.midiNoteReceived.emit(60, False)
         self.hw.midiNoteReceived.emit(64, False)
         self.hw.midiNoteReceived.emit(67, False)
-        self.trigger_pending_timers()
+        self.trigger_pending_timers(200)
         
         # Chord 2
         self.hw.midiNoteReceived.emit(67, True)
@@ -223,12 +240,60 @@ class TestFullLessonTiming(unittest.TestCase):
         self.hw.midiNoteReceived.emit(74, True)
         self.assertTrue(any("SUCCESS! G Major (V)" in l for l in self.logs))
         
+        self.trigger_pending_timers(600)
+        
         # Release -> Final request
         self.hw.midiNoteReceived.emit(67, False)
         self.hw.midiNoteReceived.emit(71, False)
         self.hw.midiNoteReceived.emit(74, False)
-        self.trigger_pending_timers()
+        self.trigger_pending_timers(200)
         self.assertTrue(any("Requesting NEXT exercise" in l for l in self.logs))
+
+    def test_human_finger_lingering(self):
+        """3. Simulates sloppy humans releasing a sustained chord *during* the AI's next speech."""
+        self.trainer._is_loading = False
+        self.trainer.start_lesson_plan()
+        
+        # 1. Lesson starts, AI gives first exercise (C Major)
+        ex_data1 = {"exercise_type": "chord", "exercise_name": "C Major", "root_idx": 0, "chord_type_name": "Major"}
+        self.gemini.exerciseReceived.emit(ex_data1)
+        self.trigger_pending_timers(1000)
+        self.gemini.aiFinishedSpeaking.emit()
+        
+        # 2. User plays and successfully holds C Major
+        self.hw.midiNoteReceived.emit(60, True)
+        self.hw.midiNoteReceived.emit(64, True)
+        self.hw.midiNoteReceived.emit(67, True)
+        self.trigger_pending_timers(10)
+        self.assertTrue(any("SUCCESS! C Major" in l for l in self.logs))
+        
+        # 3. AI starts speaking the *next* exercise (G Major). _waiting_for_ai handles the tool call mapping.
+        # But wait, in reality, the user hasn't lifted their hands yet!
+        # The trainer requested the next exercise automatically on success.
+        
+        ex_data2 = {"exercise_type": "chord", "exercise_name": "G Major", "root_idx": 7, "chord_type_name": "Major"}
+        self.gemini.exerciseReceived.emit(ex_data2) # This applies G Major and sets _is_paused_for_speech = True!
+        
+        # 4. User releases the old keys WHILE the AI is speaking the new intro. 
+        # (This used to cause a permanent state leak because handle_midi_note was deaf)
+        self.trigger_pending_timers(500)
+        self.hw.midiNoteReceived.emit(60, False)
+        self.hw.midiNoteReceived.emit(64, False)
+        self.hw.midiNoteReceived.emit(67, False)
+        
+        # 5. AI finishes speaking
+        self.trigger_pending_timers(1000)
+        self.gemini.aiFinishedSpeaking.emit() # Speech over, resumes input processing
+        self.trigger_pending_timers(50)
+        
+        # 6. User plays G Major
+        self.hw.midiNoteReceived.emit(67, True)
+        self.hw.midiNoteReceived.emit(71, True)
+        self.hw.midiNoteReceived.emit(74, True)
+        
+        # 7. Because the old Note Off events were safely processed, this should instantly succeed
+        self.trigger_pending_timers(600)  # Wait for hold success
+        self.assertTrue(any("SUCCESS! G Major" in l for l in self.logs), f"Logs: {self.logs}")
 
     def test_pentascale_legato_timing(self):
         """3. Pentascales allow legato playing."""
@@ -243,12 +308,15 @@ class TestFullLessonTiming(unittest.TestCase):
             "scale_name": "C Major"
         }
         self.gemini.exerciseReceived.emit(penta_data)
+        
+        self.trigger_pending_timers(2500)
         self.gemini.aiFinishedSpeaking.emit()
         
         notes = [60, 62, 64, 65, 67]
         for n in notes:
             self.hw.midiNoteReceived.emit(n, True)
             
+        self.trigger_pending_timers(200) # Give it time to register pentascale hit
         self.assertTrue(any("SUCCESS!" in l for l in self.logs))
 
     def test_ear_training_preview_timing(self):
@@ -268,6 +336,8 @@ class TestFullLessonTiming(unittest.TestCase):
         # Verify MIDI preview deferred
         self.assertTrue(self.trainer._listen_preview_pending)
         
+        # AI talks
+        self.trigger_pending_timers(2000)
         self.gemini.aiFinishedSpeaking.emit()
         
         # Verify preview fired and ignored input
@@ -285,7 +355,7 @@ class TestFullLessonTiming(unittest.TestCase):
         self.gemini.aiFinishedSpeaking.emit()
         self.assertTrue(any("Arming 4s failsafe timer" in l for l in self.logs))
         
-        self.trigger_pending_timers()
+        self.trigger_pending_timers(4200) # Must wait > 4s for real failsafe timer!
         self.assertTrue(any("Failsafe timer popped!" in l for l in self.logs))
         self.gemini.send_prompt.assert_called()
 
@@ -304,6 +374,9 @@ class TestFullLessonTiming(unittest.TestCase):
         })
         self.assertTrue(self.trainer._is_paused_for_speech)
         
+        # Simulate AI talking delay
+        self.trigger_pending_timers(1500)
+        
         # 3. AI finishes speaking -> unlocks
         self.gemini.aiFinishedSpeaking.emit()
         self.assertFalse(self.trainer._is_paused_for_speech)
@@ -313,6 +386,8 @@ class TestFullLessonTiming(unittest.TestCase):
         self.hw.midiNoteReceived.emit(64, True)
         self.hw.midiNoteReceived.emit(67, True)
         self.assertTrue(any("SUCCESS! C Major" in l for l in self.logs))
+        
+        self.trigger_pending_timers(600)
         
         # 5. Student releases chord -> triggers next exercise request
         self.hw.midiNoteReceived.emit(60, False)
@@ -326,6 +401,7 @@ class TestFullLessonTiming(unittest.TestCase):
             "exercise_type": "pentascale", "exercise_name": "C Scale",
             "root_idx": 0, "direction": "ascending", "scale_name": "C Major"
         })
+        self.trigger_pending_timers(1500)
         self.gemini.aiFinishedSpeaking.emit() # unlock
         
         # 7. Student plays pentascale (legato)
@@ -334,7 +410,7 @@ class TestFullLessonTiming(unittest.TestCase):
         
         # Pentascale success auto-triggers next chord in its `_check_pentascale` logic
         # which calls `_complete_chord()`. Notice we don't need to release keys for pentascales.
-        self.trigger_pending_timers()
+        self.trigger_pending_timers(200)
         self.assertTrue(any("Requesting NEXT exercise" in l for l in self.logs))
 
         # 8. AI says lesson is over
@@ -355,6 +431,7 @@ class TestFullLessonTiming(unittest.TestCase):
                 "exercise_type": "chord", "exercise_name": "Test Chord", 
                 "root_idx": root, "chord_type_name": "Major"
             })
+            self.trigger_pending_timers(1500)
             self.gemini.aiFinishedSpeaking.emit()
             
             # Manipulate prompt time to simulate the user taking a long time
@@ -365,11 +442,13 @@ class TestFullLessonTiming(unittest.TestCase):
             self.hw.midiNoteReceived.emit(64 + root, True)
             self.hw.midiNoteReceived.emit(67 + root, True)
             
+            self.trigger_pending_timers(600)
+            
             # Release to reset
             self.hw.midiNoteReceived.emit(60 + root, False)
             self.hw.midiNoteReceived.emit(64 + root, False)
             self.hw.midiNoteReceived.emit(67 + root, False)
-            self.trigger_pending_timers()
+            self.trigger_pending_timers(200)
 
         # Struggle 1
         run_exercise(0, 5.0)  # C Major, took 5 seconds
