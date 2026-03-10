@@ -11,7 +11,17 @@ Rectangle {
 
     property int middleC: 60
     property string targetChordName: ""
-    property bool isBlurred: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
+    onTargetChordNameChanged: {
+        var d = new Date();
+        var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+        console.log("[TIMING " + timeStr + "] QML EnhancedSheetMusic updated target: " + targetChordName);
+    }
+    property bool isBlurred: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
+    onIsBlurredChanged: {
+        var d = new Date();
+        var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+        console.log("[TIMING " + timeStr + "] QML EnhancedSheetMusic isBlurred: " + isBlurred);
+    }
     
     // Evaluation / scrolling mode properties (generic — reusable for MIDI playback)
     property string displayMode: "trainer"  // "trainer" or "evaluation"

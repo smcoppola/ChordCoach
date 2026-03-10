@@ -11,6 +11,11 @@ Rectangle {
     property bool isActive: false
     
     visible: isActive && targetChordName !== "" && formulaText !== ""
+    onVisibleChanged: {
+        var d = new Date();
+        var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+        console.log("[TIMING " + timeStr + "] QML ChordFormulaCard visible: " + visible);
+    }
     
     // Dynamic styling based on chord type
     property bool isMinor: (chordType || "").toLowerCase() === "minor"

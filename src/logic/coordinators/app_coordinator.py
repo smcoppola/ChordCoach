@@ -60,6 +60,7 @@ class AppCoordinator(QObject):
         self.chord_trainer.apiConnectivityChanged.connect(self._on_api_connectivity)
         
         # --- AI Connection State Handlers ---
+        self.gemini.aiStartedSpeaking.connect(self.chord_trainer.pause_for_speech)
         self.gemini.aiFinishedSpeaking.connect(self.chord_trainer.resume_lesson)
         self.gemini.aiFinishedSpeaking.connect(self._on_ai_finished_speaking)
         self.gemini.connectionStatusChanged.connect(self._on_ai_connected)
@@ -183,11 +184,11 @@ class AppCoordinator(QObject):
             self._eval_audio_received = False
             self.evalIntroPendingChanged.emit(True)
             self.gemini.send_prompt(
-                "[System Note]: SKILL EVALUATION MODE — this is NOT a lesson. "
+                "<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>\nSKILL EVALUATION MODE — this is NOT a lesson. "
                 "Say ONE short sentence welcoming the student to the skill check and reminding them "
                 "to play the scrolling notes as they hit the green line. Wish them luck. "
                 "Then STOP TALKING. Do NOT call any tools. Do NOT discuss exercises, chords, or lessons. "
-                "Your only job right now is the welcome sentence, then silence."
+                "Your only job right now is the welcome sentence, then silence.\n</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
             )
             self.evaluation.startEvaluation(paused=True)
             QTimer.singleShot(10000, self._evaluation_safety_start)
@@ -201,9 +202,9 @@ class AppCoordinator(QObject):
             self._arch_intro_pending = True
             self.archIntroPendingChanged.emit(True)
             self.gemini.send_prompt(
-                "[System Note]: Onboarding Phase 3. Give a quick, friendly 1-sentence intro. "
+                "<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>\nOnboarding Phase 3. Give a quick, friendly 1-sentence intro. "
                 "Mention that green arches show half-steps between notes, and they should click one to see its name. "
-                "Then STOP TALKING. Do NOT call any tools. Do NOT discuss exercises or lessons."
+                "Then STOP TALKING. Do NOT call any tools. Do NOT discuss exercises or lessons.\n</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
             )
             QTimer.singleShot(10000, self._arch_tutorial_safety_start)
         else:

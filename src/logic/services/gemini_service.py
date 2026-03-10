@@ -14,6 +14,7 @@ class GeminiService(QObject):
     responseReceived = Signal(str)
     connectionStatusChanged = Signal(bool)
     audioDataReceived = Signal(bytes)
+    aiStartedSpeaking = Signal()
     aiFinishedSpeaking = Signal()
     reconnecting = Signal(int, int)  # (attempt, max_attempts)
     exerciseReceived = Signal(dict)   # Fired when model calls set_exercise tool
@@ -97,6 +98,7 @@ class GeminiService(QObject):
                 if not self._is_speaking_state:
                     print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback STARTED")
                     self._is_speaking_state = True
+                    self.aiStartedSpeaking.emit()
 
     def _start_loop(self):
         asyncio.set_event_loop(self.loop)
@@ -377,7 +379,7 @@ class GeminiService(QObject):
                                 "message": "Parallel tool calls are strictly forbidden. You must wait for the user to complete the FIRST exercise."
                             }
                         else:
-                            print(f"Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
+                            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
                             if fn_name == "set_exercise":
                                 if self._exercise_pending:
                                     print(f"Gemini Service: REJECTING duplicate set_exercise — waiting for student completion")
@@ -433,6 +435,7 @@ class GeminiService(QObject):
                                     self.audioDataReceived.emit(audio_bytes)
                                 
                     if content.get("turnComplete"):
+                        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Received turnComplete from API.")
                         # If the model turn is complete but we never started speaking, it was silent!
                         # But wait to make sure the audio playback buffer is actually empty.
                         if not self._is_speaking_state and len(self._audio_buffer) == 0:
@@ -444,6 +447,13 @@ class GeminiService(QObject):
         except Exception as e:
             print(f"Gemini Service: Error in receive loop: {e}")
         finally:
+            # Force finish speaking if we were disconnected while speaking
+            if self._is_speaking_state:
+                print("Gemini Service: Connection dropped while speaking. Emitting finished speaking to clear locks.")
+                self._is_speaking_state = False
+                self._audio_buffer = b""
+                self.aiFinishedSpeaking.emit()
+            
             # Clean up current connection state without emitting disconnected yet
             ws_to_close = self.ws
             if ws_to_close:

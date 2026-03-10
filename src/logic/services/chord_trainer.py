@@ -41,6 +41,9 @@ class ChordTrainerService(QObject):
         self._target_pitches: List[int] = []
         self._target_hands: List[str] = []  # "left" or "right" for each target pitch
         self._pedal_type: str = "" # "direct", "legato", or ""
+        self._pedal_satisfied = False
+        self._is_pedal_down = False
+        self._pedal_down_time = 0.0
         
         # Track currently depressed keys (MIDI pitches)
         self._active_pitches: Set[int] = set()
@@ -70,7 +73,9 @@ class ChordTrainerService(QObject):
         self._is_loading = False
         self._loading_status_text = ""
         self._is_paused_for_speech = False
+        self._require_key_release_before_eval = False
         self._waiting_for_ai = False
+        self._is_requesting_exercise = False
         self._pending_exercise = None  # Single-slot queue to prevent rapid-fire overwrites
         self._listen_preview_pending = False  # Deferred MIDI preview for listen exercises
         self._metronome_pending = None  # Deferred metronome start {bpm, interval_ms}
@@ -358,7 +363,8 @@ class ChordTrainerService(QObject):
         else:
             blocks_text = "The student is a complete beginner. Start with a C Major Pentascale (C-D-E-F-G)."
 
-        prompt = f"""[System Note]: START A NEW LESSON.
+        prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
+START A NEW LESSON.
 
 {user_context}
 
@@ -377,7 +383,7 @@ VOICE GUIDANCE RULES:
 - NEVER reference raw numbers like BPM, milliseconds, or technical parameters.
 - Instead of "play at 60 BPM", say "play slowly and steadily" or "keep a relaxed pace".
 - Focus on WHAT the student should do, not technical specifications.
-- Briefly explain the "why" or context when introducing a new exercise type (e.g., "This pentascale shape is the foundation for pop songs").
+- Briefly explain the "why" or context when introducing a new exercise type (for example, explain that a pentascale shape is the foundation for many pop songs).
 - The student sees the chord/notes on screen — don't describe which keys to press.
 - Keep exercise transitions fast. Call set_exercise immediately, don't narrate between steps.
 
@@ -396,7 +402,8 @@ BEGINNER SAFETY RULES:
 Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal
 Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
 
-Start the lesson now by calling set_exercise and speaking."""
+Start the lesson now by calling set_exercise and speaking.
+</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
         
         self.requestLessonStart.emit(prompt)
 
@@ -408,6 +415,8 @@ Start the lesson now by calling set_exercise and speaking."""
         or no active exercise) or queues it in _pending_exercise to prevent
         rapid-fire tool calls from overwriting the current exercise.
         """
+        self._is_requesting_exercise = False
+        
         ex_type = exercise_data.get("exercise_type", "chord")
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Received exercise from AI: {exercise_data.get('exercise_name', 'Unknown')} (type={ex_type})")
         
@@ -422,10 +431,14 @@ Start the lesson now by calling set_exercise and speaking."""
         # Validate chord type if applicable
         if ex_type in ("chord", "hands_together", "sustain_pedal", "listen") and "chord_type_name" in exercise_data:
             c_type = exercise_data["chord_type_name"]
-            if c_type not in self.CHORD_TYPES:
+            if c_type in ("N/A", "None", "", "Single"):
+                exercise_data["intervals"] = [0]
+                exercise_data["chord_type_name"] = "" # Normalize empty/NA to single notes
+            elif c_type not in self.CHORD_TYPES:
                 print(f"ChordTrainer: Unknown chord type '{c_type}', skipping")
                 return
-            exercise_data["intervals"] = self.CHORD_TYPES[c_type]
+            else:
+                exercise_data["intervals"] = self.CHORD_TYPES[c_type]
         
         # Validate progression steps
         if ex_type == "progression":
@@ -534,7 +547,12 @@ Start the lesson now by calling set_exercise and speaking."""
     
     def _request_next_exercise(self, context: str = ""):
         """Send performance data to the AI model and request the next exercise."""
+        if self._is_requesting_exercise:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: IGNORING _request_next_exercise because a request is already in flight")
+            return
+            
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Requesting NEXT exercise from AI...")
+        self._is_requesting_exercise = True
         # Build performance report from session stats
         stats_lines = []
         for chord, latencies in self._session_stats.items():
@@ -542,7 +560,7 @@ Start the lesson now by calling set_exercise and speaking."""
                 avg_lat = sum(latencies) / len(latencies)
                 stats_lines.append(f"- {chord}: {len(latencies)} attempts, avg {avg_lat:.0f}ms")
         
-        report = f"[System Note]: Student completed exercise #{self._lesson_progress}."
+        report = f"<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>Student completed exercise #{self._lesson_progress}."
         
         if self._current_step_data:
             last_name = self._current_step_data.get("exercise_name", "")
@@ -565,6 +583,7 @@ Start the lesson now by calling set_exercise and speaking."""
         report += "\n\nCRITICAL INSTRUCTION: Call set_exercise EXACTLY ONCE for the next step, or end_lesson if complete."
         report += " NEVER call set_exercise multiple times in the same response. Just give me one exercise and WAIT."
         report += " If the exercise type is the same as previous, provide a 1-3 word micro-affirmation ONLY every 3 to 5 reps to keep up energy. Otherwise, remain completely silent and just call set_exercise. Only speak longer sentences for a NEW exercise type or if the student struggled."
+        report += "</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
         
         # Set waiting flag so the incoming exercise is applied immediately instead of queued
         self._waiting_for_ai = True
@@ -659,7 +678,9 @@ Start the lesson now by calling set_exercise and speaking."""
             self._is_active = False
             self._is_waiting_to_begin = False
             self._waiting_for_ai = False
+            self._is_requesting_exercise = False
             self._is_paused_for_speech = False
+            self._require_key_release_before_eval = False
             self._metronome_timer.stop()
             self.activeChanged.emit(self._is_active)
             self.lessonStateChanged.emit()
@@ -677,7 +698,7 @@ Start the lesson now by calling set_exercise and speaking."""
 
     def get_resume_context(self) -> str:
         """Build a prompt for the AI to resume a lesson after reconnection."""
-        lines = ["[System Note]: RESUME LESSON after connection drop."]
+        lines = ["<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>RESUME LESSON after connection drop."]
         lines.append(f"Current exercise #{self._lesson_progress}: '{self._exercise_name}' (type={self._exercise_type})")
         
         if self._current_step_data:
@@ -693,9 +714,11 @@ Start the lesson now by calling set_exercise and speaking."""
             lines.append("Recent performance:\n" + "\n".join(stats_lines))
         
         lines.append("\nCall set_exercise immediately for the next step. You may provide a 1-3 word micro-affirmation (e.g. 'Good', 'Again'), but do NOT give long explanations.")
+        lines.append("</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>")
         return "\n".join(lines)
 
     def _next_chord(self):
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: _next_chord called")
         if self._is_lesson_mode:
             # In single-model mode: apply queued exercise if one arrived while we were busy,
             # otherwise send performance data and wait for the model's next tool call.
@@ -703,6 +726,7 @@ Start the lesson now by calling set_exercise and speaking."""
             if self._pending_exercise:
                 exercise = self._pending_exercise
                 self._pending_exercise = None
+                self._is_requesting_exercise = False # Clear lock if we had a pending exercise ready
                 print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
                 self._apply_exercise(exercise)
             else:
@@ -721,6 +745,11 @@ Start the lesson now by calling set_exercise and speaking."""
         if self._is_lesson_mode:
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Pausing for speech (isPausedForSpeech=True) for {self._exercise_name}")
             self._is_paused_for_speech = True
+            
+            # If the user is currently holding keys, force them to release before evaluating this new step
+            if len(self._active_pitches) > 0:
+                print("ChordTrainer: Setting key release lock because keys are still held from previous step")
+                self._require_key_release_before_eval = True
         
         if exercise_type == "pentascale":
             self._setup_pentascale_target(chord_data)
@@ -736,7 +765,11 @@ Start the lesson now by calling set_exercise and speaking."""
             # Original chord behavior
             root_idx = chord_data.get("root_idx", 0)
             chord_type_name = chord_data.get("chord_type_name", "Major")
-            intervals = chord_data.get("intervals", self.CHORD_TYPES.get("Major", [0, 4, 7]))
+            if chord_type_name in ("N/A", "None", "Single", ""):
+                intervals = chord_data.get("intervals", [0])
+                chord_type_name = ""
+            else:
+                intervals = chord_data.get("intervals", self.CHORD_TYPES.get("Major", [0, 4, 7]))
             octave = chord_data.get("octave", 4)
             preview = chord_data.get("preview_chord", False)
             self._setup_target(root_idx, chord_type_name, intervals, octave, preview_chord=preview)
@@ -864,8 +897,24 @@ Start the lesson now by calling set_exercise and speaking."""
     def _setup_listen_target(self, chord_data):
         """Sets up an ear training exercise: plays a chord, user identifies it."""
         root_idx = int(chord_data.get("root_idx", 0))
-        chord_type_name = str(chord_data.get("chord_type_name", "Major"))
-        target_quality = str(chord_data.get("target_quality", chord_type_name))
+        
+        target_quality = str(chord_data.get("target_quality", "")).strip()
+        chord_type_name = str(chord_data.get("chord_type_name", "")).strip()
+        
+        # Reconcile missing parameters if the AI was sloppy
+        if target_quality and not chord_type_name:
+            chord_type_name = target_quality
+        elif chord_type_name and not target_quality:
+            target_quality = chord_type_name
+        elif not target_quality and not chord_type_name:
+            chord_type_name = "Major"
+            target_quality = "Major"
+            
+        # Ensure proper casing since dictionary CHORD_TYPES expects Title Case (e.g. 'minor' -> 'Minor')
+        if chord_type_name:
+            chord_type_name = chord_type_name[0].upper() + chord_type_name[1:]
+        if target_quality:
+            target_quality = target_quality[0].upper() + target_quality[1:]
         
         intervals = self.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
         octave = int(chord_data.get("octave", 4))
@@ -888,7 +937,7 @@ Start the lesson now by calling set_exercise and speaking."""
         octave = int(chord_data.get("octave", 4))
         
         self._current_hand = "both"
-        self._setup_target(root_idx, chord_type_name, intervals, octave)
+        self._setup_target(root_idx, chord_type_name, intervals, octave, suppress_signal=True)
         
         # Override formula and type for hands together UI differences
         self._target_chord_type = "Hands Together"
@@ -922,6 +971,10 @@ Start the lesson now by calling set_exercise and speaking."""
     @Slot(bool)
     def handle_pedal_event(self, is_down: bool):
         """Called by AppState when a CC64 sustain pedal event occurs."""
+        self._is_pedal_down = is_down
+        if is_down:
+            self._pedal_down_time = time.time() * 1000.0
+            
         if not self._is_active or self._is_lesson_complete:
             return
             
@@ -929,7 +982,7 @@ Start the lesson now by calling set_exercise and speaking."""
             if self._pedal_type == "direct":
                 # Pedal should be pressed around the same time as the chord
                 if is_down and self._is_holding:
-                    pedal_timing = (time.time() * 1000.0) - self._hold_start_time
+                    pedal_timing = self._pedal_down_time - self._hold_start_time
                     if pedal_timing <= 400: # generous 400ms window
                         self._pedal_satisfied = True
                         self._check_input()
@@ -957,7 +1010,7 @@ Start the lesson now by calling set_exercise and speaking."""
     @Slot(str)
     def handle_ear_training_answer(self, quality: str):
         """Validates a user's ear training selection."""
-        if self._exercise_type != "listen":
+        if self._exercise_type != "listen" or self._waiting_for_ai or self._is_paused_for_speech:
             return
             
         is_correct = (quality.lower() == self._target_formula_text.lower())
@@ -966,11 +1019,12 @@ Start the lesson now by calling set_exercise and speaking."""
             self._complete_chord()
         else:
             print(f"ChordTrainer: Ear Training WRONG. User picked {quality}, expected {self._target_formula_text}")
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordFailed (wrong answer)")
             self.chordFailed.emit()
             # Optionally replay the sound as feedback
             self.replay_preview()
 
-    def _setup_target(self, root_idx, chord_type_name, intervals, octave, preview_chord=False):
+    def _setup_target(self, root_idx, chord_type_name, intervals, octave, preview_chord=False, suppress_signal=False):
         self._hold_progress = 0.0
         self._is_holding = False
         self._waiting_for_release = False
@@ -985,7 +1039,7 @@ Start the lesson now by calling set_exercise and speaking."""
             octave = max(2, min(3, octave))
         base_pitch = (octave + 1) * 12 + root_idx
         
-        self._target_chord_name = f"{root_name} {chord_type_name}"
+        self._target_chord_name = f"{root_name} {chord_type_name}".strip()
         self._target_chord_type = chord_type_name
         
         # Calculate the text formula (e.g. "Root + 4 + 3")
@@ -1017,7 +1071,10 @@ Start the lesson now by calling set_exercise and speaking."""
         self._first_note_time = 0.0
         self._is_simultaneous = False
         
-        self.targetChordChanged.emit(self._target_chord_name)
+        if not suppress_signal:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
+            self.targetChordChanged.emit(self._target_chord_name)
+        
         print(f"ChordTrainer: Next target is {self._target_chord_name} (intervals: {self._target_intervals}, pitches: {self._target_pitches}, hold={self._required_hold_ms}ms)")
         
         # If preview requested, emit signal for MIDI output
@@ -1031,9 +1088,19 @@ Start the lesson now by calling set_exercise and speaking."""
                 self._play_midi_preview(self._target_pitches)
 
         if not self._is_paused_for_speech:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
             self.inputReady.emit()
             # Evaluate immediately in case keys are already appropriately held
             self._check_input()
+
+    @Slot()
+    def pause_for_speech(self):
+        """Called immediately when AI audio playback starts to instantly blur UI."""
+        if self._is_lesson_mode and (self._waiting_for_ai or self._is_active):
+            if not self._is_paused_for_speech:
+                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: AI Audio started, pausing for speech (isPausedForSpeech=True)")
+                self._is_paused_for_speech = True
+                self.lessonStateChanged.emit()
 
     @Slot()
     def resume_lesson(self):
@@ -1043,10 +1110,15 @@ Start the lesson now by calling set_exercise and speaking."""
         if self._is_paused_for_speech:
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Unpausing speech (isPausedForSpeech=False)")
             self._is_paused_for_speech = False
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged")
             self.lessonStateChanged.emit()
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Input unlocked.")
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
             self.inputReady.emit()
-            self._check_input() # Evaluate immediately now that speech is done
+            if not self._require_key_release_before_eval:
+                self._check_input() # Evaluate immediately now that speech is done
+            else:
+                print("ChordTrainer: Skipping immediate evaluation because key release lock is active.")
         # Play deferred listen preview now that the coach is done talking
         if self._listen_preview_pending:
             self._listen_preview_pending = False
@@ -1131,8 +1203,10 @@ Start the lesson now by calling set_exercise and speaking."""
         self._first_note_time = 0.0
         self._is_simultaneous = False
         
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
         self.targetChordChanged.emit(self._target_chord_name)
         print(f"ChordTrainer: Progression chord {self._progression_index + 1}/{len(self._progression_steps)}: {self._target_chord_name}")
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
         self.inputReady.emit()
         self._check_input()
 
@@ -1168,6 +1242,16 @@ Start the lesson now by calling set_exercise and speaking."""
                 elif self._target_intervals:
                     if (pitch % 12) not in self._target_intervals:
                         self._wrong_notes_count += 1
+
+        # Check key release lock
+        if self._require_key_release_before_eval:
+            if len(self._active_pitches) == 0:
+                print("ChordTrainer: Key release lock disengaged. User lifted hands.")
+                self._require_key_release_before_eval = False
+                self._wrong_notes_count = 0
+                self._first_note_time = 0.0
+            else:
+                return # Block evaluation while lock is active
 
         # We must never evaluate input or advance sequences while the AI coach is talking
         if self._is_paused_for_speech:
@@ -1254,7 +1338,8 @@ Start the lesson now by calling set_exercise and speaking."""
                 next_pitch = self._pentascale_sequence[self._pentascale_index]
                 self._target_intervals = {next_pitch % 12}
                 self._prompt_time = time.time()  # Reset timing for next note
-                self.targetChordChanged.emit(self._target_chord_name)
+                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
+        self.targetChordChanged.emit(self._target_chord_name)
 
     def _check_chord(self):
         if not self._target_intervals:
@@ -1284,13 +1369,19 @@ Start the lesson now by calling set_exercise and speaking."""
                     delta = self._hold_start_time - self._first_note_time
                     self._is_simultaneous = (delta < 150) # 150ms is a generous 'block chord' threshold
                 
-                if self._required_hold_ms > 0:
-                    if self._exercise_type == "sustain_pedal" and not self._pedal_satisfied:
+                if self._exercise_type == "sustain_pedal" and not self._pedal_satisfied:
+                    # Check if they pressed the pedal slightly *before* the keys (direct pedal only)
+                    if self._pedal_type == "direct" and self._is_pedal_down:
+                        pedal_timing = self._hold_start_time - self._pedal_down_time
+                        if pedal_timing <= 400: # up to 400ms early
+                            self._pedal_satisfied = True
+                    
+                    if not self._pedal_satisfied:
                         return # Wait for the pedal to be engaged
+                        
+                if self._required_hold_ms > 0:
                     self._hold_tick_timer.start()
                 else:
-                    if self._exercise_type == "sustain_pedal" and not self._pedal_satisfied:
-                        return # Wait for the pedal to be engaged
                     self._complete_chord()
             else:
                 # We are already holding. Re-evaluate if pedal satisfaction unlocked progression
@@ -1320,6 +1411,7 @@ Start the lesson now by calling set_exercise and speaking."""
         if not self._is_holding and self._target_intervals:
             active_intervals = {pitch % 12 for pitch in self._active_pitches}
             if len(active_intervals) == len(self._target_intervals) and active_intervals != self._target_intervals:
+                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordFailed (wrong notes)")
                 self.chordFailed.emit()
                 latency_ms = (time.time() - self._prompt_time) * 1000.0
                 self.db.record_chord_attempt(self._target_chord_name, False, latency_ms, 
@@ -1336,6 +1428,7 @@ Start the lesson now by calling set_exercise and speaking."""
                 self._is_holding = False
                 self._hold_progress = 0.0
                 self._hold_tick_timer.stop()
+                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged")
                 self.lessonStateChanged.emit() # update progress bar to 0
 
     def _on_hold_tick(self):
@@ -1352,7 +1445,7 @@ Start the lesson now by calling set_exercise and speaking."""
             self._complete_chord()
         else:
             self._hold_progress = elapsed / self._required_hold_ms
-            
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged (progress bar)")
         self.lessonStateChanged.emit() # update progress bar
 
     def _complete_chord(self):
@@ -1393,29 +1486,18 @@ Start the lesson now by calling set_exercise and speaking."""
         if is_struggle:
             self._consecutive_successes = 0
             self._consecutive_struggles += 1
-            if self._consecutive_struggles >= 2 and self._is_lesson_mode:
-                self.speakBrief.emit(
-                    f"[Brief]: Student has struggled {self._consecutive_struggles} times in a row "
-                    f"(last: {self._target_chord_name}, {latency_ms:.0f}ms, {self._wrong_notes_count} wrong notes). "
-                    "Give a 1-sentence encouraging tip. Do NOT call set_exercise or end_lesson. Do NOT pause the lesson."
-                )
-                self._consecutive_struggles = 0
         else:
             self._consecutive_struggles = 0
             self._consecutive_successes += 1
-            if self._consecutive_successes >= 3 and self._is_lesson_mode:
-                self.speakBrief.emit(
-                    f"[Brief]: Student nailed {self._consecutive_successes} exercises in a row! "
-                    "Give a quick 3-5 word encouragement. Do NOT call set_exercise or end_lesson. Do NOT pause the lesson."
-                )
-                self._consecutive_successes = 0
         
         # Notify UI
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordSuccess ({self._target_chord_name}, {latency_ms:.1f}ms)")
         self.chordSuccess.emit(self._target_chord_name, latency_ms)
         
         # Reset hold state
         self._hold_progress = 0.0
         self._is_holding = False
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged")
         self.lessonStateChanged.emit()
         
         # Pause briefly before advancing if in lesson mode to avoid double-triggers
@@ -1429,6 +1511,7 @@ Start the lesson now by calling set_exercise and speaking."""
                 # More chords in this progression — wait for release then advance
                 print(f"ChordTrainer: Waiting for release before next progression chord...")
                 self._waiting_for_release = True
+                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
                 self.targetChordChanged.emit(self._target_chord_name)
                 return
             # else: progression complete, fall through to _next_chord

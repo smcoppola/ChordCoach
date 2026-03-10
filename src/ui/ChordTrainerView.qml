@@ -94,6 +94,9 @@ Rectangle {
     Connections {
         target: (typeof appState !== "undefined" && appState !== null) ? appState : null
         function onAiTranscriptReceived(textMsg) {
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML AI Transcript received: " + textMsg.substring(0, 50) + (textMsg.length > 50 ? "..." : ""));
             root.transcriptText = textMsg;
         }
     }
@@ -102,6 +105,9 @@ Rectangle {
         target: (typeof appState !== "undefined" && appState !== null) ? appState.chordTrainer : null
         
         function onChordFailed() {
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML Visual failFlash triggered");
             failFlash.start();
         }
         
@@ -119,6 +125,9 @@ Rectangle {
                 latencyText.text = Math.round(latencyMs / 1000.0 * 10) / 10 + "s";
                 latencyText.color = "#FF9800";
             }
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML Visual successFlash and latency text triggered");
             latencyAnim.restart();
         }
         
@@ -445,6 +454,11 @@ Rectangle {
             Layout.fillHeight: true
             color: "transparent"
             visible: !root.isActive && root.isLoading
+            onVisibleChanged: {
+                var d = new Date();
+                var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+                console.log("[TIMING " + timeStr + "] QML LoadingAnimation Overlay visible: " + visible);
+            }
             
             ColumnLayout {
                 anchors.centerIn: parent
@@ -527,66 +541,19 @@ Rectangle {
             }
         }
         
-        // Phase Complete screen overlay (Visible between exercises while AI speaks)
-        Rectangle {
-            anchors.fill: sheetMusicPane
-            z: 100
-            color: Qt.rgba(0.11, 0.11, 0.12, 0.85) // Dark translucent background for "blur" effect
-            border.color: "#00BCD4"
-            border.width: 1
-            radius: 12
-            visible: root.isActive && root.isPausedForSpeech && !root.isLessonComplete
-            
-            // Subtle glow effect
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: -1
-                radius: 12
-                color: "transparent"
-                border.color: "#00BCD4"
-                border.width: 2
-                opacity: 0.3
-            }
-            
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 20
-                
-                Text {
-                    text: root.lessonProgress <= 1 ? "GET READY" : "GREAT JOB!"
-                    font.pixelSize: 42 * mainWindow.uiScale
-                    font.bold: true
-                    font.letterSpacing: 2 * mainWindow.uiScale
-                    color: "#ffffff"
-                    Layout.alignment: Qt.AlignHCenter
-                    
-                    SequentialAnimation on scale {
-                        loops: Animation.Infinite
-                        running: root.isActive && root.isPausedForSpeech && root.lessonProgress > 1
-                        NumberAnimation { from: 1.0; to: 1.05; duration: 800; easing.type: Easing.InOutQuad }
-                        NumberAnimation { from: 1.05; to: 1.0; duration: 800; easing.type: Easing.InOutQuad }
-                    }
-                }
-                
-                Text {
-                    text: root.lessonProgress <= 1 ? "Listen to your coach's instructions." : "Preparing next exercise..."
-                    font.pixelSize: 18 * mainWindow.uiScale
-                    color: "#aaaaaa"
-                    Layout.alignment: Qt.AlignHCenter
-                }
-            }
-        }
-        
-        // Target display area - Enhanced Sheet Music
-        Components.EnhancedSheetMusic {
-            id: sheetMusicPane
-            targetChordName: root.currentTarget
+        // Target display area - Container for Sheet Music and Overlays
+        Item {
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
             Layout.maximumWidth: 1000 * mainWindow.uiScale
             Layout.fillHeight: true
             Layout.minimumHeight: 450 * mainWindow.uiScale
             visible: root.isActive && !root.isLessonComplete && root.exerciseType !== "listen"
+
+            Components.EnhancedSheetMusic {
+                id: sheetMusicPane
+                anchors.fill: parent
+                targetChordName: root.currentTarget
             
             Text {
                 id: latencyText
@@ -607,6 +574,64 @@ Rectangle {
                     NumberAnimation { to: 0.0; duration: 500 }
                 }
             }
+            
+            // Phase Complete screen overlay (Visible between exercises while AI speaks)
+            Rectangle {
+                id: phaseCompleteOverlay
+                anchors.fill: parent
+                z: 100
+                color: Qt.rgba(0.11, 0.11, 0.12, 0.85) // Dark translucent background for "blur" effect
+                border.color: "#00BCD4"
+                border.width: 1
+                radius: 12
+                visible: root.isPausedForSpeech
+                onVisibleChanged: {
+                    var d = new Date();
+                    var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+                    console.log("[TIMING " + timeStr + "] QML PhaseComplete Overlay visible: " + visible);
+                }
+                
+                // Subtle glow effect
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -1
+                    radius: 12
+                    color: "transparent"
+                    border.color: "#00BCD4"
+                    border.width: 2
+                    opacity: 0.3
+                }
+                
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 20 * mainWindow.uiScale
+                    
+                    Row {
+                        Layout.alignment: Qt.AlignHCenter
+                        spacing: 12 * mainWindow.uiScale
+                        
+                        Repeater {
+                            model: 3
+                            Rectangle {
+                                width: 12 * mainWindow.uiScale
+                                height: 12 * mainWindow.uiScale
+                                radius: 6 * mainWindow.uiScale
+                                color: "#00BCD4"
+                                
+                                SequentialAnimation on opacity {
+                                    loops: Animation.Infinite
+                                    running: phaseCompleteOverlay.visible
+                                    PauseAnimation { duration: modelData * 200 }
+                                    NumberAnimation { from: 0.2; to: 1.0; duration: 400; easing.type: Easing.InOutSine }
+                                    NumberAnimation { from: 1.0; to: 0.2; duration: 400; easing.type: Easing.InOutSine }
+                                    PauseAnimation { duration: (3 - modelData) * 200 }
+                                }
+                            }
+                        }
+                    }
+                }
+            } // End of Phase Complete overlay
+        } // End of Target display area container
         }
         
         // Ear Training Quiz View
@@ -622,6 +647,11 @@ Rectangle {
             border.color: "#9C27B0" // Purple for ear training
             border.width: 1
             visible: root.isActive && !root.isLessonComplete && !root.isPausedForSpeech && root.exerciseType === "listen"
+            onVisibleChanged: {
+                var d = new Date();
+                var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+                console.log("[TIMING " + timeStr + "] QML EarTraining Overlay visible: " + visible);
+            }
             
             ColumnLayout {
                 anchors.centerIn: parent
@@ -695,6 +725,8 @@ Rectangle {
         Item { Layout.fillHeight: true } // Spacer
     }
 
+
+
     // Count-in Overlay (Metronome Lead-in) moved here to float over layout
     Rectangle {
         anchors.centerIn: parent
@@ -703,6 +735,11 @@ Rectangle {
         color: "transparent"
         visible: root.isActive && !root.isLessonComplete && root.exerciseType === "pentascale" && root.pentascaleBeatCount < 0
         z: 100 // Float above other content
+        onVisibleChanged: {
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML CountIn Overlay visible: " + visible);
+        }
         
         Text {
             id: countInText
@@ -732,6 +769,11 @@ Rectangle {
         color: "#CC111111"
         visible: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
         z: 200
+        onVisibleChanged: {
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML Reconnecting Overlay visible: " + visible);
+        }
 
         ColumnLayout {
             anchors.centerIn: parent

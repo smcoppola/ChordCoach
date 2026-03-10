@@ -204,7 +204,8 @@ class MidiHardwareService(QObject):
             self._midi_out_verified = False
             
             # Send Universal Non-Realtime Identity Request: F0 7E 7F 06 01 F7
-            self._ll_midi_out.send_message([0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7])
+            if self._ll_midi_out:
+                self._ll_midi_out.send_message([0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7])
             print("MidiHardwareService: SysEx Identity Request sent, waiting for reply...")
             
             # Start timeout — if no reply in 500ms, device doesn't support MIDI input
@@ -273,8 +274,23 @@ class MidiHardwareService(QObject):
 
     # --- Audio / Tone Generation ---
     
+    def _safe_bulk_send(self, messages: list[list[int]]):
+        """
+        Sends a batch of MIDI messages with a tiny 2ms microscopic delay between each.
+        This prevents USB-MIDI buffer overruns on budget hardware (like Donner keyboards)
+        which can crash the hardware synth and freeze the macOS CoreMIDI driver, 
+        hanging the entire application main thread.
+        """
+        import time
+        if not self._ll_midi_out: return
+        for msg in messages:
+            self._ll_midi_out.send_message(msg)
+            time.sleep(0.002) # 2ms sleep is sub-perceptual but life-saving for budget USB controllers
+    
     def play_startup_riff(self):
         """Plays a cheerful C Maj9 arpeggio via LowLevel MIDI with natural sustain."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing startup riff")
         if not self._ll_midi_out: return
         
         # Sustain ON to allow notes to ring out
@@ -285,29 +301,35 @@ class MidiHardwareService(QObject):
              QTimer.singleShot(i * 70, lambda note=n: self._ll_midi_out.send_message([0x90, note, 80]) if self._ll_midi_out else None)
         
         off_time = len(notes) * 70 + 200
-        QTimer.singleShot(off_time, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in notes] if self._ll_midi_out else None)
+        QTimer.singleShot(off_time, lambda: self._safe_bulk_send([[0x80, n, 0] for n in notes]))
         QTimer.singleShot(off_time + 2500, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
 
     def play_happy_tone(self):
         """Rising 2-note interval (C5→G5) for AI connected."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing happy connected tone")
         if not self._ll_midi_out: return
         self._ll_midi_out.send_message([0xB0, 64, 127]) # Sustain ON
         self._ll_midi_out.send_message([0x90, 72, 90])   # C5
         QTimer.singleShot(120, lambda: self._ll_midi_out.send_message([0x90, 79, 90]) if self._ll_midi_out else None)  # G5
-        QTimer.singleShot(600, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in [72, 79]] if self._ll_midi_out else None)
+        QTimer.singleShot(600, lambda: self._safe_bulk_send([[0x80, n, 0] for n in [72, 79]]))
         QTimer.singleShot(2000, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
 
     def play_sad_tone(self):
         """Falling 2-note interval (E♭5→C5) for AI disconnected."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing sad disconnected tone")
         if not self._ll_midi_out: return
         self._ll_midi_out.send_message([0xB0, 64, 127]) 
         self._ll_midi_out.send_message([0x90, 75, 70])   
         QTimer.singleShot(200, lambda: self._ll_midi_out.send_message([0x90, 72, 70]) if self._ll_midi_out else None)
-        QTimer.singleShot(800, lambda: [self._ll_midi_out.send_message([0x80, n, 0]) for n in [75, 72]] if self._ll_midi_out else None)
+        QTimer.singleShot(800, lambda: self._safe_bulk_send([[0x80, n, 0] for n in [75, 72]]))
         QTimer.singleShot(2500, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
 
     def play_reconnect_ping(self):
         """Soft single note ping used while reconnecting to AI."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing reconnect ping")
         if not self._ll_midi_out: return
         self._ll_midi_out.send_message([0x90, 72, 40])
         QTimer.singleShot(200, lambda: self._ll_midi_out.send_message([0x80, 72, 0]) if self._ll_midi_out else None)
@@ -315,6 +337,8 @@ class MidiHardwareService(QObject):
     @Slot(int)
     def play_metronome_tick(self, beat_num: int):
         """Play a MIDI click for the 4-beat count-in. Beat 1 is accented. Requires General MIDI percussion channel 10."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing metronome tick (beat {beat_num})")
         if not self._ll_midi_out: return
         if not hasattr(self._ll_midi_out, '_port_open') or not getattr(self._ll_midi_out, '_port_open', False):
             return
@@ -329,12 +353,13 @@ class MidiHardwareService(QObject):
     @Slot(list)
     def play_chord_preview(self, pitches: list):
         """Play a list of MIDI pitches through the hardware for feedback or preview."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing chord preview (pitches {pitches})")
         if not self._ll_midi_out: return
         
         status = 0x90 
         velocity = 80
         
-        for pitch in pitches:
-            self._ll_midi_out.send_message([status, pitch, velocity])
+        self._safe_bulk_send([[status, pitch, velocity] for pitch in pitches])
             
-        QTimer.singleShot(1500, lambda: [self._ll_midi_out.send_message([0x80, p, 0]) for p in pitches] if self._ll_midi_out else None)
+        QTimer.singleShot(1500, lambda: self._safe_bulk_send([[0x80, p, 0] for p in pitches]))
