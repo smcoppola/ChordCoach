@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from PySide6.QtCore import QObject, Property, Slot, Signal # type: ignore
 from typing import TYPE_CHECKING
@@ -12,6 +13,7 @@ class SettingsService(QObject):
     statsChanged = Signal()
     coachSettingsChanged = Signal()
     invertPedalChanged = Signal()
+    midiOutChanged = Signal()
 
     def __init__(self, db_manager, project_root):
         super().__init__()
@@ -97,6 +99,19 @@ class SettingsService(QObject):
     def coachPersonality(self, val: str):
         self._set_env("COACH_PERSONALITY", val)
         self.coachSettingsChanged.emit()
+
+    # ── MIDI Output ───────────────────────────────────────────────────
+
+    @Property(bool, notify=midiOutChanged)
+    def midiOutEnabled(self) -> bool:
+        # Default to disabled on macOS (budget USB-MIDI keyboards buzz)
+        default = "false" if sys.platform == "darwin" else "true"
+        return self._get_env("MIDI_OUT_ENABLED", default).lower() in ("true", "1", "yes")
+
+    @midiOutEnabled.setter  # type: ignore
+    def midiOutEnabled(self, val: bool):
+        self._set_env("MIDI_OUT_ENABLED", "true" if val else "false")
+        self.midiOutChanged.emit()
 
     # ── Skill Matrix & Stats ──────────────────────────────────────────
 

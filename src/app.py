@@ -73,7 +73,7 @@ class AppState(QObject):
         except Exception as e:
             print(f"AppState: Pathing error for rtmidi: {e}")
             
-        self.hw_service = MidiHardwareService(chordcoach_hw, ll_lib_file)
+        self.hw_service = MidiHardwareService(chordcoach_hw, ll_lib_file, midi_out_enabled=self.settings.midiOutEnabled)
         self.coordinator = AppCoordinator(
             self._gemini, 
             self.evaluation_engine, 

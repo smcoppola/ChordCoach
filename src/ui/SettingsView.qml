@@ -150,8 +150,54 @@ Rectangle {
             }
         }
 
-        // Hardware Settings Section Removed
+        // Hardware Settings Section
+        GroupBox {
+            title: "Hardware"
+            Layout.fillWidth: true
 
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 15 * mainWindow.uiScale
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 15 * mainWindow.uiScale
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "MIDI Output"
+                            color: "#cccccc"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            font.bold: true
+                        }
+                        Text {
+                            text: "Send sounds (riff, metronome, previews) back to the keyboard. Disable if your keyboard buzzes."
+                            color: "#888888"
+                            font.pixelSize: 11 * mainWindow.uiScale
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    Switch {
+                        id: midiOutSwitch
+                        checked: (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.midiOutEnabled : false
+                        onToggled: {
+                            if (typeof appState !== "undefined" && appState !== null && appState.settingsService)
+                                appState.settingsService.midiOutEnabled = checked;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Changes take effect on next app restart."
+                    color: "#666666"
+                    font.pixelSize: 11 * mainWindow.uiScale
+                    font.italic: true
+                }
+            }
+        }
 
         // Skill Matrix Section
         GroupBox {

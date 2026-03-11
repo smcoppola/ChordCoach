@@ -420,6 +420,9 @@ Start the lesson now by calling set_exercise and speaking.
 </SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
         
         self.requestLessonStart.emit(prompt)
+        
+        # Safety timeout: if AI doesn't send set_exercise within 15s, recover
+        QTimer.singleShot(15000, self._lesson_loading_timeout)
 
     @Slot(dict)
     def receive_exercise(self, exercise_data: dict):
@@ -501,6 +504,17 @@ Start the lesson now by calling set_exercise and speaking.
         
         # Otherwise apply immediately
         self._apply_exercise(exercise_data)
+
+    def _lesson_loading_timeout(self):
+        """Safety valve: if the AI hasn't sent set_exercise within 15 seconds, recover."""
+        if self._is_loading:
+            print("ChordTrainer: Lesson loading timeout — AI did not send exercise in 15s")
+            self._is_loading = False
+            self._is_requesting_exercise = False
+            self._loading_status_text = ""
+            self.loadingStatusChanged.emit()
+            self.lessonStateChanged.emit()
+            self.apiConnectivityChanged.emit(False)
     
     def _apply_exercise(self, exercise_data: dict):
         """Apply a validated exercise: update progress, blocks, and set up the target."""
@@ -1547,9 +1561,8 @@ Start the lesson now by calling set_exercise and speaking.
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged")
         self.lessonStateChanged.emit()
         
-        # Pause briefly before advancing if in lesson mode to avoid double-triggers
-        if self._is_lesson_mode:
-            time.sleep(0.1)
+        # Short pause before advancing to avoid double-triggers (non-blocking)
+        # The _waiting_for_release pattern below handles the actual gating
         
         # Handle progression sub-step advancement
         if self._exercise_type == "progression":

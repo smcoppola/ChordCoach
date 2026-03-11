@@ -63,7 +63,7 @@ class MidiHardwareService(QObject):
     connectionStatusChanged = Signal(bool)
     _probeSucceeded = Signal()
 
-    def __init__(self, chordcoach_hw, ll_lib_path):
+    def __init__(self, chordcoach_hw, ll_lib_path, midi_out_enabled=True):
         super().__init__()
         self.hw_module = chordcoach_hw
         self._ll_midi_out = None
@@ -71,6 +71,7 @@ class MidiHardwareService(QObject):
         self._is_sustain_pedal_down = False
         self.is_connected = False
         self.device_name = "Not Connected"
+        self._midi_out_enabled = midi_out_enabled
         
         self._ll_lib_path = ll_lib_path
         self._ll_midi_out = None
@@ -150,9 +151,11 @@ class MidiHardwareService(QObject):
             print(f"MidiHardwareService: MIDI Input Hardware initialized: {ports[0]}")
             
             # Now we can safely initialize LowLevelMidiOutput without breaking hotplug
-            if not self._ll_midi_out and self._ll_lib_path and self._ll_lib_path.exists():
+            if self._midi_out_enabled and not self._ll_midi_out and self._ll_lib_path and self._ll_lib_path.exists():
                 print(f"MidiHardwareService: Initializing LowLevelMidiOutput with {self._ll_lib_path}")
                 self._ll_midi_out = LowLevelMidiOutput(self._ll_lib_path)
+            elif not self._midi_out_enabled:
+                print("MidiHardwareService: MIDI output DISABLED by user setting (Settings → Hardware)")
             
             # Match Output Port to Input Port if possible
             if self._ll_midi_out:
@@ -303,6 +306,8 @@ class MidiHardwareService(QObject):
         off_time = len(notes) * 70 + 200
         QTimer.singleShot(off_time, lambda: self._safe_bulk_send([[0x80, n, 0] for n in notes]))
         QTimer.singleShot(off_time + 2500, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
+        # Clean slate: reset controller state so budget keyboards don't get stuck
+        QTimer.singleShot(off_time + 2600, self._send_controller_reset)
 
     def play_happy_tone(self):
         """Rising 2-note interval (C5→G5) for AI connected."""
@@ -314,6 +319,7 @@ class MidiHardwareService(QObject):
         QTimer.singleShot(120, lambda: self._ll_midi_out.send_message([0x90, 79, 90]) if self._ll_midi_out else None)  # G5
         QTimer.singleShot(600, lambda: self._safe_bulk_send([[0x80, n, 0] for n in [72, 79]]))
         QTimer.singleShot(2000, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
+        QTimer.singleShot(2100, self._send_controller_reset)
 
     def play_sad_tone(self):
         """Falling 2-note interval (E♭5→C5) for AI disconnected."""
@@ -325,6 +331,15 @@ class MidiHardwareService(QObject):
         QTimer.singleShot(200, lambda: self._ll_midi_out.send_message([0x90, 72, 70]) if self._ll_midi_out else None)
         QTimer.singleShot(800, lambda: self._safe_bulk_send([[0x80, n, 0] for n in [75, 72]]))
         QTimer.singleShot(2500, lambda: self._ll_midi_out.send_message([0xB0, 64, 0]) if self._ll_midi_out else None)
+        QTimer.singleShot(2600, self._send_controller_reset)
+
+    def _send_controller_reset(self):
+        """Send All Notes Off + Reset All Controllers to prevent stuck synth state."""
+        if not self._ll_midi_out:
+            return
+        self._ll_midi_out.send_message([0xB0, 123, 0])  # All Notes Off
+        self._ll_midi_out.send_message([0xB0, 121, 0])  # Reset All Controllers
+        print("MidiHardwareService: Sent controller reset (CC 123 + CC 121)")
 
     def play_reconnect_ping(self):
         """Soft single note ping used while reconnecting to AI."""

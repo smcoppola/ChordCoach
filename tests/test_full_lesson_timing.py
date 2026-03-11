@@ -162,6 +162,9 @@ class MockHardwareService(QObject):
     def initialize(self): pass
     def play_metronome_tick(self, *a, **kw): pass
     def play_chord_preview(self, *a, **kw): pass
+    def play_happy_tone(self): pass
+    def play_sad_tone(self): pass
+    def play_reconnect_ping(self): pass
 
 class MockEvaluationService(QObject):
     evaluationFinished = Signal()
