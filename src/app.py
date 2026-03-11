@@ -119,16 +119,10 @@ class AppState(QObject):
         print(f"AppState: AI text received, emitting to UI: {preview}...")
         self.aiTranscriptReceived.emit(text)
 
-    # --- QML Exposed Engine Triggers ---
-    
-    @Slot()
-    def startEvaluationWithIntro(self):
-        self.coordinator.startEvaluationWithIntro()
-
-    @Slot()
-    def startArchTutorialWithIntro(self):
-        self.coordinator.startArchTutorialWithIntro()
-
+    # Expose the Coordinator explicitly to QML
+    @Property(QObject, constant=True)
+    def appCoordinator(self):
+        return self.coordinator
     # Expose the GeminiService explicitly to QML
     @Property(QObject, constant=True)
     def gemini(self):

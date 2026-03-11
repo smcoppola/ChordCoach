@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import Qt5Compat.GraphicalEffects
 import "./components" as Components
 
 Rectangle {
@@ -181,9 +182,11 @@ Rectangle {
     }
 
     ColumnLayout {
+        id: lessonContent
         anchors.fill: parent
         anchors.margins: 40 * mainWindow.uiScale
         spacing: 30 * mainWindow.uiScale
+        layer.enabled: root.isPausedForSpeech
         
         // Header Text
         Text {
@@ -575,62 +578,7 @@ Rectangle {
                 }
             }
             
-            // Phase Complete screen overlay (Visible between exercises while AI speaks)
-            Rectangle {
-                id: phaseCompleteOverlay
-                anchors.fill: parent
-                z: 100
-                color: Qt.rgba(0.11, 0.11, 0.12, 0.85) // Dark translucent background for "blur" effect
-                border.color: "#00BCD4"
-                border.width: 1
-                radius: 12
-                visible: root.isPausedForSpeech
-                onVisibleChanged: {
-                    var d = new Date();
-                    var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
-                    console.log("[TIMING " + timeStr + "] QML PhaseComplete Overlay visible: " + visible);
-                }
-                
-                // Subtle glow effect
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.margins: -1
-                    radius: 12
-                    color: "transparent"
-                    border.color: "#00BCD4"
-                    border.width: 2
-                    opacity: 0.3
-                }
-                
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    spacing: 20 * mainWindow.uiScale
-                    
-                    Row {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: 12 * mainWindow.uiScale
-                        
-                        Repeater {
-                            model: 3
-                            Rectangle {
-                                width: 12 * mainWindow.uiScale
-                                height: 12 * mainWindow.uiScale
-                                radius: 6 * mainWindow.uiScale
-                                color: "#00BCD4"
-                                
-                                SequentialAnimation on opacity {
-                                    loops: Animation.Infinite
-                                    running: phaseCompleteOverlay.visible
-                                    PauseAnimation { duration: modelData * 200 }
-                                    NumberAnimation { from: 0.2; to: 1.0; duration: 400; easing.type: Easing.InOutSine }
-                                    NumberAnimation { from: 1.0; to: 0.2; duration: 400; easing.type: Easing.InOutSine }
-                                    PauseAnimation { duration: (3 - modelData) * 200 }
-                                }
-                            }
-                        }
-                    }
-                }
-            } // End of Phase Complete overlay
+            // (Phase Complete overlay moved to full-pane level)
         } // End of Target display area container
         }
         
@@ -723,6 +671,59 @@ Rectangle {
         }
         
         Item { Layout.fillHeight: true } // Spacer
+    }
+
+    // ── Full-pane blur when AI is speaking ──
+    FastBlur {
+        anchors.fill: lessonContent
+        source: lessonContent
+        radius: root.isPausedForSpeech ? (20 * mainWindow.uiScale) : 0
+        visible: radius > 0
+        z: 50
+        Behavior on radius { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    }
+
+    // Phase Complete overlay (floats over the entire blurred lesson pane)
+    Rectangle {
+        id: phaseCompleteOverlay
+        anchors.fill: parent
+        z: 100
+        color: Qt.rgba(0.11, 0.11, 0.12, 0.5)
+        visible: root.isPausedForSpeech
+        onVisibleChanged: {
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML PhaseComplete Overlay visible: " + visible);
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 20 * mainWindow.uiScale
+
+            Row {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 12 * mainWindow.uiScale
+
+                Repeater {
+                    model: 3
+                    Rectangle {
+                        width: 12 * mainWindow.uiScale
+                        height: 12 * mainWindow.uiScale
+                        radius: 6 * mainWindow.uiScale
+                        color: "#00BCD4"
+
+                        SequentialAnimation on opacity {
+                            loops: Animation.Infinite
+                            running: phaseCompleteOverlay.visible
+                            PauseAnimation { duration: modelData * 200 }
+                            NumberAnimation { from: 0.2; to: 1.0; duration: 400; easing.type: Easing.InOutSine }
+                            NumberAnimation { from: 1.0; to: 0.2; duration: 400; easing.type: Easing.InOutSine }
+                            PauseAnimation { duration: (3 - modelData) * 200 }
+                        }
+                    }
+                }
+            }
+        }
     }
 
 

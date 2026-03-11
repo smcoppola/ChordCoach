@@ -51,6 +51,7 @@ class AppCoordinator(QObject):
         self.chord_trainer.requestLessonStart.connect(self.gemini.send_prompt)
         self.chord_trainer.reportPerformance.connect(self.gemini.clear_exercise_pending)
         self.chord_trainer.reportPerformance.connect(self.gemini.send_prompt)
+        self.chord_trainer.exerciseRequestUnlocked.connect(self.gemini.clear_exercise_pending)
         self.chord_trainer.speakInstruction.connect(self.gemini.send_prompt)
         self.chord_trainer.speakBrief.connect(self.gemini.send_prompt)  # Non-blocking commentary (no pause)
         self.gemini.exerciseReceived.connect(self._on_exercise_received)
@@ -98,6 +99,7 @@ class AppCoordinator(QObject):
         """Guard: only forward tool-call exercises to the trainer if evaluation is NOT running."""
         if self.evaluation.isRunning or self._eval_intro_pending:
             print(f"Coordinator: Ignoring set_exercise during evaluation — {exercise_data.get('exercise_name', '?')}")
+            self.gemini.clear_exercise_pending()  # Prevent deadlock from rejected exercise
             return
         self.chord_trainer.receive_exercise(exercise_data)
 

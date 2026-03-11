@@ -7,6 +7,7 @@ repertoire, ear), spaced repetition scheduling, and per-session lesson planning.
 import json
 import time
 from pathlib import Path
+from datetime import datetime
 from PySide6.QtCore import QObject, Property, Signal, Slot  # type: ignore
 
 
@@ -63,7 +64,6 @@ class CurriculumService(QObject):
         - total_estimated_steps: rough step count for the session
         """
         active_milestones = self.db.get_active_milestones()
-        due_reviews = self.db.get_due_reviews(limit=5)
         recent_sessions = self.db.get_recent_sessions(limit=3)
 
         # Build blocks from active milestones (pick up to 3 tracks)
@@ -118,20 +118,10 @@ class CurriculumService(QObject):
                 "successes_so_far": 0,
             })
 
-        # Format review items
-        review_items = []
-        for r in due_reviews:
-            review_items.append({
-                "item_type": r["item_type"],
-                "item_id": r["item_id"],
-                "review_count": r.get("review_count", 0),
-            })
-
-        total_steps = sum(b["step_count"] for b in blocks) + len(review_items) * 3
+        total_steps = sum(b["step_count"] for b in blocks)
 
         self._session_plan = {
             "blocks": blocks,
-            "review_items": review_items,
             "total_estimated_steps": total_steps,
             "tracks": list(tracks_used) if tracks_used else ["technique"],
         }
@@ -176,14 +166,13 @@ class CurriculumService(QObject):
             for s in recent:
                 tracks = s.get("tracks_covered", "[]")
                 acc = f"{s['overall_accuracy']:.0%}" if s.get("overall_accuracy") else "N/A"
-                context += f"- {s['session_date'][:10]}: {tracks}, accuracy {acc}, {s['exercises_completed']} exercises\n"
-
-        # Add review queue
-        due = self.db.get_due_reviews(limit=5)
-        if due:
-            context += "\nItems Due for Review:\n"
-            for r in due:
-                context += f"- {r['item_type']}: {r['item_id']} (reviewed {r['review_count']}x)\n"
+                try:
+                    dt = datetime.fromisoformat(s['session_date'])
+                    date_str = dt.strftime('%B %d') # e.g. "March 10"
+                except ValueError:
+                    date_str = s['session_date'][:10]
+                    
+                context += f"- {date_str}: {tracks}, accuracy {acc}, {s['exercises_completed']} exercises\n"
 
         return context
 
@@ -194,7 +183,6 @@ class CurriculumService(QObject):
         """
         Called after each exercise completes. Updates:
         - Milestone attempt/success counts
-        - Spaced repetition schedule for the chord
         - Checks if milestone should advance
         """
         self._session_exercises += 1
@@ -230,10 +218,6 @@ class CurriculumService(QObject):
             print(f"CurriculumService: Emitting curriculumChanged signal!")
             self.curriculumChanged.emit()
 
-        # Schedule spaced repetition for this chord
-        if chord_name:
-            quality = 5 if success else 1  # Simple mapping for now
-            self.db.schedule_review("chord", chord_name, quality)
 
     def finish_session(self):
         """Record the completed session in history."""
@@ -303,10 +287,6 @@ class CurriculumService(QObject):
             
         print(f"CurriculumService: Extracted {len(result)} active milestones for QML: {result}")
         return result
-
-    @Property(int, notify=curriculumChanged)
-    def reviewQueueCount(self) -> int:
-        return len(self.db.get_due_reviews(limit=100))
 
     @Property("QVariantList", notify=curriculumChanged)
     def recentSessions(self) -> list:

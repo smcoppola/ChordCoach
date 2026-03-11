@@ -92,20 +92,7 @@ class DatabaseManager:
                 )
             ''')
             
-            # Spaced repetition — SM-2 style review scheduling
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS spaced_repetition (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    item_type TEXT NOT NULL,
-                    item_id TEXT NOT NULL,
-                    next_review TIMESTAMP NOT NULL,
-                    interval_days REAL DEFAULT 1.0,
-                    ease_factor REAL DEFAULT 2.5,
-                    review_count INTEGER DEFAULT 0,
-                    UNIQUE(item_type, item_id)
-                )
-            ''')
-            
+
             # Session history — records what each lesson session covered
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS session_history (
@@ -329,7 +316,6 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM chords;')
             cursor.execute('DELETE FROM curriculum_state;')
-            cursor.execute('DELETE FROM spaced_repetition;')
             cursor.execute('DELETE FROM session_history;')
             cursor.execute('DELETE FROM learned_terms;')
             cursor.execute('DELETE FROM exercise_intros;')
@@ -447,7 +433,13 @@ class DatabaseManager:
             if decayed:
                 context += "\nDecayed Chords (Not practiced in 48+ hours):\n"
                 for item in decayed:
-                    context += f"- {item['name']} (Last played: {item['last_played']})\n"
+                    try:
+                        dt = datetime.fromisoformat(item['last_played'])
+                        days_ago = (datetime.now() - dt).days
+                        time_str = f"{days_ago} days ago" if days_ago > 0 else "earlier today"
+                    except ValueError:
+                        time_str = "recently"
+                    context += f"- {item['name']} (Last played: {time_str})\n"
                     
             # Calculate global success/failure ratio
             cursor.execute('SELECT SUM(success_count), SUM(fail_count) FROM chords')
@@ -562,70 +554,6 @@ class DatabaseManager:
             ''', (now, track_name, current_order + 1))
 
             conn.commit()
-
-    def schedule_review(self, item_type: str, item_id: str, quality: int):
-        """
-        SM-2 spaced repetition update.
-        quality: 0-5 (0-2 = fail/repeat, 3 = hard, 4 = good, 5 = easy)
-        """
-        now = datetime.now()
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT interval_days, ease_factor, review_count
-                FROM spaced_repetition
-                WHERE item_type = ? AND item_id = ?
-            ''', (item_type, item_id))
-            row = cursor.fetchone()
-
-            if row:
-                interval, ef, count = row
-            else:
-                interval, ef, count = 1.0, 2.5, 0
-
-            # SM-2 algorithm
-            if quality < 3:
-                # Failed — reset interval
-                interval = 1.0
-            else:
-                if count == 0:
-                    interval = 1.0
-                elif count == 1:
-                    interval = 3.0
-                else:
-                    interval = interval * ef
-
-                # Update ease factor
-                ef = max(1.3, ef + 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-
-            # Cap the interval to prevent OverflowError in SQLite/Python dates (~10 years)
-            interval = min(interval, 3650.0)
-            
-            next_review = (now + timedelta(days=interval)).isoformat()
-            count += 1
-
-            cursor.execute('''
-                INSERT INTO spaced_repetition (item_type, item_id, next_review, interval_days, ease_factor, review_count)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(item_type, item_id) DO UPDATE SET
-                    next_review = ?, interval_days = ?, ease_factor = ?, review_count = ?
-            ''', (item_type, item_id, next_review, interval, ef, count,
-                  next_review, interval, ef, count))
-            conn.commit()
-
-    def get_due_reviews(self, limit: int = 10) -> list:
-        """Returns items due for spaced repetition review."""
-        now = datetime.now().isoformat()
-        with self._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM spaced_repetition
-                WHERE next_review <= ?
-                ORDER BY next_review ASC
-                LIMIT ?
-            ''', (now, limit))
-            return [dict(row) for row in cursor.fetchall()]
 
     def record_session(self, tracks: list, milestones: list,
                        exercises: int, time_sec: int, accuracy: float):

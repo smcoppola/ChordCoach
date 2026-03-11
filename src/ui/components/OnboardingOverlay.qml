@@ -144,7 +144,7 @@ Rectangle {
                         root.isRunning = true;
                         root.waitingForVoice = true;
                         if (typeof appState !== "undefined" && appState !== null) {
-                            appState.startEvaluationWithIntro();
+                            appState.appCoordinator.startEvaluationWithIntro();
                         }
                     }
                 }
@@ -466,7 +466,7 @@ Rectangle {
                         root.phase = 3;
                         root.waitingForVoice = true;
                         if (typeof appState !== "undefined" && appState !== null) {
-                            appState.startArchTutorialWithIntro();
+                            appState.appCoordinator.startArchTutorialWithIntro();
                         }
                     }
                 }

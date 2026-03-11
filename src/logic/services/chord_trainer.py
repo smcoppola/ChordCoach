@@ -25,6 +25,7 @@ class ChordTrainerService(QObject):
     # Single-model architecture signals
     requestLessonStart = Signal(str)    # Emitted with the full lesson prompt for the AI coach
     reportPerformance = Signal(str)     # Emitted after each exercise with performance data
+    exerciseRequestUnlocked = Signal()  # Emitted when a dropped tool call failsafe triggers
     
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
         super().__init__()
@@ -135,6 +136,19 @@ class ChordTrainerService(QObject):
             "Major 7th": {0, 4, 7, 11},
             "Minor 7th": {0, 3, 7, 10},
             "Single": {0},
+        }
+        # Common AI shorthand aliases → canonical CHORD_TYPES keys
+        self.CHORD_TYPE_ALIASES = {
+            "Major7": "Major 7th",
+            "Minor7": "Minor 7th",
+            "Dom7": "Dominant 7th",
+            "Dominant7": "Dominant 7th",
+            "Dim": "Diminished",
+            "Aug": "Augmented",
+            "Maj7": "Major 7th",
+            "Min7": "Minor 7th",
+            "major": "Major",
+            "minor": "Minor",
         }
         
         # Pentascale patterns: intervals from root for each scale type
@@ -431,11 +445,17 @@ Start the lesson now by calling set_exercise and speaking.
         # Validate chord type if applicable
         if ex_type in ("chord", "hands_together", "sustain_pedal", "listen") and "chord_type_name" in exercise_data:
             c_type = exercise_data["chord_type_name"]
+            # Normalize AI shorthand aliases to canonical names
+            if c_type in self.CHORD_TYPE_ALIASES:
+                c_type = self.CHORD_TYPE_ALIASES[c_type]
+                exercise_data["chord_type_name"] = c_type
+                print(f"ChordTrainer: Normalized chord type alias to '{c_type}'")
             if c_type in ("N/A", "None", "", "Single"):
                 exercise_data["intervals"] = [0]
                 exercise_data["chord_type_name"] = "" # Normalize empty/NA to single notes
             elif c_type not in self.CHORD_TYPES:
-                print(f"ChordTrainer: Unknown chord type '{c_type}', skipping")
+                print(f"ChordTrainer: Unknown chord type '{c_type}', rejecting exercise and unlocking")
+                self.exerciseRequestUnlocked.emit()  # Clear _exercise_pending to prevent deadlock
                 return
             else:
                 exercise_data["intervals"] = self.CHORD_TYPES[c_type]
@@ -444,10 +464,17 @@ Start the lesson now by calling set_exercise and speaking.
         if ex_type == "progression":
             prog_steps = exercise_data.get("progression_steps", [])
             if not prog_steps:
+                self.exerciseRequestUnlocked.emit()  # Clear _exercise_pending to prevent deadlock
                 return
             for ps in prog_steps:
                 ct = ps.get("chord_type_name", "Major")
+                # Normalize aliases in progression steps too
+                if ct in self.CHORD_TYPE_ALIASES:
+                    ct = self.CHORD_TYPE_ALIASES[ct]
+                    ps["chord_type_name"] = ct
                 if ct not in self.CHORD_TYPES:
+                    print(f"ChordTrainer: Unknown chord type '{ct}' in progression, rejecting and unlocking")
+                    self.exerciseRequestUnlocked.emit()  # Clear _exercise_pending to prevent deadlock
                     return
         
         # If this is the first exercise (loading state), apply immediately
@@ -589,12 +616,6 @@ Start the lesson now by calling set_exercise and speaking.
         self._waiting_for_ai = True
         
         self.reportPerformance.emit(report)
-
-    @Slot()
-    def activate_lesson_plan(self):
-        """Legacy method — no longer needed in single-model flow.
-        Kept as a no-op for backward compatibility."""
-        pass
 
     def _compute_lesson_blocks(self):
         """Build a stable block summary from the current playlist for the sidebar.
@@ -955,17 +976,28 @@ Start the lesson now by calling set_exercise and speaking.
         """Sets up a sustain pedal exercise."""
         root_idx = int(chord_data.get("root_idx", 0))
         chord_type_name = str(chord_data.get("chord_type_name", "Major"))
-        intervals = self.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
+        if chord_type_name in ("N/A", "None", "Single", ""):
+            intervals = chord_data.get("intervals", [0])
+            chord_type_name = ""
+        else:
+            intervals = self.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
         octave = int(chord_data.get("octave", 4))
         
         self._pedal_type = str(chord_data.get("pedal_type", "direct"))
         self._pedal_satisfied = False
         
-        self._setup_target(root_idx, chord_type_name, intervals, octave)
+        self._setup_target(root_idx, chord_type_name, intervals, octave, suppress_signal=True)
         self._target_chord_type = "Sustain Pedal"
         # We don't need UI text for pedal type since standard notation will be used,
         # but keep it in formula text for debugging or fallback if desired.
         self._target_formula_text = f"Pedal: {self._pedal_type.capitalize()}"
+        
+        # Override the target name if it was blanked out by the fallback to single note
+        if not chord_type_name:
+            root_name = self.ROOT_NOTES[root_idx]
+            self._target_chord_name = f"{root_name} Note ({self._pedal_type.capitalize()} Pedal)"
+            
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged for Sustain ({self._target_chord_name})")
         self.targetChordChanged.emit(self._target_chord_name)
 
     @Slot(bool)
@@ -1107,6 +1139,21 @@ Start the lesson now by calling set_exercise and speaking.
         """Called when AI finishes speaking. Applies pending exercise if queued,
         plays deferred listen preview, or resets paused state."""
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speech finished, resuming lesson.")
+        
+        # Safety fallback: If the AI spoke its feedback but dropped the tool call, unlock the system so the user can continue
+        if self._is_requesting_exercise:
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: AI finished turn but no exercise received. Unlocking request state.")
+            self._is_requesting_exercise = False
+            self.exerciseRequestUnlocked.emit()
+            # Actively nudge the AI to send the tool call it forgot
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Sending nudge prompt to request set_exercise.")
+            self.speakBrief.emit(
+                "<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
+                "You spoke but did not call a tool. "
+                "Please call set_exercise for the next exercise, or end_lesson if the session is complete. "
+                "Do NOT speak — just call the tool."
+            )
+            
         if self._is_paused_for_speech:
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Unpausing speech (isPausedForSpeech=False)")
             self._is_paused_for_speech = False
