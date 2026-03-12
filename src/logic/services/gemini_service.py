@@ -43,8 +43,8 @@ class GeminiService(QObject):
         self._exercise_pending = False  # Track if an exercise is awaiting completion
         
         # Start the asyncio loop in a background thread so we don't block the Qt UI
-        self.thread = threading.Thread(target=self._start_loop, daemon=True)
-        self.thread.start()
+        self._loop_thread = threading.Thread(target=self._start_loop, daemon=True)
+        self._loop_thread.start()
 
         if not self.api_key:
             print("Warning: GOOGLE_API_KEY not found in environment.")
@@ -57,7 +57,7 @@ class GeminiService(QObject):
         fmt = QAudioFormat()
         fmt.setSampleRate(24000) # Match Gemini's native output rate of 24kHz
         fmt.setChannelCount(1)
-        fmt.setSampleFormat(QAudioFormat.Int16)
+        fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
         
         # We start the sink immediately so it is ready to receive bytes
         self.audio_sink = QAudioSink(QMediaDevices.defaultAudioOutput(), fmt, self)
@@ -176,16 +176,17 @@ class GeminiService(QObject):
                     "monologue like 'I will now give feedback'. Just speak the script directly to the user. "
                     "3. DO NOT provide verbal feedback after every single chord—the user gets visual feedback on-screen. "
                     "4. If a user plays a chord correctly, stay silent and let them continue unless they ask a question "
-                    "or need to move to a new exercise. 5. Be encouraging and act like a real, helpful music teacher."
+                    "or need to move to a new exercise. 5. Be encouraging and act like a real, helpful music teacher. "
+                    "6. SILENCE IS GOLDEN: During drills of the same type, you should be completely silent 80% of the time."
                 )
             
             # Apply brevity modifier
             if brevity == "Detailed":
-                base_instruction += " When speaking, use 2 concise sentences per introduction."
+                base_instruction += " For transitions to a NEW exercise type, use 2 concise sentences. When introducing a genuinely NEW CONCEPT or exercise type for the first time, give a thorough 8-12 sentence explanation covering WHAT it is, WHY it matters musically, and HOW to do it."
             elif brevity == "Terse":
-                base_instruction += " Keep ALL responses to 5-10 words maximum. Be extremely concise."
+                base_instruction += " Keep all speech to a minimum. For new concepts, use 3-5 sentences maximum."
             else:  # Normal
-                base_instruction += " When speaking, use 1 concise sentence per introduction."
+                base_instruction += " For transitions to a NEW exercise type, use 1 concise sentence. When introducing a genuinely NEW CONCEPT or exercise type for the first time, give a clear 8-12 sentence explanation covering WHAT it is, WHY it matters musically, and HOW to do it."
 
             # Global Pronunciation Rules
             base_instruction += " PRONUNCIATION RULE: Whenever you see a Roman Numeral chord progression (like I-V-vi-IV), pronounce it as numbers (e.g. 'one, five, six, four'), NOT as letters (e.g. 'eye, vee')."
@@ -196,9 +197,16 @@ class GeminiService(QObject):
                 "Say 'play slowly and steadily' instead of 'play at 60 BPM'. "
                 "2. The student sees the chord/notes on screen — focus on WHY they're doing this, not WHAT keys to press. "
                 "3. Between exercises of the SAME type, provide a 1-3 word micro-affirmation ONLY every 3 to 5 reps. Otherwise, remain COMPLETELY SILENT and just call set_exercise. "
-                "4. Only speak longer sentences when: introducing a NEW exercise type, giving feedback on struggles, or ending the lesson. "
+                "4. Only speak longer sentences when: introducing a NEW exercise type for the first time, giving feedback on significant struggles, or ending the lesson. "
                 "5. Keep transitions fast. Call set_exercise immediately after receiving performance data. "
-                "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson."
+                "If the next exercise is the same type as the last, do NOT speak - just call the tool."
+                "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson. "
+                "7. ROLEPLAY RULE (CRITICAL): NEVER narrate what you are doing. NEVER output any internal "
+                "monologue or 'background thoughts'. Phrases like 'Let me see...', 'I'll just check...', 'Now searching...', "
+                "or 'I am going to...' are strictly forbidden. You are an expert piano teacher; talking to yourself "
+                "is unprofessional. You have NO internal monologue in your voice output. Talk ONLY to the student. "
+                "8. DIRECT-TO-STUDENT RULE: Your instructions must be direct. Instead of 'I'm going to have you play C major', "
+                "just say 'Play C major'. Skip all preambles."
             )
             if hasattr(self, 'coach_context') and self.coach_context:
                 base_instruction += "\n\n" + self.coach_context
@@ -294,6 +302,10 @@ class GeminiService(QObject):
                                             "type": "STRING",
                                             "description": "For sustain_pedal exercises: direct or legato"
                                         },
+                                        "inversion": {
+                                            "type": "INTEGER",
+                                            "description": "Chord inversion: 0 = root position (default), 1 = 1st inversion, 2 = 2nd inversion. Omit or 0 for root position."
+                                        },
                                         "progression_steps": {
                                             "type": "ARRAY",
                                             "description": "For progression exercises: array of chord steps",
@@ -376,21 +388,21 @@ class GeminiService(QObject):
                             # 100% Reject: Parallel function calls are not allowed in this curriculum engine
                             tool_response = {
                                 "status": "error", 
-                                "message": "Parallel tool calls are strictly forbidden. You must wait for the user to complete the FIRST exercise."
+                                "message": "Parallel tool calls are strictly forbidden. You must wait for the user to complete the FIRST exercise. Do NOT speak — just wait."
                             }
                         else:
                             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
                             if fn_name == "set_exercise":
                                 if self._exercise_pending:
                                     print(f"Gemini Service: REJECTING duplicate set_exercise — waiting for student completion")
-                                    tool_response = {"status": "error", "message": "Exercise already active. Wait for user completion."}
+                                    tool_response = {"status": "error", "message": "System: Exercise already active. Do NOT speak or apologize. Just stay silent and wait for student completion."}
                                 else:
                                     self._exercise_pending = True
                                     self.exerciseReceived.emit(fn_args)
                             elif fn_name == "end_lesson":
                                 if self._exercise_pending:
                                     print(f"Gemini Service: REJECTING early end_lesson — waiting for student completion")
-                                    tool_response = {"status": "error", "message": "Exercise active. Do not call end_lesson yet."}
+                                    tool_response = {"status": "error", "message": "System: Exercise active. Do not call end_lesson yet. Do NOT speak — just wait."}
                                 else:
                                     self._exercise_pending = False
                                     self.lessonEndReceived.emit(fn_args.get("feedback_summary", ""))

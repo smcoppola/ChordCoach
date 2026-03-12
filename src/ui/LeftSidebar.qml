@@ -108,6 +108,8 @@ Rectangle {
                 color: root.aiConnected ? "#4CAF50" : "#F44336"
                 font.pixelSize: 13 * mainWindow.uiScale
                 font.bold: true
+                Layout.fillWidth: true
+                elide: Text.ElideRight
             }
         }
         
@@ -203,7 +205,8 @@ Rectangle {
                                     font.bold: root.lessonProgress >= modelData.startStep && root.lessonProgress <= modelData.endStep
                                     font.strikeout: root.lessonProgress > modelData.endStep
                                     Layout.fillWidth: true
-                                    elide: Text.ElideRight
+                                    wrapMode: Text.WordWrap
+                                    lineHeight: 1.1
                                 }
 
                                 // Step count

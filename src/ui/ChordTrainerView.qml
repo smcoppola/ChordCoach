@@ -24,6 +24,8 @@ Rectangle {
     property bool isLoading: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLoading : false
     property string loadingStatusText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.loadingStatusText : ""
     property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
+    property bool isWaitingForAi: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
+
     
     onIsPausedForSpeechChanged: {
         console.log("[TIMING " + new Date().toISOString() + "] QML root.isPausedForSpeech is now: " + root.isPausedForSpeech)
@@ -191,7 +193,10 @@ Rectangle {
         // Header Text
         Text {
             Layout.alignment: Qt.AlignHCenter
+            Layout.fillWidth: true
+            Layout.maximumWidth: parent.width * 0.9
             text: {
+                if (root.isLoading) return "INITIALIZING LESSON...";
                 if (!root.isActive) return "CHORD TRAINER";
                 if (root.isLessonMode) return "LESSON: " + root.exerciseName.toUpperCase() + " (EXERCISE " + root.lessonProgress + ")";
                 return "FREE PRACTICE";
@@ -200,6 +205,8 @@ Rectangle {
             font.pixelSize: 18 * mainWindow.uiScale
             font.bold: true
             font.letterSpacing: 2 * mainWindow.uiScale
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
         }
         
         // AI Coach Presenter
@@ -207,7 +214,7 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             Layout.maximumWidth: 600 * mainWindow.uiScale
             spacing: 15 * mainWindow.uiScale
-            visible: root.isActive && root.transcriptText.length > 0
+            visible: (root.isActive || root.isLoading) && root.transcriptText.length > 0
             
             // The Glowing "Waveform/Pulse" Indicator
             Rectangle {
@@ -667,7 +674,7 @@ Rectangle {
             id: visualKeyboard
             Layout.fillWidth: true
             Layout.preferredHeight: 180 * mainWindow.uiScale
-            visible: root.isActive
+            visible: root.isActive || root.isLoading
         }
         
         Item { Layout.fillHeight: true } // Spacer
@@ -677,8 +684,9 @@ Rectangle {
     FastBlur {
         anchors.fill: lessonContent
         source: lessonContent
-        radius: root.isPausedForSpeech ? (20 * mainWindow.uiScale) : 0
+        radius: root.isWaitingForAi ? (20 * mainWindow.uiScale) : 0
         visible: radius > 0
+
         z: 50
         Behavior on radius { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
     }
@@ -689,7 +697,8 @@ Rectangle {
         anchors.fill: parent
         z: 100
         color: Qt.rgba(0.11, 0.11, 0.12, 0.5)
-        visible: root.isPausedForSpeech
+        visible: root.isWaitingForAi && !root.isLessonComplete
+
         onVisibleChanged: {
             var d = new Date();
             var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');

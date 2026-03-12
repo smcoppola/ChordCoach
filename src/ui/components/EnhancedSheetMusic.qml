@@ -176,12 +176,15 @@ Rectangle {
             anchors.top: parent.top
             anchors.topMargin: 20 * mainWindow.uiScale
             anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width * 0.9
             text: root.formatChordTitle(root.targetChordName)
             font.pixelSize: 32 * mainWindow.uiScale
             font.bold: true
             color: "#333333"
             visible: text !== ""
             z: 20
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
         }
 
         // Treble Clef (5 lines)

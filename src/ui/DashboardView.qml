@@ -35,6 +35,9 @@ Rectangle {
                 font.bold: true
                 color: "#ffffff"
                 Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
             }
         }
         
@@ -278,6 +281,8 @@ Rectangle {
                 color: "#ffffff"
                 font.pixelSize: 18 * mainWindow.uiScale
                 font.bold: true
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
             }
             
             Text {
