@@ -10,6 +10,8 @@ dependencies = [
     "pybind11",
     "mido",
     "pretty-midi",
+    "websockets",
+    "certifi",
 ]
 
 [build-system]

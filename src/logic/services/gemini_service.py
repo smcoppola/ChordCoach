@@ -1,4 +1,6 @@
 import os
+import sys
+import ssl
 import threading
 import asyncio
 import json
@@ -7,8 +9,32 @@ import struct
 import time
 from datetime import datetime
 import websockets  # type: ignore
+
+# websockets v15+ moved ConnectionClosed; fall back gracefully
+try:
+    from websockets.exceptions import ConnectionClosed
+except ImportError:
+    from websockets import ConnectionClosed  # type: ignore
+
 from PySide6.QtCore import QObject, Signal, Slot, QTimer  # type: ignore
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices, QAudio # type: ignore
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """
+    Build an SSL context that works on all platforms.
+    On macOS, Python from python.org does NOT use the system keychain,
+    which causes wss:// connections to fail with CERTIFICATE_VERIFY_FAILED.
+    We use certifi's CA bundle as the authoritative trust store.
+    """
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except ImportError:
+        # certifi not installed — fall back to the default system behaviour.
+        # On Linux this usually works fine; on macOS it may still fail.
+        pass
+    return ctx
 
 class GeminiService(QObject):
     responseReceived = Signal(str)
@@ -130,7 +156,8 @@ class GeminiService(QObject):
             return
             
         try:
-            self.ws = await websockets.connect(self.ws_url)
+            ssl_ctx = _build_ssl_context()
+            self.ws = await websockets.connect(self.ws_url, ssl=ssl_ctx)
             self.connected = True
             self._intentional_disconnect = False
             self._reconnect_attempts = 0
@@ -454,7 +481,7 @@ class GeminiService(QObject):
                             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Turn complete with NO audio. Emitting finished speaking manually.")
                             self.aiFinishedSpeaking.emit()
                                 
-        except websockets.exceptions.ConnectionClosed as e:
+        except ConnectionClosed as e:
             print(f"Gemini Service: Connection closed by server. Code: {e.code}, Reason: {e.reason}")
         except Exception as e:
             print(f"Gemini Service: Error in receive loop: {e}")

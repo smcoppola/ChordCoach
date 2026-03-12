@@ -86,6 +86,7 @@ a = Analysis(
         'mido',
         'pretty_midi',
         'websockets',
+        'certifi',
         'logic.services.gemini_service', 
         'logic.services.midi_ingestor', 
         'logic.services.repertoire_crawler', 
