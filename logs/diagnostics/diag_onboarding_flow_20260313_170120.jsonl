@@ -1,0 +1,66 @@
+{"timestamp": "2026-03-13T17:01:20.255215", "elapsed_ms": 0.41, "event": "TEST_START", "details": "Initializing services for onboarding test..."}
+{"timestamp": "2026-03-13T17:01:20.291891", "elapsed_ms": 37.08, "event": "PHASE_-1", "details": "Testing API Key Guard..."}
+{"timestamp": "2026-03-13T17:01:20.292397", "elapsed_ms": 37.59, "event": "STATE_CHECK", "details": "Validated: API Key is missing. UI should show Phase -1."}
+{"timestamp": "2026-03-13T17:01:20.292764", "elapsed_ms": 37.96, "event": "UI_INPUT", "details": "Simulating user entry of API key", "raw": {"key": "AIzaSy_TEST_KEY_DIAGNOSTIC_12345"}}
+{"timestamp": "2026-03-13T17:01:20.293793", "elapsed_ms": 38.98, "event": "SYNC_SUCCESS", "details": "API Key propagated to OS environment."}
+{"timestamp": "2026-03-13T17:01:20.294185", "elapsed_ms": 39.38, "event": "PHASE_0", "details": "Simulating Welcome Screen transition..."}
+{"timestamp": "2026-03-13T17:01:20.294594", "elapsed_ms": 39.79, "event": "PHASE_1", "details": "Triggering Skill Evaluation with AI Intro..."}
+{"timestamp": "2026-03-13T17:01:20.295453", "elapsed_ms": 40.64, "event": "AI_STATE", "details": "Waiting for synthetic AI speech start..."}
+{"timestamp": "2026-03-13T17:01:20.396226", "elapsed_ms": 141.42, "event": "AI_STATE", "details": "Synthetic AI speech finished."}
+{"timestamp": "2026-03-13T17:01:20.396763", "elapsed_ms": 141.95, "event": "SERVICE_STATE", "details": "Evaluation Engine active and running."}
+{"timestamp": "2026-03-13T17:01:20.397741", "elapsed_ms": 142.93, "event": "METRONOME_TICK", "details": "Beat 1"}
+{"timestamp": "2026-03-13T17:01:20.398118", "elapsed_ms": 143.31, "event": "LEVEL_SESSION", "details": "Beginning Level 1: Ode to Joy"}
+{"timestamp": "2026-03-13T17:01:20.971384", "elapsed_ms": 716.57, "event": "METRONOME_TICK", "details": "Beat 2"}
+{"timestamp": "2026-03-13T17:01:21.630695", "elapsed_ms": 1375.89, "event": "METRONOME_TICK", "details": "Beat 3"}
+{"timestamp": "2026-03-13T17:01:22.303308", "elapsed_ms": 2048.5, "event": "METRONOME_TICK", "details": "Beat 4"}
+{"timestamp": "2026-03-13T17:01:22.968029", "elapsed_ms": 2713.22, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 64 | Beat 0.01", "raw": {"note": {"pitch": 64, "start_beat": 0, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:23.632634", "elapsed_ms": 3377.83, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 64 | Beat 1.01", "raw": {"note": {"pitch": 64, "start_beat": 1, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:24.301163", "elapsed_ms": 4046.35, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 65 | Beat 2.01", "raw": {"note": {"pitch": 65, "start_beat": 2, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:24.969960", "elapsed_ms": 4715.15, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 67 | Beat 3.01", "raw": {"note": {"pitch": 67, "start_beat": 3, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:25.639315", "elapsed_ms": 5384.51, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 67 | Beat 4.02", "raw": {"note": {"pitch": 67, "start_beat": 4, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:26.297646", "elapsed_ms": 6042.84, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 65 | Beat 5.00", "raw": {"note": {"pitch": 65, "start_beat": 5, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:26.964485", "elapsed_ms": 6709.68, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 64 | Beat 6.00", "raw": {"note": {"pitch": 64, "start_beat": 6, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:27.636922", "elapsed_ms": 7382.11, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 62 | Beat 7.01", "raw": {"note": {"pitch": 62, "start_beat": 7, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:28.296473", "elapsed_ms": 8041.66, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 60 | Beat 8.00", "raw": {"note": {"pitch": 60, "start_beat": 8, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:28.965443", "elapsed_ms": 8710.63, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 60 | Beat 9.01", "raw": {"note": {"pitch": 60, "start_beat": 9, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:29.634304", "elapsed_ms": 9379.49, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 62 | Beat 10.01", "raw": {"note": {"pitch": 62, "start_beat": 10, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:30.302990", "elapsed_ms": 10048.18, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 64 | Beat 11.01", "raw": {"note": {"pitch": 64, "start_beat": 11, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:30.969947", "elapsed_ms": 10715.14, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 64 | Beat 12.01", "raw": {"note": {"pitch": 64, "start_beat": 12, "duration_beats": 1.5, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:31.965461", "elapsed_ms": 11710.65, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 62 | Beat 13.51", "raw": {"note": {"pitch": 62, "start_beat": 13.5, "duration_beats": 0.5, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:32.302027", "elapsed_ms": 12047.22, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 1 | Pitch 62 | Beat 14.01", "raw": {"note": {"pitch": 62, "start_beat": 14, "duration_beats": 2, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:34.972809", "elapsed_ms": 14718.0, "event": "METRONOME_TICK", "details": "Beat 1"}
+{"timestamp": "2026-03-13T17:01:34.973339", "elapsed_ms": 14718.53, "event": "LEVEL_SESSION", "details": "Beginning Level 2: When the Saints Go Marching In"}
+{"timestamp": "2026-03-13T17:01:35.567402", "elapsed_ms": 15312.59, "event": "METRONOME_TICK", "details": "Beat 2"}
+{"timestamp": "2026-03-13T17:01:36.169546", "elapsed_ms": 15914.74, "event": "METRONOME_TICK", "details": "Beat 3"}
+{"timestamp": "2026-03-13T17:01:36.762748", "elapsed_ms": 16507.94, "event": "METRONOME_TICK", "details": "Beat 4"}
+{"timestamp": "2026-03-13T17:01:37.362875", "elapsed_ms": 17108.07, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 60 | Beat 0.00", "raw": {"note": {"pitch": 60, "start_beat": 0, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:37.969169", "elapsed_ms": 17714.36, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 64 | Beat 1.01", "raw": {"note": {"pitch": 64, "start_beat": 1, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:38.563264", "elapsed_ms": 18308.45, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 65 | Beat 2.00", "raw": {"note": {"pitch": 65, "start_beat": 2, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:39.170353", "elapsed_ms": 18915.54, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 67 | Beat 3.01", "raw": {"note": {"pitch": 67, "start_beat": 3, "duration_beats": 3, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:40.968993", "elapsed_ms": 20714.18, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 60 | Beat 6.01", "raw": {"note": {"pitch": 60, "start_beat": 6, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:41.564142", "elapsed_ms": 21309.33, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 64 | Beat 7.00", "raw": {"note": {"pitch": 64, "start_beat": 7, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:42.172196", "elapsed_ms": 21917.39, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 65 | Beat 8.02", "raw": {"note": {"pitch": 65, "start_beat": 8, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:42.769334", "elapsed_ms": 22514.52, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 67 | Beat 9.01", "raw": {"note": {"pitch": 67, "start_beat": 9, "duration_beats": 3, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:44.563202", "elapsed_ms": 24308.39, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 60 | Beat 12.00", "raw": {"note": {"pitch": 60, "start_beat": 12, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:45.168191", "elapsed_ms": 24913.38, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 64 | Beat 13.01", "raw": {"note": {"pitch": 64, "start_beat": 13, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:45.762758", "elapsed_ms": 25507.95, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 65 | Beat 14.00", "raw": {"note": {"pitch": 65, "start_beat": 14, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:46.372362", "elapsed_ms": 26117.55, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 67 | Beat 15.02", "raw": {"note": {"pitch": 67, "start_beat": 15, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:46.965489", "elapsed_ms": 26710.68, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 64 | Beat 16.01", "raw": {"note": {"pitch": 64, "start_beat": 16, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:47.569995", "elapsed_ms": 27315.19, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 60 | Beat 17.01", "raw": {"note": {"pitch": 60, "start_beat": 17, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:48.164531", "elapsed_ms": 27909.72, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 64 | Beat 18.00", "raw": {"note": {"pitch": 64, "start_beat": 18, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:48.772076", "elapsed_ms": 28517.27, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 2 | Pitch 62 | Beat 19.02", "raw": {"note": {"pitch": 62, "start_beat": 19, "duration_beats": 3, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:51.782768", "elapsed_ms": 31527.96, "event": "METRONOME_TICK", "details": "Beat 1"}
+{"timestamp": "2026-03-13T17:01:51.783670", "elapsed_ms": 31528.86, "event": "LEVEL_SESSION", "details": "Beginning Level 3: Hot Cross Buns (Hands Together)"}
+{"timestamp": "2026-03-13T17:01:52.608681", "elapsed_ms": 32353.87, "event": "METRONOME_TICK", "details": "Beat 2"}
+{"timestamp": "2026-03-13T17:01:53.448125", "elapsed_ms": 33193.32, "event": "METRONOME_TICK", "details": "Beat 3"}
+{"timestamp": "2026-03-13T17:01:54.281727", "elapsed_ms": 34026.92, "event": "METRONOME_TICK", "details": "Beat 4"}
+{"timestamp": "2026-03-13T17:01:55.109915", "elapsed_ms": 34855.11, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 64 | Beat 0.01", "raw": {"note": {"pitch": 64, "start_beat": 0, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:55.116070", "elapsed_ms": 34861.26, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 48 | Beat 0.01", "raw": {"note": {"pitch": 48, "start_beat": 0, "duration_beats": 4, "hand": "L"}}}
+{"timestamp": "2026-03-13T17:01:55.941012", "elapsed_ms": 35686.2, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 62 | Beat 1.00", "raw": {"note": {"pitch": 62, "start_beat": 1, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:56.774270", "elapsed_ms": 36519.46, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 60 | Beat 2.00", "raw": {"note": {"pitch": 60, "start_beat": 2, "duration_beats": 2, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:58.441791", "elapsed_ms": 38186.98, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 64 | Beat 4.00", "raw": {"note": {"pitch": 64, "start_beat": 4, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:01:58.447859", "elapsed_ms": 38193.05, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 48 | Beat 4.00", "raw": {"note": {"pitch": 48, "start_beat": 4, "duration_beats": 4, "hand": "L"}}}
+{"timestamp": "2026-03-13T17:01:59.272368", "elapsed_ms": 39017.56, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 62 | Beat 5.00", "raw": {"note": {"pitch": 62, "start_beat": 5, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:02:00.114929", "elapsed_ms": 39860.12, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 60 | Beat 6.01", "raw": {"note": {"pitch": 60, "start_beat": 6, "duration_beats": 2, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:02:01.781498", "elapsed_ms": 41526.69, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 60 | Beat 8.01", "raw": {"note": {"pitch": 60, "start_beat": 8, "duration_beats": 1, "hand": "R"}}}
+{"timestamp": "2026-03-13T17:02:01.787488", "elapsed_ms": 41532.68, "event": "MIDI_EVENT", "details": "Simulated Note Hit | Level 3 | Pitch 48 | Beat 8.01", "raw": {"note": {"pitch": 48, "start_beat": 8, "duration_beats": 4, "hand": "L"}}}

@@ -25,6 +25,10 @@ Rectangle {
     property string loadingStatusText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.loadingStatusText : ""
     property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
     property bool isWaitingForAi: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
+    
+    // UI Modal States for Blurring
+    property bool isReconnecting: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+    property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isLoading || isReconnecting
 
     
     onIsPausedForSpeechChanged: {
@@ -117,16 +121,21 @@ Rectangle {
         function onChordSuccess(chordName, latencyMs) {
             successFlash.start();
             
-            // Show latency feedback
-            if (latencyMs < 1500) {
-                latencyText.text = "⚡ " + Math.round(latencyMs) + "ms";
+            // Show qualitative feedback for pentascales, or ms for chords
+            if (root.exerciseType === "pentascale") {
+                latencyText.text = chordName; // e.g. "Excellent Timing!"
                 latencyText.color = "#4CAF50";
-            } else if (latencyMs < 3000) {
-                latencyText.text = Math.round(latencyMs) + "ms";
-                latencyText.color = "#FFC107";
             } else {
-                latencyText.text = Math.round(latencyMs / 1000.0 * 10) / 10 + "s";
-                latencyText.color = "#FF9800";
+                if (latencyMs < 1500) {
+                    latencyText.text = "⚡ " + Math.round(latencyMs) + "ms";
+                    latencyText.color = "#4CAF50";
+                } else if (latencyMs < 3000) {
+                    latencyText.text = Math.round(latencyMs) + "ms";
+                    latencyText.color = "#FFC107";
+                } else {
+                    latencyText.text = Math.round(latencyMs / 1000.0 * 10) / 10 + "s";
+                    latencyText.color = "#FF9800";
+                }
             }
             var d = new Date();
             var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
@@ -156,6 +165,10 @@ Rectangle {
                 newFeedback[noteIndex] = feedbackText;
                 root.pentascaleFeedbackList = newFeedback;      // Trigger bindings
             }
+            
+            // Trigger large central feedback
+            centralFeedbackText.text = feedbackText;
+            centralFeedbackAnim.restart();
         }
     }
     
@@ -188,7 +201,7 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 40 * mainWindow.uiScale
         spacing: 30 * mainWindow.uiScale
-        layer.enabled: root.isPausedForSpeech
+        layer.enabled: root.isOverlayVisible
         
         // Header Text
         Text {
@@ -325,14 +338,14 @@ Rectangle {
         // Pentascale Note Progress Indicator  
         Row {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 24 * mainWindow.uiScale
+            spacing: 32 * mainWindow.uiScale
             visible: root.isActive && !root.isLessonComplete && root.exerciseType === "pentascale"
             
             Repeater {
                 model: 5
                 delegate: Column {
-                    spacing: 8 * mainWindow.uiScale
-                    width: 60 * mainWindow.uiScale
+                    spacing: 12 * mainWindow.uiScale
+                    width: 80 * mainWindow.uiScale
                     
                     Text {
                         id: feedbackTextLabel
@@ -343,213 +356,140 @@ Rectangle {
                             if (text === "Slow") return "#FF9800";
                             return "transparent";
                         }
-                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.pixelSize: 18 * mainWindow.uiScale
                         font.bold: true
+                        font.letterSpacing: 1
                         anchors.horizontalCenter: parent.horizontalCenter
-                        height: 16 * mainWindow.uiScale
-                        opacity: 0.0 // Hidden by default now
+                        height: 24 * mainWindow.uiScale
+                        opacity: 0.0
                         
                         onTextChanged: {
                             if (text !== "") {
                                 opacity = 1.0;
-                                fadeOutTimer.restart();
-                            } else {
-                                opacity = 0.0;
+                                feedbackDisplayTimer.restart();
                             }
                         }
                         
                         Behavior on opacity {
-                            NumberAnimation { duration: 150; easing.type: Easing.OutQuad }
+                            NumberAnimation { duration: 200; easing.type: Easing.OutQuad }
                         }
                         
                         Timer {
-                            id: fadeOutTimer
-                            interval: 300
-                            onTriggered: {
-                                feedbackTextLabel.opacity = 0.0;
+                            id: feedbackDisplayTimer
+                            interval: 800
+                            onTriggered: feedbackTextLabel.opacity = 0.0
+                        }
+                    }
+                    
+                    Rectangle {
+                        id: dot
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 24 * mainWindow.uiScale
+                        height: 24 * mainWindow.uiScale
+                        radius: 12 * mainWindow.uiScale
+                        
+                        property bool isActive: index === root.currentNoteIndex
+                        property bool isCorrect: index < root.currentNoteIndex
+                        
+                        color: isCorrect ? "#4CAF50" : (isActive ? "#00E5FF" : "#2a2a2a")
+                        border.color: isActive ? "#B2EBF2" : (isCorrect ? "#81C784" : "transparent")
+                        border.width: isActive ? 3 : (isCorrect ? 1 : 0)
+                        
+                        // Glow effect for active dot
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -4 * mainWindow.uiScale
+                            radius: parent.radius + 4 * mainWindow.uiScale
+                            color: "#00E5FF"
+                            opacity: dot.isActive ? 0.4 : 0.0
+                            z: -1
+                            
+                            Behavior on opacity { NumberAnimation { duration: 300 } }
+                            
+                            SequentialAnimation on scale {
+                                running: dot.isActive
+                                loops: Animation.Infinite
+                                NumberAnimation { from: 1.0; to: 1.2; duration: 600; easing.type: Easing.InOutQuad }
+                                NumberAnimation { from: 1.2; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
                             }
                         }
-                    }
-                    
-                    Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 16 * mainWindow.uiScale
-                        height: 16 * mainWindow.uiScale
-                        radius: 8 * mainWindow.uiScale
-                        color: index < root.currentNoteIndex ? "#4CAF50" : (index === root.currentNoteIndex ? "#2196F3" : "#333333")
-                        border.color: index === root.currentNoteIndex ? "#64B5F6" : "transparent"
-                        border.width: index === root.currentNoteIndex ? 2 : 0
                         
-                        Behavior on color { ColorAnimation { duration: 150 } }
-                    }
-                }
-            }
-        }
-        
-        // Lesson Complete screen overlay
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.fillWidth: true
-            Layout.maximumWidth: 700 * mainWindow.uiScale
-            Layout.fillHeight: true
-            Layout.minimumHeight: 350 * mainWindow.uiScale
-            color: "#1c1c1e"
-            border.color: "#00BCD4"
-            border.width: 1 * mainWindow.uiScale
-            radius: 12 * mainWindow.uiScale
-            visible: root.isLessonComplete
-            
-            // Subtle glow effect
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: -1
-                radius: 12
-                color: "transparent"
-                border.color: "#00BCD4"
-                border.width: 2
-                opacity: 0.3
-            }
-            
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 20
-                
-                Text {
-                    text: "LESSON COMPLETE"
-                    font.pixelSize: 32 * mainWindow.uiScale
-                    font.bold: true
-                    font.letterSpacing: 2 * mainWindow.uiScale
-                    color: "#ffffff"
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                
-                Text {
-                    text: "You successfully finished '" + root.exerciseName + "'."
-                    font.pixelSize: 18 * mainWindow.uiScale
-                    color: "#aaaaaa"
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                
-                Item { Layout.preferredHeight: 10 }
-                
-                Button {
-                    text: "RETURN TO DASHBOARD"
-                    Layout.alignment: Qt.AlignHCenter
-                    
-                    background: Rectangle {
-                        implicitWidth: 220 * mainWindow.uiScale
-                        implicitHeight: 50 * mainWindow.uiScale
-                        color: parent.down ? "#333333" : (parent.hovered ? "#444444" : "#2a2a2a")
-                        radius: 8
-                        border.color: "#333333"
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        color: "#ffffff"
-                        font.pixelSize: 14 * mainWindow.uiScale
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    onClicked: root.returnToDashboard()
-                }
-            }
-        }
-        
-        
-        // Center Loading Animation
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            color: "transparent"
-            visible: !root.isActive && root.isLoading
-            onVisibleChanged: {
-                var d = new Date();
-                var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
-                console.log("[TIMING " + timeStr + "] QML LoadingAnimation Overlay visible: " + visible);
-            }
-            
-            ColumnLayout {
-                anchors.centerIn: parent
-                spacing: 40
-                
-                // Pulsing rings
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 100 * mainWindow.uiScale
-                    height: 100 * mainWindow.uiScale
-                    radius: 50 * mainWindow.uiScale
-                    color: "transparent"
-                    border.width: 4 * mainWindow.uiScale
-                    border.color: "#2196F3"
-                    
-                    SequentialAnimation on scale {
-                        loops: Animation.Infinite
-                        running: !root.isActive && root.isLoading
-                        NumberAnimation { from: 0.5; to: 1.5; duration: 1500; easing.type: Easing.OutCubic }
-                    }
-                    SequentialAnimation on opacity {
-                        loops: Animation.Infinite
-                        running: !root.isActive && root.isLoading
-                        NumberAnimation { from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutCubic }
-                    }
-                    
-                    // Inner dot
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 20 * mainWindow.uiScale
-                        height: 20 * mainWindow.uiScale
-                        radius: 10 * mainWindow.uiScale
-                        color: "#2196F3"
+                        Behavior on color { ColorAnimation { duration: 250 } }
                         
-                        SequentialAnimation on scale {
-                            loops: Animation.Infinite
-                            running: !root.isActive && root.isLoading
-                            NumberAnimation { from: 0.8; to: 1.2; duration: 750; easing.type: Easing.InOutSine }
-                            NumberAnimation { from: 1.2; to: 0.8; duration: 750; easing.type: Easing.InOutSine }
+                        // Icon for correct notes
+                        Text {
+                            anchors.centerIn: parent
+                            text: "✓"
+                            color: "white"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            visible: dot.isCorrect
                         }
                     }
                 }
+            }
+        }
+
+        // --- Rhythm Progress Bar (The moving target cursor) ---
+        Rectangle {
+            id: rhythmGuide
+            Layout.alignment: Qt.AlignHCenter
+            width: 528 * mainWindow.uiScale // (5 dots * 80 + 4 spacing * 32)
+            height: 6 * mainWindow.uiScale
+            color: "#1a1a1b"
+            radius: 3 * mainWindow.uiScale
+            visible: root.isActive && root.exerciseType === "pentascale" && root.pentascaleBpm > 0
+            
+            Rectangle {
+                id: rhythmCursor
+                width: 24 * mainWindow.uiScale
+                height: 24 * mainWindow.uiScale
+                radius: 12 * mainWindow.uiScale
+                color: "#00E5FF"
+                anchors.verticalCenter: parent.verticalCenter
                 
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: root.loadingStatusText
-                    color: "#2196F3"
-                    font.pixelSize: 18 * mainWindow.uiScale
-                    font.bold: true
-                    font.letterSpacing: 4 * mainWindow.uiScale
+                // Track the beat precisely. 
+                // beatCount goes -4..0 during lead-in, then 0..5 during play.
+                // We map count 0 to dot 0, count 4 to dot 4.
+                x: {
+                    var dotWidth = 80 * mainWindow.uiScale;
+                    var spacing = 32 * mainWindow.uiScale;
+                    var step = dotWidth + spacing;
+                    var startX = (dotWidth / 2) - (width / 2);
                     
-                    SequentialAnimation on opacity {
-                        loops: Animation.Infinite
-                        running: !root.isActive && root.isLoading
-                        NumberAnimation { from: 0.4; to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
-                        NumberAnimation { from: 1.0; to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
+                    if (root.pentascaleBeatCount < 0) {
+                        // During lead-in, sit just before the start
+                        return startX - 20; 
+                    }
+                    return startX + (root.pentascaleBeatCount * step);
+                }
+                
+                opacity: root.pentascaleBeatCount >= 0 ? 1.0 : 0.3
+                visible: parent.visible
+                
+                Behavior on x {
+                    NumberAnimation { 
+                        duration: (root.pentascaleBpm > 0) ? (60000 / root.pentascaleBpm) : 500
+                        easing.type: Easing.Linear 
                     }
                 }
                 
-                // Dynamic Loading Progress Bar
+                // Pulsing glow for the cursor
                 Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 300 * mainWindow.uiScale
-                    Layout.preferredHeight: 8 * mainWindow.uiScale
-                    radius: 4 * mainWindow.uiScale
-                    color: "#333333"
-                    visible: !root.isActive && root.isLoading && root.estimatedGenerationMs > 0
-                    clip: true
-                    
-                    Rectangle {
-                        id: loadingFill
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        width: parent.width * root.loadingProgress
-                        color: "#2196F3"
-                        radius: 4 * mainWindow.uiScale
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    radius: parent.radius + 6
+                    color: parent.color
+                    opacity: 0.3
+                    visible: root.pentascaleBeatCount >= 0
+                    SequentialAnimation on scale {
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1.0; to: 1.4; duration: 500; easing.type: Easing.InOutSine }
+                        NumberAnimation { from: 1.4; to: 1.0; duration: 500; easing.type: Easing.InOutSine }
                     }
                 }
             }
         }
+        
         
         // Target display area - Container for Sheet Music and Overlays
         Item {
@@ -669,6 +609,8 @@ Rectangle {
             }
         }
         
+        Item { Layout.fillHeight: true } // Spacer
+
         // Target display area - Interactive Keyboard
         Components.VisualKeyboard {
             id: visualKeyboard
@@ -676,15 +618,13 @@ Rectangle {
             Layout.preferredHeight: 180 * mainWindow.uiScale
             visible: root.isActive || root.isLoading
         }
-        
-        Item { Layout.fillHeight: true } // Spacer
     }
 
     // ── Full-pane blur when AI is speaking ──
     FastBlur {
         anchors.fill: lessonContent
         source: lessonContent
-        radius: root.isWaitingForAi ? (20 * mainWindow.uiScale) : 0
+        radius: root.isOverlayVisible ? (20 * mainWindow.uiScale) : 0
         visible: radius > 0
 
         z: 50
@@ -697,7 +637,7 @@ Rectangle {
         anchors.fill: parent
         z: 100
         color: Qt.rgba(0.11, 0.11, 0.12, 0.5)
-        visible: root.isWaitingForAi && !root.isLessonComplete
+        visible: root.isOverlayVisible && !root.isLessonComplete && !root.isLoading && !appState.isReconnecting
 
         onVisibleChanged: {
             var d = new Date();
@@ -735,7 +675,169 @@ Rectangle {
         }
     }
 
+    // Lesson Complete screen overlay
+    Rectangle {
+        id: lessonCompleteOverlay
+        anchors.centerIn: parent
+        width: Math.min(700 * mainWindow.uiScale, parent.width * 0.9)
+        height: Math.min(350 * mainWindow.uiScale, parent.height * 0.8)
+        color: "#1c1c1e"
+        border.color: "#00BCD4"
+        border.width: 1 * mainWindow.uiScale
+        radius: 12 * mainWindow.uiScale
+        visible: root.isLessonComplete
+        z: 110
+        
+        // Subtle glow effect
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -1
+            radius: 12
+            color: "transparent"
+            border.color: "#00BCD4"
+            border.width: 2
+            opacity: 0.3
+        }
+        
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 20
+            
+            Text {
+                text: "LESSON COMPLETE"
+                font.pixelSize: 32 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+                color: "#ffffff"
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Text {
+                text: "You successfully finished '" + root.exerciseName + "'."
+                font.pixelSize: 18 * mainWindow.uiScale
+                color: "#aaaaaa"
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Item { Layout.preferredHeight: 10 }
+            
+            Button {
+                text: "RETURN TO DASHBOARD"
+                Layout.alignment: Qt.AlignHCenter
+                
+                background: Rectangle {
+                    implicitWidth: 220 * mainWindow.uiScale
+                    implicitHeight: 50 * mainWindow.uiScale
+                    color: parent.down ? "#333333" : (parent.hovered ? "#444444" : "#2a2a2a")
+                    radius: 8
+                    border.color: "#333333"
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: "#ffffff"
+                    font.pixelSize: 14 * mainWindow.uiScale
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: root.returnToDashboard()
+            }
+        }
+    }
 
+    // Center Loading Animation
+    Rectangle {
+        id: loadingOverlay
+        anchors.fill: parent
+        color: "transparent"
+        visible: !root.isActive && root.isLoading
+        z: 110
+        onVisibleChanged: {
+            var d = new Date();
+            var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
+            console.log("[TIMING " + timeStr + "] QML LoadingAnimation Overlay visible: " + visible);
+        }
+        
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 40
+            
+            // Pulsing rings
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                width: 100 * mainWindow.uiScale
+                height: 100 * mainWindow.uiScale
+                radius: 50 * mainWindow.uiScale
+                color: "transparent"
+                border.width: 4 * mainWindow.uiScale
+                border.color: "#2196F3"
+                
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite
+                    running: !root.isActive && root.isLoading
+                    NumberAnimation { from: 0.5; to: 1.5; duration: 1500; easing.type: Easing.OutCubic }
+                }
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    running: !root.isActive && root.isLoading
+                    NumberAnimation { from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutCubic }
+                }
+                
+                // Inner dot
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 20 * mainWindow.uiScale
+                    height: 20 * mainWindow.uiScale
+                    radius: 10 * mainWindow.uiScale
+                    color: "#2196F3"
+                    
+                    SequentialAnimation on scale {
+                        loops: Animation.Infinite
+                        running: !root.isActive && root.isLoading
+                        NumberAnimation { from: 0.8; to: 1.2; duration: 750; easing.type: Easing.InOutSine }
+                        NumberAnimation { from: 1.2; to: 0.8; duration: 750; easing.type: Easing.InOutSine }
+                    }
+                }
+            }
+            
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: root.loadingStatusText
+                color: "#2196F3"
+                font.pixelSize: 18 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 4 * mainWindow.uiScale
+                
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    running: !root.isActive && root.isLoading
+                    NumberAnimation { from: 0.4; to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 1.0; to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
+                }
+            }
+            
+            // Dynamic Loading Progress Bar
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 300 * mainWindow.uiScale
+                Layout.preferredHeight: 8 * mainWindow.uiScale
+                radius: 4 * mainWindow.uiScale
+                color: "#333333"
+                visible: !root.isActive && root.isLoading && root.estimatedGenerationMs > 0
+                clip: true
+                
+                Rectangle {
+                    id: loadingFill
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: parent.width * root.loadingProgress
+                    color: "#2196F3"
+                    radius: 4 * mainWindow.uiScale
+                }
+            }
+        }
+    }
 
     // Count-in Overlay (Metronome Lead-in) moved here to float over layout
     Rectangle {
@@ -849,6 +951,36 @@ Rectangle {
                 color: "#999999"
                 font.pixelSize: 14 * mainWindow.uiScale
             }
+        }
+    }
+
+    // Large Central Timing Feedback (for Pentascales)
+    Text {
+        id: centralFeedbackText
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: -50 * mainWindow.uiScale
+        font.pixelSize: 64 * mainWindow.uiScale
+        font.bold: true
+        font.letterSpacing: 4
+        color: {
+            if (text === "Perfect!") return "#4CAF50";
+            if (text === "Fast") return "#FFC107";
+            if (text === "Slow") return "#FF9800";
+            return "white";
+        }
+        visible: opacity > 0
+        opacity: 0
+        z: 150
+        
+        style: Text.Outline
+        styleColor: "black"
+        
+        SequentialAnimation {
+            id: centralFeedbackAnim
+            NumberAnimation { target: centralFeedbackText; property: "opacity"; from: 0; to: 1; duration: 100 }
+            NumberAnimation { target: centralFeedbackText; property: "scale"; from: 1.5; to: 1.0; duration: 200; easing.type: Easing.OutBack }
+            PauseAnimation { duration: 400 }
+            NumberAnimation { target: centralFeedbackText; property: "opacity"; to: 0; duration: 300 }
         }
     }
 }

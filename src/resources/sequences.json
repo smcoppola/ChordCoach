@@ -102,77 +102,6 @@
     },
     {
         "level": 2,
-        "title": "Left Hand C Scale",
-        "tempo_bpm": 70,
-        "time_signature": [
-            4,
-            4
-        ],
-        "notes": [
-            {
-                "pitch": 48,
-                "start_beat": 0,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 50,
-                "start_beat": 1,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 52,
-                "start_beat": 2,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 53,
-                "start_beat": 3,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 55,
-                "start_beat": 4,
-                "duration_beats": 2,
-                "hand": "L"
-            },
-            {
-                "pitch": 55,
-                "start_beat": 6,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 53,
-                "start_beat": 7,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 52,
-                "start_beat": 8,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 50,
-                "start_beat": 9,
-                "duration_beats": 1,
-                "hand": "L"
-            },
-            {
-                "pitch": 48,
-                "start_beat": 10,
-                "duration_beats": 2,
-                "hand": "L"
-            }
-        ]
-    },
-    {
-        "level": 3,
         "title": "When the Saints Go Marching In",
         "tempo_bpm": 100,
         "time_signature": [
@@ -279,7 +208,7 @@
         ]
     },
     {
-        "level": 4,
+        "level": 3,
         "title": "Hot Cross Buns (Hands Together)",
         "tempo_bpm": 72,
         "time_signature": [
@@ -392,7 +321,7 @@
         ]
     },
     {
-        "level": 5,
+        "level": 4,
         "title": "Scarborough Fair",
         "tempo_bpm": 85,
         "time_signature": [
@@ -517,7 +446,7 @@
         ]
     },
     {
-        "level": 6,
+        "level": 5,
         "title": "Minuet in G (Bach)",
         "tempo_bpm": 95,
         "time_signature": [
@@ -636,7 +565,7 @@
         ]
     },
     {
-        "level": 7,
+        "level": 6,
         "title": "Für Elise (Beethoven)",
         "tempo_bpm": 105,
         "time_signature": [
@@ -877,6 +806,89 @@
                 "start_beat": 11,
                 "duration_beats": 0.5,
                 "hand": "L"
+            }
+        ]
+    },
+    {
+        "level": 7,
+        "title": "Gospel / Jazz II-V-I (Block Chords)",
+        "tempo_bpm": 80,
+        "time_signature": [
+            4,
+            4
+        ],
+        "notes": [
+            {
+                "pitch": 46,
+                "start_beat": 0,
+                "duration_beats": 4,
+                "hand": "L"
+            },
+            {
+                "pitch": 62,
+                "start_beat": 0,
+                "duration_beats": 4,
+                "hand": "R"
+            },
+            {
+                "pitch": 65,
+                "start_beat": 0,
+                "duration_beats": 4,
+                "hand": "R"
+            },
+            {
+                "pitch": 69,
+                "start_beat": 0,
+                "duration_beats": 4,
+                "hand": "R"
+            },
+            {
+                "pitch": 39,
+                "start_beat": 4,
+                "duration_beats": 4,
+                "hand": "L"
+            },
+            {
+                "pitch": 61,
+                "start_beat": 4,
+                "duration_beats": 4,
+                "hand": "R"
+            },
+            {
+                "pitch": 67,
+                "start_beat": 4,
+                "duration_beats": 4,
+                "hand": "R"
+            },
+            {
+                "pitch": 70,
+                "start_beat": 4,
+                "duration_beats": 4,
+                "hand": "R"
+            },
+            {
+                "pitch": 32,
+                "start_beat": 8,
+                "duration_beats": 8,
+                "hand": "L"
+            },
+            {
+                "pitch": 60,
+                "start_beat": 8,
+                "duration_beats": 8,
+                "hand": "R"
+            },
+            {
+                "pitch": 63,
+                "start_beat": 8,
+                "duration_beats": 8,
+                "hand": "R"
+            },
+            {
+                "pitch": 67,
+                "start_beat": 8,
+                "duration_beats": 8,
+                "hand": "R"
             }
         ]
     }

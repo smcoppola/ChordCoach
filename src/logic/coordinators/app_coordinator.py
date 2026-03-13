@@ -193,7 +193,7 @@ class AppCoordinator(QObject):
                 "Your only job right now is the welcome sentence, then silence.\n</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
             )
             self.evaluation.startEvaluation(paused=True)
-            QTimer.singleShot(10000, self._evaluation_safety_start)
+            QTimer.singleShot(30000, self._evaluation_safety_start)
         else:
             self.evaluation.startEvaluation(paused=False)
 
@@ -208,7 +208,7 @@ class AppCoordinator(QObject):
                 "Mention that green arches show half-steps between notes, and they should click one to see its name. "
                 "Then STOP TALKING. Do NOT call any tools. Do NOT discuss exercises or lessons.\n</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
             )
-            QTimer.singleShot(10000, self._arch_tutorial_safety_start)
+            QTimer.singleShot(30000, self._arch_tutorial_safety_start)
         else:
             # No AI connected — clear immediately so QML shows content right away
             self._arch_intro_pending = False

@@ -52,11 +52,12 @@ class AppState(QObject):
     
     def __init__(self):
         super().__init__()
-        self._gemini = GeminiService()
-        self.midi_ingestor = MidiIngestor()
-        self.crawler = RepertoireCrawler()
         self.db = DatabaseManager(project_root / "database" / "userdata.db")
         self.settings = SettingsService(self.db, project_root)
+        self._gemini = GeminiService(self.settings)
+        
+        self.midi_ingestor = MidiIngestor()
+        self.crawler = RepertoireCrawler()
         self.curriculum = CurriculumService(self.db, project_root / "src" / "resources")
         self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings)
         self.evaluation_engine = EvaluationService(self.db, project_root)

@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import Qt5Compat.GraphicalEffects
 import "./components" as Components
 
 ApplicationWindow {
@@ -26,8 +27,10 @@ ApplicationWindow {
 
     // Main horizontal split
     RowLayout {
+        id: mainContent
         anchors.fill: parent
         spacing: 0
+        layer.enabled: settingsPopup.visible || onboardingOverlay.visible
 
         // 1. DASHBOARD SIDEBAR
         LeftSidebar {
@@ -44,6 +47,16 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
+    }
+    
+    // ── Global Background Blur for Popups ──
+    FastBlur {
+        anchors.fill: mainContent
+        source: mainContent
+        radius: (settingsPopup.visible || onboardingOverlay.visible) ? (20 * mainWindow.uiScale) : 0
+        visible: radius > 0
+        z: 40 // Above layout, below popups
+        Behavior on radius { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
     }
     
     // ── Settings Dialog ──

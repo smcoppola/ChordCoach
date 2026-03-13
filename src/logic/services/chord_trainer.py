@@ -85,6 +85,9 @@ class ChordTrainerService(QObject):
         self._session_stats: Dict[str, List[float]] = {}
         self._estimated_gen_ms = 5000.0
         self._exercise_history: List[str] = []
+        self._lesson_roadmap = ""  # Persist the roadmap (blocks) to survive reco drops
+        self._lesson_end_pending = False # Defer showing completion UI until AI finishes speaking
+        self._ai_is_currently_speaking = False
         
         # Inter-exercise commentary streak tracking
         self._consecutive_successes = 0
@@ -95,7 +98,7 @@ class ChordTrainerService(QObject):
         self._pentascale_index = 0
         self._pentascale_beat_count = 0
         self._metronome_timer = QTimer()
-        self._metronome_timer.setTimerType(Qt.PreciseTimer)
+        self._metronome_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._metronome_timer.timeout.connect(self._play_metronome_click)
         self._scale_name = ""
         
@@ -204,7 +207,7 @@ class ChordTrainerService(QObject):
     def isWaitingForAi(self) -> bool:
         return self._waiting_for_ai
 
-    @Property("QVariantList", notify=lessonStateChanged)
+    @Property(list, notify=lessonStateChanged)
     def lessonBlocks(self) -> list:
         return self._lesson_blocks
         
@@ -259,7 +262,7 @@ class ChordTrainerService(QObject):
     @Property(list, notify=targetChordChanged)
     def pentascaleNotes(self) -> list:
         return self._pentascale_sequence
-    @Property("QVariantList", notify=lessonStateChanged)
+    @Property(list, notify=lessonStateChanged)
     def struggledItems(self):
         """List of items where user performance was below threshold."""
         return self._struggled_items
@@ -382,8 +385,10 @@ class ChordTrainerService(QObject):
         else:
             blocks_text = "The student is a complete beginner. Start with a C Major Pentascale (C-D-E-F-G)."
 
+        self._lesson_roadmap = blocks_text
+        
         prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
-START A NEW LESSON.
+START A NEW LESSON. [INITIAL_LOAD]
 
 {user_context}
 
@@ -577,8 +582,20 @@ Start the lesson now by calling set_exercise and speaking.
     @Slot(str)
     def receive_lesson_end(self, feedback: str):
         """Called when the AI model emits an end_lesson tool call."""
-        print(f"ChordTrainer: Lesson ended by AI. Feedback: {feedback[:100]}")
+        print(f"ChordTrainer: Lesson end tool received. AI Speaking: {self._ai_is_currently_speaking}")
         
+        # If AI is speaking, don't show the completion screen yet.
+        # It will be triggered by resume_lesson when speech finishes.
+        if self._ai_is_currently_speaking:
+            self._lesson_end_pending = True
+            print("ChordTrainer: AI is still speaking final feedback. Deferring lesson end display.")
+            return
+
+        self._finalize_lesson_end()
+
+    def _finalize_lesson_end(self):
+        """Actually marks the lesson as complete and updates UI state."""
+        print("ChordTrainer: Finalizing lesson completion.")
         self._is_lesson_complete = True
         self._is_active = False
         self.activeChanged.emit(False)
@@ -774,10 +791,16 @@ Start the lesson now by calling set_exercise and speaking.
     def get_resume_context(self) -> str:
         """Build a prompt for the AI to resume a lesson after reconnection."""
         lines = ["<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>RESUME LESSON after connection drop."]
-        lines.append(f"Current exercise #{self._lesson_progress}: '{self._exercise_name}' (type={self._exercise_type})")
+        if hasattr(self, '_lesson_roadmap') and self._lesson_roadmap:
+            lines.append("STILL ACTIVE SESSION ROADMAP (Plan):")
+            lines.append(self._lesson_roadmap)
+            lines.append("\n" + "-"*20 + "\n")
+            
+        lines.append(f"Current overall lesson progress: step #{self._lesson_progress}")
+        lines.append(f"Last exercise reached: '{self._exercise_name}' (type={self._exercise_type})")
         
         if self._current_step_data:
-            lines.append(f"Last exercise data: {self._current_step_data}")
+            lines.append(f"Most recent exercise state data: {self._current_step_data}")
         
         # Include recent performance
         stats_lines = []
@@ -786,9 +809,9 @@ Start the lesson now by calling set_exercise and speaking.
                 avg_lat = sum(latencies) / len(latencies)
                 stats_lines.append(f"- {chord}: {len(latencies)} attempts, avg {avg_lat:.0f}ms")
         if stats_lines:
-            lines.append("Recent performance:\n" + "\n".join(stats_lines))
+            lines.append("Recent performance summary:\n" + "\n".join(stats_lines))
         
-        lines.append("\nCall set_exercise immediately for the next step. You may provide a 1-3 word micro-affirmation (e.g. 'Good', 'Again'), but do NOT give long explanations.")
+        lines.append("\nCRITICAL: You MUST follow the VARIETY RULE. Do not assign the same exercise twice in a row. Call set_exercise immediately for the next step.")
         lines.append("</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>")
         return "\n".join(lines)
 
@@ -913,9 +936,9 @@ Start the lesson now by calling set_exercise and speaking.
             interval_ms = int(60000 / bpm)
             self._pentascale_bpm = bpm
             self._pentascale_beat_count = -4  # 4-beat lead in (-4, -3, -2, -1)
-            # Defer metronome if coach is still speaking (first exercise)
-            if self._is_lesson_mode and self._lesson_progress <= 1:
-                print(f"ChordTrainer: Deferring metronome start ({bpm} BPM) until coach finishes")
+            # Defer metronome if coach is still speaking
+            if self._is_lesson_mode and (self._is_paused_for_speech or self._ai_is_currently_speaking):
+                print(f"ChordTrainer: Deferring metronome start ({bpm} BPM) until coach finishes speaking")
                 self._metronome_pending = {"bpm": bpm, "interval_ms": interval_ms}
             else:
                 self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4) # Time when beat 0 will hit
@@ -1209,8 +1232,14 @@ Start the lesson now by calling set_exercise and speaking.
     def resume_lesson(self):
         """Called when AI finishes speaking. Applies pending exercise if queued,
         plays deferred listen preview, or resets paused state."""
-        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speech finished, resuming lesson.")
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speech finished, resuming lesson. Pending end: {self._lesson_end_pending}")
         self._ai_is_currently_speaking = False
+        should_check_immediately = False
+
+        if self._lesson_end_pending:
+            self._lesson_end_pending = False
+            self._finalize_lesson_end()
+            return
         
         # Safety fallback: If the AI spoke its feedback but dropped the tool call, unlock the system so the user can continue
         if self._is_requesting_exercise:
@@ -1236,16 +1265,17 @@ Start the lesson now by calling set_exercise and speaking.
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Input unlocked.")
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
             self.inputReady.emit()
-            if not self._require_key_release_before_eval:
-                self._check_input() # Evaluate immediately now that speech is done
-            else:
-                print("ChordTrainer: Skipping immediate evaluation because key release lock is active.")
+            # Defer _check_input until metronome and pending exercises are handled
+            should_check_immediately = not self._require_key_release_before_eval
+        
         # Play deferred listen preview now that the coach is done talking
         if self._listen_preview_pending:
             self._listen_preview_pending = False
             if self._target_pitches:
                 print(f"ChordTrainer: Coach done, playing deferred MIDI preview: {self._target_pitches}")
+                self._listen_preview_pending_midi = self._target_pitches # Temporarily store for play_midi_preview
                 self._play_midi_preview(self._target_pitches)
+        
         # Start deferred metronome now that the coach is done talking
         if self._metronome_pending:
             pending = self._metronome_pending
@@ -1254,23 +1284,34 @@ Start the lesson now by calling set_exercise and speaking.
             self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4)
             self._metronome_timer.start(interval_ms)
             print(f"ChordTrainer: Coach done, starting deferred metronome at {pending['bpm']} BPM")
+            # If metronome is starting, skip immediate input evaluation to prevent "pre-hits"
+            should_check_immediately = False
+            
         # If an exercise arrived while the AI was speaking AND the student
-        # isn't currently working on one, apply it now. If they ARE mid-exercise,
+        # isn't currently working on one, apply it now.
         if self._pending_exercise and self._is_lesson_mode and not self._target_chord_name:
             exercise = self._pending_exercise
             self._pending_exercise = None
             print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
             self._apply_exercise(exercise)
+            should_check_immediately = False # Apply exercise will handle its own input check
+            
+        # Finally, perform immediate evaluation if still appropriate
+        if should_check_immediately:
+            print("ChordTrainer: Performing deferred immediate input evaluation.")
+            self._check_input()
+        elif self._require_key_release_before_eval:
+             print("ChordTrainer: Skipping immediate evaluation because key release lock is active.")
             
         # Failsafe: If the AI finished speaking but forgot to call set_exercise, 
         # or it hasn't arrived yet, nudge it.
-        if self._is_lesson_mode and (self._is_loading or not self._target_chord_name):
+        if self._is_lesson_mode and not self._is_lesson_complete and (self._is_loading or not self._target_chord_name):
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach finished speaking but no exercise is active. Arming 3s failsafe timer.")
             QTimer.singleShot(3000, self._check_failsafe)
 
     def _check_failsafe(self):
         """Called 3 seconds after audio completes. If no chord is active, the tool call never arrived or was rejected."""
-        if self._is_lesson_mode and not self._target_chord_name:
+        if self._is_lesson_mode and not self._is_lesson_complete and not self._target_chord_name:
             if self._is_loading:
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Failsafe timer popped (Initial Load)! Re-prompting AI for missing set_exercise.")
                 self.requestLessonStart.emit("[System: You forgot to call the set_exercise tool. Please call it now to start the session.]")
@@ -1423,7 +1464,11 @@ Start the lesson now by calling set_exercise and speaking.
     def _check_pentascale(self):
         """Validates single-note input for pentascale exercises."""
         # Wait until the lead-in is complete if we are running a metronome
+        if self._is_paused_for_speech or self._metronome_pending:
+            return
+            
         if self._metronome_timer.isActive() and self._pentascale_beat_count < 0:
+            # Strictly ignore input during lead-in
             return
             
         if not self._pentascale_sequence or self._pentascale_index >= len(self._pentascale_sequence):
@@ -1465,8 +1510,9 @@ Start the lesson now by calling set_exercise and speaking.
             
             if self._pentascale_index >= len(self._pentascale_sequence):
                 # All 5 notes played correctly — complete the step
+                # Delay slightly so the final dot has time to turn green in the UI
                 self._metronome_timer.stop()
-                self._complete_chord()
+                QTimer.singleShot(600, self._complete_chord)
             else:
                 # Update target intervals to next note (no release wait — allows legato)
                 next_pitch = self._pentascale_sequence[self._pentascale_index]
@@ -1476,23 +1522,21 @@ Start the lesson now by calling set_exercise and speaking.
         self.targetChordChanged.emit(self._target_chord_name)
 
     def _check_chord(self):
-        if not self._target_intervals:
+        if not self._target_pitches:
             return
 
-        # Convert active pitches to their normalized intervals (0-11)
-        active_intervals = {pitch % 12 for pitch in self._active_pitches}
+        active_set = set(self._active_pitches)
+        target_set = set(self._target_pitches)
         
-        # Check if the currently held keys exactly match the target intervals
-        # (Must contain all required notes, and no extra notes)
-        if active_intervals == self._target_intervals:
+        # Check for exact pitch match (octave-strict)
+        if active_set == target_set:
             self._wrong_chord_timer.stop()
             self._sustain_grace_timer.stop()
             
             if self._exercise_type == "hands_together":
-                # Must be playing at least one note in the bass range (octave 2-3 -> pitches 36-59)
-                has_bass = any(p < 60 for p in self._active_pitches)
-                if not has_bass:
-                    return # Keep waiting for them to add the left hand
+                # redundant with exact set match but kept for clarity:
+                # target_set already includes the low notes.
+                pass
 
             if not self._is_holding:
                 self._is_holding = True
@@ -1525,11 +1569,18 @@ Start the lesson now by calling set_exercise and speaking.
                     elif self._required_hold_ms == 0:
                         self._complete_chord()
         else:
-            # If they are holding the correct NUMBER of keys but they are not the right intervals,
-            # we consider this a "failed attempt". Give a generous 300ms window to adjust sloppy human hands.
-            if len(active_intervals) == len(self._target_intervals) and not self._is_holding:
-                if not self._wrong_chord_timer.isActive():
-                    self._wrong_chord_timer.start(300)
+            # If they are holding the correct NUMBER of keys but they are not right,
+            # decide if we should flash red (wrong notes) or just wait (wrong octave).
+            if len(self._active_pitches) == len(self._target_pitches) and not self._is_holding:
+                # Check if it's just an octave error
+                active_intervals = {p % 12 for p in self._active_pitches}
+                if active_intervals == self._target_intervals:
+                    # Right notes, wrong octave. No red flash, just stay silent.
+                    self._wrong_chord_timer.stop()
+                else:
+                    # Wrong notes entirely. Start the "You missed" timer for red flash.
+                    if not self._wrong_chord_timer.isActive():
+                        self._wrong_chord_timer.start(300)
             else:
                 self._wrong_chord_timer.stop()
                 
@@ -1625,8 +1676,19 @@ Start the lesson now by calling set_exercise and speaking.
             self._consecutive_successes += 1
         
         # Notify UI
-        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordSuccess ({self._target_chord_name}, {latency_ms:.1f}ms)")
-        self.chordSuccess.emit(self._target_chord_name, latency_ms)
+        display_name = self._target_chord_name
+        if self._exercise_type == "pentascale":
+            # For pentascales, show a qualitative summary instead of raw ms
+            # Calculate quality based on avg latency or wrong notes (simple version for now)
+            if self._wrong_notes_count == 0:
+                display_name = "Excellent Timing!"
+            elif self._wrong_notes_count <= 2:
+                display_name = "Good Pace"
+            else:
+                display_name = "Keep Practicing"
+                
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordSuccess ({display_name}, {latency_ms:.1f}ms)")
+        self.chordSuccess.emit(display_name, latency_ms)
         
         # Reset hold state
         self._hold_progress = 0.0
@@ -1653,8 +1715,13 @@ Start the lesson now by calling set_exercise and speaking.
             # For listening quizzes, the user answers via UI, not keys. Pause briefly then move on.
             QTimer.singleShot(700, self._next_chord)
         else:
-            print("ChordTrainer: Waiting for user to release all keys...")
-            self._waiting_for_release = True
+            if len(self._active_pitches) == 0:
+                print("ChordTrainer: All keys already released. Advancing.")
+                self._waiting_for_release = False
+                QTimer.singleShot(700, self._next_chord)
+            else:
+                print("ChordTrainer: Waiting for user to release all keys...")
+                self._waiting_for_release = True
 
     @Slot()
     def _play_metronome_click(self):

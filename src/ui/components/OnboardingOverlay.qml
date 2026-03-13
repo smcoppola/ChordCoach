@@ -24,7 +24,8 @@ Rectangle {
     
     function show() {
         root.visible = true;
-        root.phase = 0;
+        var hasKey = (typeof appState !== "undefined" && appState && appState.settingsService && appState.settingsService.apiKey !== "");
+        root.phase = hasKey ? 0 : -1;
         showAnim.start();
     }
     
@@ -78,6 +79,149 @@ Rectangle {
         function onArchIntroPendingChanged() {
             if (!appState.archIntroPending) {
                 root.waitingForVoice = false;
+            }
+        }
+    }
+
+    // ── Phase -1: API Key Setup ──
+    Item {
+        anchors.fill: parent
+        visible: root.phase === -1
+        
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 25 * mainWindow.uiScale
+            width: Math.min(parent.width * 0.8, 550 * mainWindow.uiScale)
+            
+            Text {
+                text: "✨"
+                font.pixelSize: 64 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Text {
+                text: "Connect to Gemini AI"
+                color: "#ffffff"
+                font.pixelSize: 32 * mainWindow.uiScale
+                font.bold: true
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Text {
+                text: "ChordCoach uses Google's Gemini AI to provide real-time coaching, feedback, and custom lesson plans. To get started, you'll need a free Google AI API key."
+                color: "#aaaaaa"
+                font.pixelSize: 15 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                lineHeight: 1.4
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 10 * mainWindow.uiScale
+                spacing: 12 * mainWindow.uiScale
+
+                TextField {
+                    id: keyInput
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 50 * mainWindow.uiScale
+                    placeholderText: "Paste your Google AI API key here..."
+                    echoMode: TextInput.Password
+                    font.pixelSize: 14 * mainWindow.uiScale
+                    color: "#ffffff"
+                    
+                    background: Rectangle {
+                        color: "#1a1a1a"
+                        radius: 8 * mainWindow.uiScale
+                        border.color: keyInput.activeFocus ? "#2196F3" : "#333333"
+                        border.width: keyInput.activeFocus ? 2 : 1
+                        
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
+                    }
+                    
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12 * mainWindow.uiScale
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: (keyInput.echoMode === TextInput.Password) ? "Show" : "Hide"
+                        color: "#2196F3"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.bold: true
+                        opacity: keyInput.text.length > 0 ? 0.8 : 0.0
+                        
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: keyInput.echoMode = (keyInput.echoMode === TextInput.Password ? TextInput.Normal : TextInput.Password)
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Your key is stored locally on this computer only."
+                    color: "#666666"
+                    font.pixelSize: 11 * mainWindow.uiScale
+                    Layout.alignment: Qt.AlignHCenter
+                }
+            }
+            
+            Item { Layout.preferredHeight: 15 * mainWindow.uiScale }
+            
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 260 * mainWindow.uiScale
+                Layout.preferredHeight: 54 * mainWindow.uiScale
+                radius: 27 * mainWindow.uiScale
+                color: keyInput.text.trim().length > 10 ? (saveKeyMA.containsMouse ? "#1E88E5" : "#2196F3") : "#333333"
+                opacity: keyInput.text.trim().length > 10 ? 1.0 : 0.5
+                
+                Text {
+                    anchors.centerIn: parent
+                    text: "Save & Continue"
+                    color: "#ffffff"
+                    font.pixelSize: 16 * mainWindow.uiScale
+                    font.bold: true
+                }
+                
+                MouseArea {
+                    id: saveKeyMA
+                    anchors.fill: parent
+                    enabled: keyInput.text.trim().length > 10
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (typeof appState !== "undefined" && appState && appState.settingsService) {
+                            appState.settingsService.apiKey = keyInput.text.trim();
+                            // Attempt to connect immediately so the coach is ready for the welcome phase
+                            if (typeof appState.gemini !== "undefined" && !appState.gemini.connected) {
+                                var context = appState.curriculumEngine.get_curriculum_context();
+                                appState.gemini.connect_service(
+                                    context,
+                                    appState.settingsService.coachVoice,
+                                    appState.settingsService.coachBrevity,
+                                    appState.settingsService.coachPersonality
+                                );
+                            }
+                        }
+                        root.phase = 0;
+                    }
+                }
+            }
+
+            Text {
+                text: "<u>Get a free API key here</u>"
+                color: "#2196F3"
+                font.pixelSize: 13 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+                textFormat: Text.RichText
+                
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Qt.openUrlExternally("https://aistudio.google.com/app/apikey")
+                }
             }
         }
     }

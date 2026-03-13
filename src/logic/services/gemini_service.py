@@ -66,6 +66,7 @@ class GeminiService(QObject):
         self._audio_timer.start(10)
         
         self._is_speaking_state = False
+        self._turn_complete = True # Start as complete
         self._exercise_pending = False  # Track if an exercise is awaiting completion
         
         # Start the asyncio loop in a background thread so we don't block the Qt UI
@@ -103,9 +104,14 @@ class GeminiService(QObject):
             if time_since_last > 0.2:
                 is_empty = self.audio_sink and self.audio_sink.bytesFree() >= self.audio_sink.bufferSize() * 0.95
                 if is_empty or time_since_last > 1.0:
-                    print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED")
-                    self._is_speaking_state = False
-                    self.aiFinishedSpeaking.emit()
+                    # ONLY emit finished if the protocol turn is also complete.
+                    # This prevents early unpausing during network jitter or sentence gaps.
+                    if self._turn_complete:
+                        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED (Turn Complete)")
+                        self._is_speaking_state = False
+                        self.aiFinishedSpeaking.emit()
+                    else:
+                        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio buffer empty but turn still in progress.")
 
         if not self._audio_buffer:
             return
@@ -472,9 +478,12 @@ class GeminiService(QObject):
                                 if b64_audio:
                                     audio_bytes = base64.b64decode(b64_audio)
                                     self.audioDataReceived.emit(audio_bytes)
-                                
+                                    self._turn_complete = False # We got data, turn is definitely not done.
+
                     if content.get("turnComplete"):
                         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Received turnComplete from API.")
+                        self._turn_complete = True
+                        
                         # If the model turn is complete but we never started speaking, it was silent!
                         # But wait to make sure the audio playback buffer is actually empty.
                         if not self._is_speaking_state and len(self._audio_buffer) == 0:
@@ -541,9 +550,10 @@ class GeminiService(QObject):
     def send_prompt(self, prompt: str):
         """Send a standard text message."""
         if not self.connected or not self.ws:
-            print("Gemini Service: Not connected.")
+            print("Gemini Service: Not connected. Dropping prompt.")
             return
 
+        self._turn_complete = False # Expecting a response
             
         # Format the message correctly for the Bidi API
         msg = {

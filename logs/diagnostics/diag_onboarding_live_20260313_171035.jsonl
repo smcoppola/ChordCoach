@@ -1,0 +1,13 @@
+{"timestamp": "2026-03-13T17:10:35.146992", "elapsed_ms": 0.34, "event": "TEST_START", "details": "Initializing LIVE services (NO MOCKS FOR GEMINI)..."}
+{"timestamp": "2026-03-13T17:10:35.180529", "elapsed_ms": 33.87, "event": "PHASE_-1", "details": "Testing API Key Guard..."}
+{"timestamp": "2026-03-13T17:10:35.181008", "elapsed_ms": 34.35, "event": "STATE_CHECK", "details": "Validated: API Key is missing."}
+{"timestamp": "2026-03-13T17:10:35.181386", "elapsed_ms": 34.73, "event": "UI_INPUT", "details": "Entering real API key..."}
+{"timestamp": "2026-03-13T17:10:35.182133", "elapsed_ms": 35.48, "event": "SERVICE_INIT", "details": "Connecting to Gemini..."}
+{"timestamp": "2026-03-13T17:10:35.680273", "elapsed_ms": 533.62, "event": "PHASE_1", "details": "Starting Skill Evaluation with REAL AI Intro..."}
+{"timestamp": "2026-03-13T17:10:35.681518", "elapsed_ms": 534.86, "event": "WAITING", "details": "Waiting for AI intro TURN COMPLETE..."}
+{"timestamp": "2026-03-13T17:11:05.685443", "elapsed_ms": 30538.79, "event": "WARN", "details": "AI Finished Speaking timed out or was skipped."}
+{"timestamp": "2026-03-13T17:11:05.686208", "elapsed_ms": 30539.55, "event": "LEVEL_SESSION", "details": "Beginning Level 1: Ode to Joy"}
+{"timestamp": "2026-03-13T17:11:05.697545", "elapsed_ms": 30550.89, "event": "METRONOME_TICK", "details": "Beat 1"}
+{"timestamp": "2026-03-13T17:11:06.361233", "elapsed_ms": 31214.58, "event": "METRONOME_TICK", "details": "Beat 2"}
+{"timestamp": "2026-03-13T17:11:07.025224", "elapsed_ms": 31878.57, "event": "METRONOME_TICK", "details": "Beat 3"}
+{"timestamp": "2026-03-13T17:11:07.687613", "elapsed_ms": 32540.96, "event": "METRONOME_TICK", "details": "Beat 4"}

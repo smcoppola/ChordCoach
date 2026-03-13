@@ -16,12 +16,6 @@ Rectangle {
         var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
         console.log("[TIMING " + timeStr + "] QML EnhancedSheetMusic updated target: " + targetChordName);
     }
-    property bool isBlurred: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
-    onIsBlurredChanged: {
-        var d = new Date();
-        var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
-        console.log("[TIMING " + timeStr + "] QML EnhancedSheetMusic isBlurred: " + isBlurred);
-    }
     
     // Evaluation / scrolling mode properties (generic — reusable for MIDI playback)
     property string displayMode: "trainer"  // "trainer" or "evaluation"
@@ -627,12 +621,4 @@ Rectangle {
     }
     
     // Blur overlay applied when waiting for the next exercise
-    FastBlur {
-        anchors.fill: staffBackground
-        source: staffBackground
-        radius: isBlurred ? (16 * mainWindow.uiScale) : 0
-        visible: radius > 0
-        Behavior on radius { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
-        z: 1000
-    }
 }

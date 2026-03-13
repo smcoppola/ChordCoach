@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import Qt5Compat.GraphicalEffects
 
 Rectangle {
     id: root
@@ -10,7 +11,19 @@ Rectangle {
     signal startReview()
     signal freePractice()
 
+    layer.enabled: durationPicker.visible
+
+    FastBlur {
+        anchors.fill: dashboardContent
+        source: dashboardContent
+        radius: durationPicker.visible ? (20 * mainWindow.uiScale) : 0
+        visible: radius > 0
+        z: 90
+        Behavior on radius { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    }
+
     ColumnLayout {
+        id: dashboardContent
         anchors.centerIn: parent
         width: parent.width * 0.8
         spacing: 40 * mainWindow.uiScale
