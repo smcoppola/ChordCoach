@@ -40,7 +40,7 @@ class EvaluationService(QObject):
 
         # Timing
         self._beat_timer = QTimer()
-        self._beat_timer.setTimerType(Qt.PreciseTimer)
+        self._beat_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._tick_interval_ms = 10  # 100fps update rate for buttery smooth movement
         self._beat_timer.setInterval(self._tick_interval_ms)
         self._beat_timer.timeout.connect(self._advance_beat)

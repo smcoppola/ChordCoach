@@ -55,17 +55,31 @@ resources_folder = (
     'src/resources'
 )
 
-datas_list = [ui_files, database_folder, resources_folder]
-if os.path.exists('.env'):
-    datas_list.append(env_file)
-if os.path.exists(app_icon):
-    datas_list.append(icon_file)
+datas_list = []
 
-binaries_list = [hw_extension]
+# Essential UI and Resource files
+if os.path.isdir('src/ui'):
+    datas_list.append(('src/ui', 'ui'))
+if os.path.isdir('src/resources'):
+    datas_list.append(('src/resources', 'src/resources'))
+
+# Database folder (optional at build time)
+if os.path.isdir('database'):
+    datas_list.append(('database', 'database'))
+
+# Configuration and Icon
+if os.path.exists('.env'):
+    datas_list.append(('.env', '.'))
+if os.path.exists(app_icon):
+    datas_list.append((app_icon, 'resources'))
+
+binaries_list = []
+if os.path.exists(hw_ext_path):
+    binaries_list.append((hw_ext_path, '.'))
 if os.path.exists(rtmidi_lib_path):
-    binaries_list.append(rtmidi_dll)
+    binaries_list.append((rtmidi_lib_path, '.'))
 if os.path.exists(portaudio_lib_path):
-    binaries_list.append(portaudio_dll)
+    binaries_list.append((portaudio_lib_path, '.'))
 
 a = Analysis(
     ['src/app.py'],

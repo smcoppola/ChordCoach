@@ -19,7 +19,7 @@ from typing import cast
 # --- Environment Bootstrap ---
 # This must happen before we try to import chordcoach_hw or load the UI
 import core.bootstrap as bootstrap
-project_root, hw_bin_path, is_frozen = bootstrap.setup_env()
+project_root, hw_bin_path, user_data_path, is_frozen = bootstrap.setup_env()
 
 try:
     import chordcoach_hw # type: ignore
@@ -38,6 +38,7 @@ from logic.services.evaluation_service import EvaluationService # type: ignore
 from logic.services.adaptive_engine import AdaptiveEngineService # type: ignore
 from logic.services.settings_service import SettingsService # type: ignore
 from logic.services.curriculum_service import CurriculumService # type: ignore
+from logic.services.circle_of_fifths_service import CircleOfFifthsService # type: ignore
 from logic.coordinators.app_coordinator import AppCoordinator # type: ignore
 
 class AppState(QObject):
@@ -52,9 +53,10 @@ class AppState(QObject):
     
     def __init__(self):
         super().__init__()
-        self.db = DatabaseManager(project_root / "database" / "userdata.db")
-        self.settings = SettingsService(self.db, project_root)
+        self.db = DatabaseManager(user_data_path / "database" / "userdata.db")
+        self.settings = SettingsService(self.db, user_data_path)
         self._gemini = GeminiService(self.settings)
+        self._circle_of_fifths = CircleOfFifthsService()
         
         self.midi_ingestor = MidiIngestor()
         self.crawler = RepertoireCrawler()
@@ -94,6 +96,7 @@ class AppState(QObject):
         
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
+        self.hw_service.midiNoteReceived.connect(self._circle_of_fifths.handle_midi_note)
         
         # Initialize the hardware layer
         self.hw_service.initialize()
@@ -128,6 +131,10 @@ class AppState(QObject):
     @Property(QObject, constant=True)
     def gemini(self):
         return self._gemini
+
+    @Property(QObject, constant=True)
+    def circleOfFifths(self):
+        return self._circle_of_fifths
 
     @Property(bool, notify=midiConnectedChanged)
     def midiConnected(self):

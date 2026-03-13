@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import "components"
 
 Rectangle {
     id: root
@@ -228,6 +229,31 @@ Rectangle {
         Item { Layout.preferredHeight: 16 }
         
         Item { Layout.fillHeight: true }
+
+        // ── Circle of Fifths ──
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 8 * mainWindow.uiScale
+            
+            Text {
+                text: "CIRCLE OF FIFTHS"
+                color: "#666666"
+                font.pixelSize: 10 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            CircleOfFifths {
+                id: circleOfFifths
+                Layout.preferredWidth: 200 * mainWindow.uiScale
+                Layout.preferredHeight: 200 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+            }
+        }
+        
+        Item { Layout.preferredHeight: 20 }
 
         // ── Hardware Status ──
         Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }

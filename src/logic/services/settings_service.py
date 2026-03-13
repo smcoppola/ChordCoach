@@ -15,10 +15,11 @@ class SettingsService(QObject):
     invertPedalChanged = Signal()
     midiOutChanged = Signal()
 
-    def __init__(self, db_manager, project_root):
+    def __init__(self, db_manager, user_data_path):
         super().__init__()
         self.db = db_manager
-        self.env_file = project_root / ".env"
+        self.user_data_path = Path(user_data_path)
+        self.env_file = self.user_data_path / ".env"
 
     # ── Generic .env helpers ──────────────────────────────────────────
 
@@ -35,9 +36,12 @@ class SettingsService(QObject):
                 try:
                     with open(self.env_file, "r", encoding="utf-8") as f:
                         lines = f.readlines()
-                except UnicodeDecodeError:
-                    with open(self.env_file, "r", encoding="utf-16") as f:
-                        lines = f.readlines()
+                except (UnicodeDecodeError, Exception):
+                    try:
+                        with open(self.env_file, "r", encoding="utf-16") as f:
+                            lines = f.readlines()
+                    except Exception:
+                        lines = []
             
             new_lines = []
             found = False
@@ -58,10 +62,10 @@ class SettingsService(QObject):
     # ── API Key ───────────────────────────────────────────────────────
 
     @Property(str, notify=apiKeyChanged)
-    def apiKey(self):
+    def apiKey(self): # type: ignore
         return os.environ.get("GOOGLE_API_KEY", "")
 
-    @apiKey.setter
+    @apiKey.setter # type: ignore
     def apiKey(self, val):
         if os.environ.get("GOOGLE_API_KEY") != val:
             self._set_env("GOOGLE_API_KEY", val)
@@ -70,7 +74,7 @@ class SettingsService(QObject):
     # ── Coach Voice ───────────────────────────────────────────────────
 
     @Property(str, notify=coachSettingsChanged)
-    def coachVoice(self) -> str:
+    def coachVoice(self) -> str: # type: ignore
         return self._get_env("COACH_VOICE", "Kore")
 
     @coachVoice.setter # type: ignore
@@ -81,7 +85,7 @@ class SettingsService(QObject):
     # ── Coach Brevity ─────────────────────────────────────────────────
 
     @Property(str, notify=coachSettingsChanged)
-    def coachBrevity(self) -> str:
+    def coachBrevity(self) -> str: # type: ignore
         return self._get_env("COACH_BREVITY", "Normal")
 
     @coachBrevity.setter # type: ignore
@@ -92,7 +96,7 @@ class SettingsService(QObject):
     # ── Coach Personality ─────────────────────────────────────────────
 
     @Property(str, notify=coachSettingsChanged)
-    def coachPersonality(self) -> str:
+    def coachPersonality(self) -> str: # type: ignore
         return self._get_env("COACH_PERSONALITY", "Encouraging")
 
     @coachPersonality.setter # type: ignore
@@ -103,7 +107,7 @@ class SettingsService(QObject):
     # ── MIDI Output ───────────────────────────────────────────────────
 
     @Property(bool, notify=midiOutChanged)
-    def midiOutEnabled(self) -> bool:
+    def midiOutEnabled(self) -> bool: # type: ignore
         # Default to disabled on macOS (budget USB-MIDI keyboards buzz)
         default = "false" if sys.platform == "darwin" else "true"
         return self._get_env("MIDI_OUT_ENABLED", default).lower() in ("true", "1", "yes")
@@ -119,11 +123,11 @@ class SettingsService(QObject):
     def skillMatrixSummary(self):
         return self.db.get_coach_context()
 
-    @Property("QVariantList", notify=statsChanged)
+    @Property(list, notify=statsChanged)
     def chordStats(self):
         return self.db.get_all_chord_stats()
 
-    @Property("QVariantList", notify=statsChanged)
+    @Property(list, notify=statsChanged)
     def songStats(self):
         return self.db.get_all_song_stats()
 

@@ -20,11 +20,23 @@ def _build_subdir() -> str:
     """CMake multi-config generators (MSVC) put binaries in Release/; single-config (Make/Ninja) don't."""
     return "Release" if sys.platform == "win32" else ""
 
-def setup_env() -> tuple[Path, Path, bool]:
+def _get_user_data_dir() -> Path:
+    """Return a platform-specific writable directory for application data."""
+    if sys.platform == "win32":
+        path = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "ChordCoach"
+    elif sys.platform == "darwin":
+        path = Path(os.path.expanduser("~/Library/Application Support/ChordCoach"))
+    else:  # Linux / other POSIX
+        path = Path(os.path.expanduser("~/.local/share/chordcoach"))
+    
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+def setup_env() -> tuple[Path, Path, Path, bool]:
     """
     Initializes the environment. Must be called before Qt imports.
     Returns:
-        tuple: (project_root_path, hw_bin_path, is_frozen)
+        tuple: (project_root_path, hw_bin_path, user_data_path, is_frozen)
     """
     is_frozen = getattr(sys, 'frozen', False)
     
@@ -34,6 +46,7 @@ def setup_env() -> tuple[Path, Path, bool]:
         project_root = bundle_dir
         hw_bin_path = bundle_dir
         native_lib_dir = bundle_dir
+        user_data_path = _get_user_data_dir()
         # Explicitly point to QtWebEngineProcess for some PySide6 environments
         if sys.platform == "win32":
             os.environ["QTWEBENGINEPROCESS_PATH"] = str(bundle_dir / "PySide6" / "QtWebEngineProcess.exe")
@@ -56,9 +69,15 @@ def setup_env() -> tuple[Path, Path, bool]:
         project_root = Path(__file__).parent.parent.parent
         hw_bin_path = project_root / "build" / "src" / "hardware" / _build_subdir()
         native_lib_dir = None
+        user_data_path = project_root
 
     # Load env vars manually for local testing
-    env_file = project_root / ".env"
+    # In frozen mode, we look for .env in the user_data_path first
+    env_file = user_data_path / ".env"
+    if not env_file.exists() and is_frozen:
+        # Fallback to bundle root for initial defaults if user hasn't set anything
+        env_file = project_root / ".env"
+
     if env_file.exists():
         try:
             with open(env_file, "r", encoding="utf-8") as f:
@@ -103,4 +122,4 @@ def setup_env() -> tuple[Path, Path, bool]:
     # Use the Basic style to allow full customization of UI components (removes native warnings)
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Basic"
 
-    return project_root, hw_bin_path, is_frozen
+    return project_root, hw_bin_path, user_data_path, is_frozen

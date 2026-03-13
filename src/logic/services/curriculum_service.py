@@ -240,8 +240,8 @@ class CurriculumService(QObject):
 
     # ── QML Properties ────────────────────────────────────────────────
 
-    # Must explicitly type as QVariantList for QML Repeater to work correctly
-    @Property("QVariantList", notify=curriculumChanged)
+    # Use standard Python types; PySide6 handles these as QVariantList/QVariantMap
+    @Property(list, notify=curriculumChanged)
     def activeMilestones(self) -> list:
         """Active milestones with metadata for QML display."""
         # If we are NOT in an active session plan, show nothing in the curriculum panel
@@ -288,11 +288,11 @@ class CurriculumService(QObject):
         print(f"CurriculumService: Extracted {len(result)} active milestones for QML: {result}")
         return result
 
-    @Property("QVariantList", notify=curriculumChanged)
+    @Property(list, notify=curriculumChanged)
     def recentSessions(self) -> list:
         return self.db.get_recent_sessions(limit=5)
 
-    @Property("QVariantMap", notify=sessionPlanReady)
+    @Property(dict, notify=sessionPlanReady)
     def currentSessionPlan(self) -> dict:
         return self._session_plan
 

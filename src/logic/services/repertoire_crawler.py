@@ -41,11 +41,12 @@ class RepertoireCrawler(QObject):
             target_page_url = ""
             
             for link in links:
-                href = link['href']
-                if "-mid" in href and not href.startswith("/search") and not href.startswith("/random"):
-                    # We found a direct link to a song page
-                    target_page_url = self.base_url + href
-                    break
+                href = link.get('href')
+                if href and isinstance(href, str) and "-mid" in href:
+                    if not href.startswith("/search") and not href.startswith("/random"):
+                        # We found a direct link to a song page
+                        target_page_url = self.base_url + href
+                        break
                     
             if not target_page_url:
                 err = f"No MIDI files found on BitMidi for query: '{query}'"
@@ -72,15 +73,17 @@ class RepertoireCrawler(QObject):
             soup = BeautifulSoup(response.text, "html.parser")
             
             # BitMidi download links specifically say "Download MIDI"
-            download_link = soup.find('a', string=lambda t: t and 'Download' in t and 'MIDI' in t)
+            download_link = soup.find('a', string=lambda t: t and 'Download' in t and 'MIDI' in t) # type: ignore
             
             if not download_link or not download_link.get('href'):
-                 # Fallback: find any a-tag that directly links to a file downloaded from their CDN
+                 # Fallback: find any a-tag that directly links to a file
                  links = soup.find_all('a', href=True)
                  for l in links:
-                     if "download" in l.get('href', '').lower() or l.get('href', '').endswith('.mid'):
-                         download_link = l
-                         break
+                     href = l.get('href')
+                     if href and isinstance(href, str):
+                         if "download" in href.lower() or href.lower().endswith('.mid'):
+                             download_link = l
+                             break
 
             if not download_link or not download_link.get('href'):
                  err = "Could not locate the actual download link on the song page."
@@ -88,7 +91,13 @@ class RepertoireCrawler(QObject):
                  self.downloadFailed.emit(err)
                  return
                  
-            dl_href = download_link['href']
+            dl_href = download_link.get('href')
+            if not dl_href or not isinstance(dl_href, str):
+                 err = "Download link is invalid."
+                 print(f"Repertoire Crawler: {err}")
+                 self.downloadFailed.emit(err)
+                 return
+                 
             # Sometimes it's a relative link
             if dl_href.startswith('/'):
                  actual_dl_url = self.base_url + dl_href
