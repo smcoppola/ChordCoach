@@ -615,11 +615,18 @@ Start the lesson now by calling set_exercise and speaking.
     
     def _update_lesson_blocks(self, exercise_data: dict):
         """Incrementally add to the lesson blocks sidebar as exercises arrive."""
-        name = exercise_data.get("exercise_name", "Exercise")
         track = exercise_data.get("track", "")
+        milestone_id = exercise_data.get("milestone_id", "")
         ex_type = exercise_data.get("exercise_type", "chord")
         
-        if self._lesson_blocks and self._lesson_blocks[-1]["name"] == name:
+        group_title = ""
+        if hasattr(self, 'curriculum') and self.curriculum and track and milestone_id:
+            group_title = self.curriculum.get_milestone_title(track, milestone_id)
+            
+        if not group_title:
+            group_title = f"{ex_type.capitalize()} Drills"
+
+        if self._lesson_blocks and self._lesson_blocks[-1]["name"] == group_title:
             # Extend existing block
             self._lesson_blocks[-1]["stepCount"] += 1
             self._lesson_blocks[-1]["endStep"] = self._lesson_progress
@@ -627,7 +634,7 @@ Start the lesson now by calling set_exercise and speaking.
             # New block
             self._lesson_blocks.append({
                 "track": track,
-                "name": name,
+                "name": group_title,
                 "type": ex_type,
                 "stepCount": 1,
                 "startStep": self._lesson_progress,
@@ -691,25 +698,31 @@ Start the lesson now by calling set_exercise and speaking.
     def _compute_lesson_blocks(self):
         """Build a stable block summary from the current playlist for the sidebar.
         
-        Groups consecutive steps with the same exercise_name into blocks.
+        Groups consecutive steps by Milestone Title or Type.
         Each block tracks its cumulative step range so the QML sidebar can
         determine which block is active based on lessonProgress.
         """
         blocks = []
         cumulative = 0
         for step in self._lesson_playlist:
-            name = step.get("exercise_name", "Exercise")
             track = step.get("track", "")
+            milestone_id = step.get("milestone_id", "")
             ex_type = step.get("exercise_type", "chord")
             
-            # Group consecutive steps with the same exercise_name
-            if blocks and blocks[-1]["name"] == name:
+            group_title = ""
+            if hasattr(self, 'curriculum') and self.curriculum and track and milestone_id:
+                group_title = self.curriculum.get_milestone_title(track, milestone_id)
+            if not group_title:
+                group_title = f"{ex_type.capitalize()} Drills"
+            
+            # Group consecutive steps with the same aggregated title
+            if blocks and blocks[-1]["name"] == group_title:
                 blocks[-1]["stepCount"] += 1
                 blocks[-1]["endStep"] = cumulative + 1
             else:
                 blocks.append({
                     "track": track,
-                    "name": name,
+                    "name": group_title,
                     "type": ex_type,
                     "stepCount": 1,
                     "startStep": cumulative + 1,  # 1-indexed to match lessonProgress

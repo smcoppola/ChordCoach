@@ -51,6 +51,13 @@ class CurriculumService(QObject):
                 return m
         return {}
 
+    def get_milestone_title(self, track_name: str, milestone_id: str) -> str:
+        """User-facing accessor to look up a milestone title."""
+        if not track_name or not milestone_id:
+            return ""
+        meta = self._get_milestone_meta(track_name, milestone_id)
+        return meta.get("title", "")
+
     # ── Session Planning ──────────────────────────────────────────────
 
     def plan_session(self, available_minutes: int = 10) -> dict:

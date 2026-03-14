@@ -4,9 +4,9 @@ import QtQuick.Layouts 1.15
 Item {
     id: root
     
-    property string activeKey: (typeof appState !== "undefined" && appState.circleOfFifths) ? appState.circleOfFifths.currentKey : "C"
-    property var majorKeys: (typeof appState !== "undefined" && appState.circleOfFifths) ? appState.circleOfFifths.majorOrder : []
-    property var minorKeys: (typeof appState !== "undefined" && appState.circleOfFifths) ? appState.circleOfFifths.minorOrder : []
+    property string activeKey: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.currentKey : "C"
+    property var majorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.majorOrder : []
+    property var minorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.minorOrder : []
     
     // Internal state for rotation and animation
     property real rotationAngle: 0
@@ -23,10 +23,10 @@ Item {
     }
 
     Connections {
-        target: (typeof appState !== "undefined") ? appState.circleOfFifths : null
-        onNoteActive: {
-            let note = getNoteName(pitch)
-            activeMidiPitches[note] = Date.now()
+        target: (typeof appState !== "undefined" && appState) ? appState.circleOfFifths : null
+        function onNoteActive(pitch) {
+            let note = root.getNoteName(pitch)
+            root.activeMidiPitches[note] = Date.now()
             canvas.requestPaint()
             highlightTimer.restart()
         }
@@ -36,6 +36,11 @@ Item {
         id: highlightTimer
         interval: 500
         onTriggered: canvas.requestPaint()
+    }
+
+    // Help properly format keys for display
+    function formatKey(key) {
+        return key.replace('b', '♭')
     }
 
     Canvas {
@@ -88,7 +93,7 @@ Item {
                 ctx.fillStyle = isCurrent ? "#ffffff" : "#bbbbbb"
                 ctx.font = "bold " + (14 * mainWindow.uiScale) + "px Inter"
                 ctx.textAlign = "center"
-                ctx.fillText(majKey, outerRadius * 0.82, 5)
+                ctx.fillText(root.formatKey(majKey), outerRadius * 0.82, 5)
                 ctx.restore()
                 
                 // ── Draw Inner Ring (Minor) ──
@@ -109,7 +114,7 @@ Item {
                 ctx.fillStyle = "#888888"
                 ctx.font = (11 * mainWindow.uiScale) + "px Inter"
                 ctx.textAlign = "center"
-                ctx.fillText(minKey, innerRadius * 0.72, 4)
+                ctx.fillText(root.formatKey(minKey), innerRadius * 0.72, 4)
                 ctx.restore()
             }
             
@@ -153,7 +158,7 @@ Item {
             // (Calculation: -rotationAngle relative to C at -90deg)
             var index = (360 - (snapped % 360)) / 30
             index = Math.round(index) % 12
-            if (appState.circleOfFifths) {
+            if (typeof appState !== "undefined" && appState && appState.circleOfFifths) {
                 appState.circleOfFifths.currentKey = root.majorKeys[index]
             }
         }

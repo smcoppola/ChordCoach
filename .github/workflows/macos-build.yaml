@@ -24,7 +24,7 @@ jobs:
 
       - name: Set up Homebrew Dependencies
         run: |
-          brew install cmake qt6 create-dmg
+          brew install cmake create-dmg
 
       - name: Install Python dependencies
         run: |

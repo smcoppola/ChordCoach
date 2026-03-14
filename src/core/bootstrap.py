@@ -47,6 +47,14 @@ def setup_env() -> tuple[Path, Path, Path, bool]:
         hw_bin_path = bundle_dir
         native_lib_dir = bundle_dir
         user_data_path = _get_user_data_dir()
+        
+        # Ensure SSL Certificates are loaded correctly for requests/websockets inside frozen bundle
+        try:
+            import certifi
+            os.environ['SSL_CERT_FILE'] = certifi.where()
+            os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+        except ImportError:
+            pass
         # Explicitly point to QtWebEngineProcess for some PySide6 environments
         if sys.platform == "win32":
             os.environ["QTWEBENGINEPROCESS_PATH"] = str(bundle_dir / "PySide6" / "QtWebEngineProcess.exe")
