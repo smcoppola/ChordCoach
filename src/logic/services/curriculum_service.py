@@ -147,6 +147,7 @@ class CurriculumService(QObject):
 
     # ── Curriculum Context for Gemini ─────────────────────────────────
 
+    @Slot(result=str)
     def get_curriculum_context(self) -> str:
         """
         Generate the curriculum-aware context string that enriches

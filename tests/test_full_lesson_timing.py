@@ -507,7 +507,7 @@ def run_diagnostic():
         
         if not exercise_arrived[0]:
             diag.log("TIMEOUT", f"No exercise received after {TIMEOUT_MS/1000:.0f}s")
-            if trainer._is_requesting_exercise:
+            if trainer.isWaitingForAi:
                 diag.stuck_locks += 1
                 diag.log("STUCK_LOCK", "_is_requesting_exercise is True at timeout")
             break
@@ -524,22 +524,22 @@ def run_diagnostic():
             app.processEvents()
         
         # ── CHAOS: Play during AI speech (30% chance) ──
-        if trainer._is_paused_for_speech and random.random() < 0.3:
+        if trainer.isPausedForSpeech and random.random() < 0.3:
             human_play_during_speech(hw, diag)
         
         # Wait for AI to finish speaking
         diag.log("WAITING", "Waiting for AI to finish speaking...")
         speech_deadline = time.time() + 30.0
-        while trainer._is_paused_for_speech and time.time() < speech_deadline:
+        while trainer.isPausedForSpeech and time.time() < speech_deadline:
             app.processEvents()
             time.sleep(0.05)
             # CHAOS: Occasionally noodle during speech (10% per loop)
             if random.random() < 0.005:
                 human_play_during_speech(hw, diag)
         
-        if trainer._is_paused_for_speech:
+        if trainer.isPausedForSpeech:
             diag.log("WARN", "AI speech did not complete within 30s, forcing unpause")
-            trainer._is_paused_for_speech = False
+            trainer.isPausedForSpeech = False
         
         # Release any lingering keys NOW (before attempting the real chord)
         if lingering_pitches:

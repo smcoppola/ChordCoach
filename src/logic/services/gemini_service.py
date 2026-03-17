@@ -45,6 +45,7 @@ class GeminiService(QObject):
     reconnecting = Signal(int, int)  # (attempt, max_attempts)
     exerciseReceived = Signal(dict)   # Fired when model calls set_exercise tool
     lessonEndReceived = Signal(str)   # Fired when model calls end_lesson tool
+    apiKeyInvalid = Signal()    # Fired when the API key is missing or rejected
 
     def __init__(self, settings_manager=None, api_key=None):
         super().__init__()
@@ -97,21 +98,15 @@ class GeminiService(QObject):
 
     @Slot()
     def _pump_audio(self):
-        # Check if the AI just finished talking (buffer is empty and hardware playback is complete)
-        if self._is_speaking_state and not self._audio_buffer:
+        # We only consider finishing speech if the server turn is definitively over AND the local buffer has drained.
+        if self._is_speaking_state and not self._audio_buffer and self._turn_complete:
             time_since_last = time.time() - self._last_audio_write_time
-            # If 0.2s has passed AND the hardware sink buffer is essentially empty, OR 1.0s has passed as a strict fallback
             if time_since_last > 0.2:
                 is_empty = self.audio_sink and self.audio_sink.bytesFree() >= self.audio_sink.bufferSize() * 0.95
                 if is_empty or time_since_last > 1.0:
-                    # ONLY emit finished if the protocol turn is also complete.
-                    # This prevents early unpausing during network jitter or sentence gaps.
-                    if self._turn_complete:
-                        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED (Turn Complete)")
-                        self._is_speaking_state = False
-                        self.aiFinishedSpeaking.emit()
-                    else:
-                        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio buffer empty but turn still in progress.")
+                    print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED (Turn Complete)")
+                    self._is_speaking_state = False
+                    self.aiFinishedSpeaking.emit()
 
         if not self._audio_buffer:
             return
@@ -136,6 +131,7 @@ class GeminiService(QObject):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
+    @Slot(str, str, str, str)
     def connect_service(self, coach_context: str = "", voice: str = "Kore",
                         brevity: str = "Normal", personality: str = "Encouraging"):
         """Called by AppState or UI to initiate the WebSocket connection."""
@@ -143,6 +139,7 @@ class GeminiService(QObject):
         self.api_key = self.settings.apiKey if self.settings else os.environ.get("GOOGLE_API_KEY")
         if not self.api_key:
             print("Cannot connect: No API Key")
+            self.apiKeyInvalid.emit()
             return
             
         self.ws_url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={self.api_key}"
@@ -224,7 +221,6 @@ class GeminiService(QObject):
             # Global Pronunciation Rules
             base_instruction += " PRONUNCIATION RULE: Whenever you see a Roman Numeral chord progression (like I-V-vi-IV), pronounce it as numbers (e.g. 'one, five, six, four'), NOT as letters (e.g. 'eye, vee')."
             
-            # Voice Guidance Rules for exercises
             base_instruction += (
                 " VOICE RULES: 1. NEVER say raw numbers like BPM, milliseconds, or technical parameters. "
                 "Say 'play slowly and steadily' instead of 'play at 60 BPM'. "
@@ -239,7 +235,19 @@ class GeminiService(QObject):
                 "or 'I am going to...' are strictly forbidden. You are an expert piano teacher; talking to yourself "
                 "is unprofessional. You have NO internal monologue in your voice output. Talk ONLY to the student. "
                 "8. DIRECT-TO-STUDENT RULE: Your instructions must be direct. Instead of 'I'm going to have you play C major', "
-                "just say 'Play C major'. Skip all preambles."
+                "just say 'Play C major'. Skip all preambles.\n"
+                "CRITICAL RULES FOR EXERCISE GENERATION:\n"
+                "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME.\n"
+                "- DO NOT use parallel function calling to dispense the entire block at once.\n"
+                "- Always wait for me to report the student's performance before giving the next step.\n"
+                "- For 'exercise_name', provide a descriptive name for the specific drill you are giving (e.g., \"C Major Root Position\"), NOT the name of the entire lesson block.\n"
+                "- VARIETY RULE: Within a block, you MUST vary the exercises. If the goal is 'Major Triads', do not just ask for C Major 10 times. Vary the keys (C, F, G), vary the inversion (Root, 1st, 2nd), or vary the exercise type (chord, then listen, then pentascale). DO NOT REPEAT THE EXACT SAME EXERCISE MORE THAN TWICE.\n"
+                "- ADVANCEMENT RULE: You must move to the next block after you have assigned approximately the 'Target exercise count' for the current block. Do not linger on one block forever.\n"
+                "BEGINNER SAFETY RULES:\n"
+                "- DO NOT use 7th, 9th, or extended chords unless in target_chords.\n"
+                "- DO NOT use complex rhythms for beginners.\n"
+                "- For 'listen' exercises, ONLY use Major and Minor.\n"
+                "- ALWAYS prioritize the 'target_chords' list."
             )
             if hasattr(self, 'coach_context') and self.coach_context:
                 base_instruction += "\n\n" + self.coach_context
@@ -383,6 +391,11 @@ class GeminiService(QObject):
             
         except Exception as e:
             print(f"Gemini Service: Connection error: {e}")
+            if getattr(e, 'status_code', None) == 400:
+                print("Gemini Service: API Key is invalid (HTTP 400).")
+                self.apiKeyInvalid.emit()
+                self._intentional_disconnect = True
+
             self.connected = False
             self.connectionStatusChanged.emit(False)
 

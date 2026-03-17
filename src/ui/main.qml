@@ -149,6 +149,15 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: (typeof appState !== "undefined" && appState !== null && appState.gemini) ? appState.gemini : null
+        function onApiKeyInvalid() {
+            mainWindow.showSettings = false;
+            onboardingOverlay.show();
+            onboardingOverlay.phase = -1;
+        }
+    }
+
     // ── MIDI Disconnected Banner ──
     Rectangle {
         id: midiWarningBanner

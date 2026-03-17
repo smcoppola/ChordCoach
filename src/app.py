@@ -4,7 +4,7 @@ NOTE: If your IDE reports missing imports for chordcoach_hw, PySide6, etc.,
 ensure your environment is correctly configured. chordcoach_hw is a dynamic 
 binary extension built in the 'build' directory.
 """
-from PySide6.QtGui import QGuiApplication # type: ignore
+from PySide6.QtGui import QGuiApplication, QFontDatabase # type: ignore
 from PySide6.QtQml import QQmlApplicationEngine # type: ignore
 from PySide6.QtCore import QObject, Slot, Signal, Property, QTimer, Qt # type: ignore
 import sys
@@ -192,6 +192,13 @@ class AppState(QObject):
 def main():
     QtWebEngineQuick.initialize()
     app = QGuiApplication(sys.argv)
+    
+    # Register bundled fonts so QML can render them natively without warnings
+    font_dir = project_root / ("src/resources/fonts" if not is_frozen else "resources/fonts")
+    if font_dir.exists():
+        for font_file in font_dir.glob("*.ttf"):
+            QFontDatabase.addApplicationFont(os.fspath(font_file))
+
     engine = QQmlApplicationEngine()
 
     app_state = AppState()

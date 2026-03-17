@@ -195,7 +195,7 @@ Rectangle {
                         if (typeof appState !== "undefined" && appState && appState.settingsService) {
                             appState.settingsService.apiKey = keyInput.text.trim();
                             // Attempt to connect immediately so the coach is ready for the welcome phase
-                            if (typeof appState.gemini !== "undefined" && !appState.gemini.connected) {
+                            if (typeof appState.aiConnected !== "undefined" && !appState.aiConnected) {
                                 var context = appState.curriculumEngine.get_curriculum_context();
                                 appState.gemini.connect_service(
                                     context,
