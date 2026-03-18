@@ -10,6 +10,7 @@ Rectangle {
     signal startLesson(int minutes)
     signal startReview()
     signal freePractice()
+    signal startSpecificDrill(string track, string milestoneId)
 
     layer.enabled: durationPicker.visible
 
@@ -97,7 +98,16 @@ Rectangle {
                 }
             }
             
-            // 3. Free Practice
+            // 3. Specific Drill
+            ActionCard {
+                title: "Specific Drill"
+                description: "Focused practice on a single technique or concept."
+                icon: "🎯"
+                accentColor: "#9C27B0"
+                onClicked: drillPicker.open()
+            }
+            
+            // 4. Free Practice
             ActionCard {
                 title: "Free Play"
                 description: "Just jam. I'll listen and identify what you play. (Coming Soon)"
@@ -398,6 +408,95 @@ Rectangle {
                             onClicked: {
                                 durationPicker.close();
                                 root.startLesson(modelData.mins);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Drill Picker Popup ──
+    Popup {
+        id: drillPicker
+        anchors.centerIn: parent
+        width: 520 * mainWindow.uiScale
+        height: 380 * mainWindow.uiScale
+        modal: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        background: Rectangle {
+            color: "#1c1c1e"
+            radius: 16
+            border.color: "#9C27B0"
+            border.width: 1
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -1
+                radius: 16
+                color: "transparent"
+                border.color: "#9C27B0"
+                border.width: 2
+                opacity: 0.3
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 24
+
+            Text {
+                text: "SELECT DRILL"
+                font.pixelSize: 12 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 4 * mainWindow.uiScale
+                color: "#666666"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Text {
+                text: "Which focused exercise do you want to run?"
+                font.pixelSize: 18 * mainWindow.uiScale
+                color: "#ffffff"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                
+                Repeater {
+                    model: [
+                        {"label": "Right Hand C Pentascale", "track": "technique", "id": "rh_pentascale_c"},
+                        {"label": "Major Triads (C, F, G)", "track": "technique", "id": "rh_major_triads"},
+                        {"label": "Circle of Fifths Introduction", "track": "theory", "id": "circle_of_fifths"},
+                        {"label": "Hearing Tension (V -> I)", "track": "theory", "id": "v_to_i_listen"},
+                        {"label": "Major vs Minor Recognition", "track": "ear", "id": "major_minor_recognition"}
+                    ]
+
+                    delegate: Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 45 * mainWindow.uiScale
+                        radius: 8
+                        color: drillMouse.containsMouse ? "#332244" : "#2a2a2a"
+                        border.color: drillMouse.containsMouse ? "#9C27B0" : "#444444"
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: "#ffffff"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                        }
+
+                        MouseArea {
+                            id: drillMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                drillPicker.close();
+                                root.startSpecificDrill(modelData.track, modelData.id);
                             }
                         }
                     }

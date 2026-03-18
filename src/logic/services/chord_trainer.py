@@ -35,6 +35,7 @@ class ChordTrainerService(QObject):
     requestLessonStart = Signal(str)    # Emitted with the full lesson prompt for the AI coach
     reportPerformance = Signal(str)     # Emitted after each exercise with performance data
     exerciseRequestUnlocked = Signal()  # Emitted when a dropped tool call failsafe triggers
+    isCircleOfFifthsModeChanged = Signal(bool)  # Emitted when entering/leaving circle of fifths lesson
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
         super().__init__()
@@ -95,6 +96,7 @@ class ChordTrainerService(QObject):
         self._lesson_roadmap = ""  # Persist the roadmap (blocks) to survive reco drops
         self._lesson_end_pending = False # Defer showing completion UI until AI finishes speaking
         self._ai_is_currently_speaking = False
+        self._is_circle_of_fifths_mode = False  # True while Circle of Fifths tutorial is the active lesson
 
         # Inter-exercise commentary streak tracking
         self._consecutive_successes = 0
@@ -252,6 +254,10 @@ class ChordTrainerService(QObject):
     def isLessonMode(self) -> bool:
         return self._is_lesson_mode
 
+    @Property(bool, notify=isCircleOfFifthsModeChanged)
+    def isCircleOfFifthsMode(self) -> bool:
+        return self._is_circle_of_fifths_mode
+
     @Property(float, notify=lessonStateChanged)
     def holdProgress(self) -> float:
         return self._hold_progress
@@ -405,7 +411,64 @@ class ChordTrainerService(QObject):
 
         self._lesson_roadmap = blocks_text
 
-        prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
+        # Check for Circle of Fifths Tutorial Milestone injection
+        is_circle_tutorial = False
+        if session_plan and "blocks" in session_plan and session_plan["blocks"]:
+            first_block = session_plan["blocks"][0]
+            if first_block.get("track") == "theory" and first_block.get("milestone_id") == "circle_of_fifths":
+                is_circle_tutorial = True
+
+        if is_circle_tutorial:
+            if not self._is_circle_of_fifths_mode:
+                self._is_circle_of_fifths_mode = True
+                self.isCircleOfFifthsModeChanged.emit(True)
+            prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
+START A NEW LESSON. [INITIAL_LOAD]
+[Circle of Fifths Tutorial Mode]
+
+{user_context}
+
+You are leading a SLOW, deliberate, narrated tutorial on the Circle of Fifths.
+
+CRITICAL RULES:
+- You MUST call `update_theory_visual` BEFORE speaking the accompanying text for each section. The visual must load first, then you narrate.
+- Speak at a RELAXED, thoughtful pace. Pause briefly between sentences so the student can absorb each idea.
+- Do NOT call `set_exercise` at any point during this tutorial.
+- Do NOT mention MIDI, keyboards, or hardware.
+- After completing the entire script below, call `end_lesson` to conclude.
+
+== SECTION 1: The Blank Wheel ==
+[Call update_theory_visual(show_base=True, show_major=False, show_minor=False, highlight_key="") NOW]
+Then say: "Welcome to the Circle of Fifths. This wheel is one of the most powerful tools in all of music theory. It maps out the relationship between every key in western music. Let's build it up together, one piece at a time."
+
+== SECTION 2: Reveal Major Keys, Highlight C ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="C") NOW]
+Then say: "Here are the twelve major keys, arranged in a circle. At the very top, we have C Major. C Major has no sharps and no flats. It's the simplest key on the piano, just the white keys."
+
+== SECTION 3: Move to G ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="G") NOW]
+Then say: "Now watch the wheel spin. Moving one step clockwise takes us up a perfect fifth, to G Major. G Major has exactly one sharp: F sharp. Each step clockwise adds one more sharp."
+
+== SECTION 4: Move to D ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="D") NOW]
+Then say: "Another step clockwise brings us to D Major, with two sharps. See the pattern? Every clockwise step is a perfect fifth higher, and adds one sharp to the key signature."
+
+== SECTION 5: Jump to F (counter-clockwise) ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="F") NOW]
+Then say: "Now let's go the other direction. From C, one step counter-clockwise takes us down a fifth, to F Major. F Major has one flat: B flat. Each step counter-clockwise adds a flat."
+
+== SECTION 6: Reveal Minor Ring ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=True, highlight_key="C") NOW]
+Then say: "But there's a hidden layer. Every major key has a relative minor that shares the exact same notes. The inner ring reveals them. For C Major, the relative minor is A Minor. They are two sides of the same coin."
+
+== SECTION 7: Conclusion ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=True, highlight_key="") NOW]
+Then say: "That's the Circle of Fifths. Sharps accumulate clockwise, flats accumulate counter-clockwise, and every major key has a relative minor hiding on the inside. This simple wheel will guide your understanding of keys, chords, and progressions for the rest of your musical journey. Great job today!"
+
+After finishing Section 7, call `end_lesson` with feedback: "Completed Circle of Fifths introduction."
+</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
+        else:
+            prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
 START A NEW LESSON. [INITIAL_LOAD]
 
 {user_context}
@@ -431,6 +494,129 @@ Start the lesson now by calling set_exercise and speaking.
 
         # Safety timeout: if AI doesn't send set_exercise within 60s, recover.
         # Long intros can easily exceed 30s.
+        QTimer.singleShot(60000, self._lesson_loading_timeout)
+
+    @Slot(str, str)
+    def start_single_drill(self, track_name: str, milestone_id: str):
+        """Starts a session strictly focused on a single milestone."""
+        if self.isLoading:
+            return
+
+        self._is_lesson_mode = True
+        self._is_lesson_complete = False
+        self._lesson_progress = 0
+        self._lesson_total = 0
+        self._lesson_playlist = []
+        self._lesson_blocks = []
+
+        self._estimated_gen_ms = 3000.0  
+        self._loading_status_text = "PREPARING DRILL..."
+        self._set_state(LessonState.LOADING)
+
+        self._active_pitches.clear()
+        self._session_stats.clear()
+        self._struggled_items.clear()
+        self._pending_exercise = None
+        self._consecutive_successes = 0
+        self._consecutive_struggles = 0
+
+        user_context = self.db.get_coach_context()
+        
+        target_keys = []
+        target_chords = []
+        milestone_title = milestone_id
+        if self.curriculum:
+            meta = self.curriculum._get_milestone_meta(track_name, milestone_id)
+            if meta:
+                milestone_title = meta.get("title", milestone_id)
+                target_keys = meta.get("target_keys", [])
+                target_chords = meta.get("target_chords", [])
+
+        blocks_text = "The user has elected to run a SINGLE FOCUSED LESSON, bypassing the standard curriculum.\n"
+        blocks_text += f"You will assign exactly ONE type of exercise over and over (approx 10-15 reps) until they master it, then call end_lesson.\n\n"
+        blocks_text += f"Target Drill: {milestone_title} (track: '{track_name}', milestone_id: '{milestone_id}')\n"
+        if target_keys:
+            blocks_text += f"- Allowed Keys: {target_keys}\n"
+        if target_chords:
+            blocks_text += f"- Allowed Chords: {target_chords}\n"
+
+        self._lesson_roadmap = blocks_text
+
+        is_circle_tutorial = (track_name == "theory" and milestone_id == "circle_of_fifths")
+
+        if is_circle_tutorial:
+            if not self._is_circle_of_fifths_mode:
+                self._is_circle_of_fifths_mode = True
+                self.isCircleOfFifthsModeChanged.emit(True)
+            prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
+START A NEW LESSON. [INITIAL_LOAD]
+[Circle of Fifths Tutorial Mode]
+
+{user_context}
+
+You are leading a SLOW, deliberate, narrated tutorial on the Circle of Fifths.
+
+CRITICAL RULES:
+- You MUST call `update_theory_visual` BEFORE speaking the accompanying text for each section. The visual must load first, then you narrate.
+- Speak at a RELAXED, thoughtful pace. Pause briefly between sentences so the student can absorb each idea.
+- Do NOT call `set_exercise` at any point during this tutorial.
+- Do NOT mention MIDI, keyboards, or hardware.
+- After completing the entire script below, call `end_lesson` to conclude.
+
+== SECTION 1: The Blank Wheel ==
+[Call update_theory_visual(show_base=True, show_major=False, show_minor=False, highlight_key="") NOW]
+Then say: "Welcome to the Circle of Fifths. This wheel is one of the most powerful tools in all of music theory. It maps out the relationship between every key in western music. Let's build it up together, one piece at a time."
+
+== SECTION 2: Reveal Major Keys, Highlight C ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="C") NOW]
+Then say: "Here are the twelve major keys, arranged in a circle. At the very top, we have C Major. C Major has no sharps and no flats. It's the simplest key on the piano, just the white keys."
+
+== SECTION 3: Move to G ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="G") NOW]
+Then say: "Now watch the wheel spin. Moving one step clockwise takes us up a perfect fifth, to G Major. G Major has exactly one sharp: F sharp. Each step clockwise adds one more sharp."
+
+== SECTION 4: Move to D ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="D") NOW]
+Then say: "Another step clockwise brings us to D Major, with two sharps. See the pattern? Every clockwise step is a perfect fifth higher, and adds one sharp to the key signature."
+
+== SECTION 5: Jump to F (counter-clockwise) ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=False, highlight_key="F") NOW]
+Then say: "Now let's go the other direction. From C, one step counter-clockwise takes us down a fifth, to F Major. F Major has one flat: B flat. Each step counter-clockwise adds a flat."
+
+== SECTION 6: Reveal Minor Ring ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=True, highlight_key="C") NOW]
+Then say: "But there's a hidden layer. Every major key has a relative minor that shares the exact same notes. The inner ring reveals them. For C Major, the relative minor is A Minor. They are two sides of the same coin."
+
+== SECTION 7: Conclusion ==
+[Call update_theory_visual(show_base=True, show_major=True, show_minor=True, highlight_key="") NOW]
+Then say: "That's the Circle of Fifths. Sharps accumulate clockwise, flats accumulate counter-clockwise, and every major key has a relative minor hiding on the inside. This simple wheel will guide your understanding of keys, chords, and progressions for the rest of your musical journey. Great job today!"
+
+After finishing Section 7, call `end_lesson` with feedback: "Completed Circle of Fifths introduction."
+</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
+        else:
+            prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
+START A NEW LESSON. [INITIAL_LOAD]
+
+{user_context}
+
+{blocks_text}
+
+INSTRUCTIONS:
+1. You MUST call the `set_exercise` tool right now to assign the first exercise. Do NOT forget to call the tool.
+2. Speak a brief welcome, AND explicitly explain how to perform the very first exercise so the student knows what to do.
+3. Wait for me to report the student's performance before calling the tool again.
+4. When they finish an exercise, I will send you a report. Decide the next step (advance, repeat, or simplify) and call `set_exercise` again.
+5. When the user has completed enough reps (about 10-15) and demonstrated mastery, call `end_lesson`.
+6. You MUST REMAIN COMPLETELY SILENT between exercises of the SAME type. Do NOT provide any micro-affirmations or commentary. Just call `set_exercise` immediately.
+7. Only speak longer sentences when giving feedback on significant struggles, or ending.
+
+Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal
+Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
+
+Start the lesson now by calling set_exercise and speaking.
+</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
+
+        self.requestLessonStart.emit(prompt)
         QTimer.singleShot(60000, self._lesson_loading_timeout)
 
     @Slot(dict)
@@ -580,6 +766,11 @@ Start the lesson now by calling set_exercise and speaking.
         self._set_state(LessonState.IDLE)
         self.activeChanged.emit(False)
 
+        # Clear circle of fifths mode flag
+        if self._is_circle_of_fifths_mode:
+            self._is_circle_of_fifths_mode = False
+            self.isCircleOfFifthsModeChanged.emit(False)
+
         if self.curriculum:
             self.curriculum.finish_session()
 
@@ -592,6 +783,16 @@ Start the lesson now by calling set_exercise and speaking.
         self._metronome_timer.stop()
         self.lessonStateChanged.emit()
         self.targetChordChanged.emit(self._target_chord_name)
+
+    @Slot()
+    def notify_visual_received(self):
+        """Unlocks loading/wait states when a non-exercise tool (e.g. theory visual) arrives."""
+        if self.isLoading:
+            print("ChordTrainer: Visual tool received during loading. Clearing loading lock.")
+            self._set_state(LessonState.USER_PLAYING)
+        elif self.isWaitingForAi:
+            print("ChordTrainer: Visual tool received during AI wait. Clearing wait lock.")
+            self._set_state(LessonState.USER_PLAYING)
 
     def _update_lesson_blocks(self, exercise_data: dict):
         """Incrementally add to the lesson blocks sidebar as exercises arrive."""
@@ -779,6 +980,10 @@ Start the lesson now by calling set_exercise and speaking.
             self._pending_exercise = None
             self._consecutive_successes = 0
             self._consecutive_struggles = 0
+            # Clear circle of fifths mode on manual stop
+            if self._is_circle_of_fifths_mode:
+                self._is_circle_of_fifths_mode = False
+                self.isCircleOfFifthsModeChanged.emit(False)
 
     def get_resume_context(self) -> str:
         """Build a prompt for the AI to resume a lesson after reconnection."""
@@ -1237,7 +1442,7 @@ Start the lesson now by calling set_exercise and speaking.
         if self.isWaitingForAi:
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: AI finished turn but no exercise received. Unlocking request state and clearing blur.")
             
-            self.isWaitingForAi = False  # Clear blur if turn is done
+            self._set_state(LessonState.USER_PLAYING)  # Clear blur if turn is done by moving state away from AWAITING_EXERCISE
             self.exerciseRequestUnlocked.emit()
             # Actively nudge the AI to send the tool call it forgot
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Sending nudge prompt to request set_exercise.")

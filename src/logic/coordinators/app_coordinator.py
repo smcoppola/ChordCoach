@@ -10,6 +10,7 @@ class AppCoordinator(QObject):
     evalIntroPendingChanged = Signal(bool)
     archIntroPendingChanged = Signal(bool)
     isReconnectingChanged = Signal(bool)
+    theoryVisualUpdated = Signal(dict) # Forward full theory visual dict to CircleOfFifthsService
     @Slot()
     def stopSession(self):
         """Stops whatever is currently active: Evaluation or Lesson."""
@@ -29,18 +30,20 @@ class AppCoordinator(QObject):
         self.evalIntroPendingChanged.emit(False)
         self.archIntroPendingChanged.emit(False)
         
-    def __init__(self, gemini_service, eval_engine, chord_trainer, hw_service, settings):
+    def __init__(self, gemini_service, eval_engine, chord_trainer, hw_service, settings, circle_of_fifths=None):
         super().__init__()
         self.gemini = gemini_service
         self.evaluation = eval_engine
         self.chord_trainer = chord_trainer
         self.hw_service = hw_service
         self.settings = settings
+        self._circle_of_fifths_service = circle_of_fifths
         
         self._eval_intro_pending = False
         self._eval_audio_received = False
         self._arch_intro_pending = False
         self._is_reconnecting = False
+        self._active_midi_pitches: set[int] = set()  # Accumulate concurrent pitches for chord detection
         
         # --- Wire Hardware to Engines ---
         self.hw_service.midiNoteReceived.connect(self._dispatch_midi_note)
@@ -55,6 +58,7 @@ class AppCoordinator(QObject):
         self.chord_trainer.speakInstruction.connect(self.gemini.send_prompt)
         self.chord_trainer.speakBrief.connect(self.gemini.send_prompt)  # Non-blocking commentary (no pause)
         self.gemini.exerciseReceived.connect(self._on_exercise_received)
+        self.gemini.theoryVisualReceived.connect(self._on_theory_visual_received)
         self.gemini.lessonEndReceived.connect(self._on_lesson_end_received)
         
         # Play happy/sad tone when the lesson API connectivity check succeeds/fails
@@ -67,6 +71,8 @@ class AppCoordinator(QObject):
         self.gemini.connectionStatusChanged.connect(self._on_ai_connected)
         self.gemini.reconnecting.connect(self._on_ai_reconnecting)
         self.gemini.audioDataReceived.connect(self._on_ai_audio_received)
+        
+        self.chord_trainer.isCircleOfFifthsModeChanged.connect(self._on_circle_mode_changed)
         
         # --- Wire Engines together ---
         self.evaluation.metronomeTick.connect(self.hw_service.play_metronome_tick)
@@ -88,11 +94,19 @@ class AppCoordinator(QObject):
 
     @Slot(int, bool)
     def _dispatch_midi_note(self, pitch: int, is_on: bool):
-        """Route MIDI input to whoever is active."""
+        """Route MIDI input to whoever is active + update circle chord detection."""
         if self.evaluation.isRunning:
             self.evaluation.handle_midi_note(pitch, is_on)
         else:
             self.chord_trainer.handle_midi_note(pitch, is_on)
+        
+        # Accumulate pitches for circle chord detection (always, regardless of mode)
+        if is_on:
+            self._active_midi_pitches.add(pitch)
+            if len(self._active_midi_pitches) >= 3 and self._circle_of_fifths_service:
+                self._circle_of_fifths_service.handle_midi_chord(list(self._active_midi_pitches))
+        else:
+            self._active_midi_pitches.discard(pitch)
 
     @Slot(dict)
     def _on_exercise_received(self, exercise_data: dict):
@@ -103,6 +117,15 @@ class AppCoordinator(QObject):
             return
         self.chord_trainer.receive_exercise(exercise_data)
 
+    @Slot(dict)
+    def _on_theory_visual_received(self, visual_data: dict):
+        """Forward Gemini updates to the CircleOfFifthsService."""
+        # Clear loading locks in ChordTrainer if we are in narrative modes
+        self.chord_trainer.notify_visual_received()
+        
+        # Forward the full dict — CircleOfFifthsService.set_tutorial_state_v2 handles all params
+        self.theoryVisualUpdated.emit(visual_data)
+
     @Slot(str)
     def _on_lesson_end_received(self, feedback: str):
         """Guard: only forward lesson-end to the trainer if evaluation is NOT running."""
@@ -110,6 +133,22 @@ class AppCoordinator(QObject):
             print("Coordinator: Ignoring end_lesson during evaluation.")
             return
         self.chord_trainer.receive_lesson_end(feedback)
+
+    @Slot(bool)
+    def _on_circle_mode_changed(self, active: bool):
+        """Pre-emptively force visual setup for circle mode so it doesn't wait for streamer delay."""
+        if active:
+            print("Coordinator: Circle of Fifths Mode Start. Forcing base visual initialization.")
+            visual_setup = {
+                "show_base": True,
+                "show_major": False,
+                "show_minor": False,
+                "highlight_key": "",
+                "highlighted_chords": []
+            }
+            # Clear loading locks in ChordTrainer synchronous as if tool arrived
+            self.chord_trainer.notify_visual_received()
+            self.theoryVisualUpdated.emit(visual_setup)
 
     def _sync_coach_settings(self):
         """Push current voice configs to chord trainer context."""

@@ -55,15 +55,27 @@ class AppState(QObject):
         super().__init__()
         self.db = DatabaseManager(user_data_path / "database" / "userdata.db")
         self.settings = SettingsService(self.db, user_data_path)
+        self.settings.setParent(self)
+        
         self._gemini = GeminiService(self.settings)
+        self._gemini.setParent(self)
+        
         self._circle_of_fifths = CircleOfFifthsService()
+        self._circle_of_fifths.setParent(self)
         
         self.midi_ingestor = MidiIngestor()
         self.crawler = RepertoireCrawler()
         self.curriculum = CurriculumService(self.db, project_root / "src" / "resources")
+        self.curriculum.setParent(self)
+        
         self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings)
+        self.chord_trainer.setParent(self)
+        
         self.evaluation_engine = EvaluationService(self.db, project_root)
+        self.evaluation_engine.setParent(self)
+        
         self.adaptive_engine = AdaptiveEngineService(self.db, self.settings)
+        self.adaptive_engine.setParent(self)
         
         # Initialize hardware service (handles C++ chordcoach_hw extension and ctypes rtmidi out)
         ll_lib_file = None
@@ -77,13 +89,17 @@ class AppState(QObject):
             print(f"AppState: Pathing error for rtmidi: {e}")
             
         self.hw_service = MidiHardwareService(chordcoach_hw, ll_lib_file, midi_out_enabled=bool(self.settings.midiOutEnabled))
+        self.hw_service.setParent(self)
+        
         self.coordinator = AppCoordinator(
             self._gemini, 
             self.evaluation_engine, 
             self.chord_trainer, 
             self.hw_service, 
-            self.settings
+            self.settings,
+            self._circle_of_fifths
         )
+        self.coordinator.setParent(self)
         
         # Connect Gemini signals to AppState/QML
         self._gemini.responseReceived.connect(self._on_ai_text)
@@ -93,10 +109,10 @@ class AppState(QObject):
         self.coordinator.evalIntroPendingChanged.connect(self.evalIntroPendingChanged)
         self.coordinator.archIntroPendingChanged.connect(self.archIntroPendingChanged)
         self.coordinator.isReconnectingChanged.connect(self.isReconnectingChanged)
+        self.coordinator.theoryVisualUpdated.connect(self._circle_of_fifths.set_tutorial_state_v2)
         
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
-        self.hw_service.midiNoteReceived.connect(self._circle_of_fifths.handle_midi_note)
         
         # Initialize the hardware layer
         self.hw_service.initialize()

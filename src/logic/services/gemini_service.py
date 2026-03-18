@@ -45,6 +45,7 @@ class GeminiService(QObject):
     reconnecting = Signal(int, int)  # (attempt, max_attempts)
     exerciseReceived = Signal(dict)   # Fired when model calls set_exercise tool
     lessonEndReceived = Signal(str)   # Fired when model calls end_lesson tool
+    theoryVisualReceived = Signal(dict) # Fired when model calls update_theory_visual
     apiKeyInvalid = Signal()    # Fired when the API key is missing or rejected
 
     def __init__(self, settings_manager=None, api_key=None):
@@ -379,6 +380,29 @@ class GeminiService(QObject):
                                         }
                                     }
                                 }
+                            },
+                            {
+                                "name": "update_theory_visual",
+                                "description": (
+                                    "Updates the interactive Circle of Fifths visualization in real-time. "
+                                    "Call this at specific beats during the voice narrative to sync animations. "
+                                    "Supports multi-chord highlighting, prediction arrows, path tracing, and stage control."
+                                ),
+                                "parameters": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "show_base": { "type": "BOOLEAN", "description": "True to draw the blank base wheel." },
+                                        "show_major": { "type": "BOOLEAN", "description": "True to reveal the outer Major key names." },
+                                        "show_minor": { "type": "BOOLEAN", "description": "True to reveal the inner Minor key ring." },
+                                        "highlight_key": { "type": "STRING", "description": "A specific key to highlight (e.g. 'C', 'G'), or empty string to clear highlights." },
+                                        "highlighted_chords": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "List of chord keys to highlight simultaneously (e.g. ['C', 'F', 'G'] for I-IV-V neighborhood)." },
+                                        "arrows": { "type": "ARRAY", "items": {"type": "OBJECT", "properties": {"from": {"type": "STRING"}, "to": {"type": "STRING"}, "label": {"type": "STRING"}}}, "description": "Prediction arrows to draw between keys on the circle." },
+                                        "path": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "Ordered key sequence to trace as a connected path on the circle." },
+                                        "stage": { "type": "INTEGER", "description": "Tutorial stage number (1-5). Controls which interactive mode is active." },
+                                        "waypoints": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "Target chord waypoints for guided progression challenges." }
+                                    },
+                                    "required": ["show_base", "show_major", "show_minor", "highlight_key"]
+                                }
                             }
                         ]
                     }]
@@ -445,6 +469,8 @@ class GeminiService(QObject):
                                 else:
                                     self._exercise_pending = True
                                     self.exerciseReceived.emit(fn_args)
+                            elif fn_name == "update_theory_visual":
+                                self.theoryVisualReceived.emit(fn_args)
                             elif fn_name == "end_lesson":
                                 if self._exercise_pending:
                                     print(f"Gemini Service: REJECTING early end_lesson — waiting for student completion")

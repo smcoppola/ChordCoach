@@ -7,40 +7,44 @@ Item {
     property string activeKey: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.currentKey : "C"
     property var majorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.majorOrder : []
     property var minorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.minorOrder : []
+    property string detectedChord: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.detectedChord : ""
     
     // Internal state for rotation and animation
     property real rotationAngle: 0
-    property string hoveredKey: ""
-    property var activeMidiPitches: ({})
     
     implicitWidth: 240 * mainWindow.uiScale
     implicitHeight: 240 * mainWindow.uiScale
 
-    // Map of MIDI pitch to key name for highlighting logic
-    function getNoteName(pitch) {
-        const names = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
-        return names[pitch % 12]
-    }
-
-    Connections {
-        target: (typeof appState !== "undefined" && appState) ? appState.circleOfFifths : null
-        function onNoteActive(pitch) {
-            let note = root.getNoteName(pitch)
-            root.activeMidiPitches[note] = Date.now()
-            canvas.requestPaint()
-            highlightTimer.restart()
+    // Extract the root key from a chord name (e.g. "Am" → "A", "C#dim" → "C#", "Gb" → "Gb")
+    function chordRoot(chordName) {
+        if (!chordName) return "";
+        // Handle two-char roots like C#, Eb, Gb, etc.
+        if (chordName.length >= 2 && (chordName[1] === '#' || chordName[1] === 'b')) {
+            return chordName.substring(0, 2);
         }
-    }
-
-    Timer {
-        id: highlightTimer
-        interval: 500
-        onTriggered: canvas.requestPaint()
+        return chordName[0];
     }
 
     // Help properly format keys for display
     function formatKey(key) {
-        return key.replace('b', '♭')
+        return key.replace('b', '♭');
+    }
+
+    Connections {
+        target: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths : null
+        function onDetectedChordChanged(chord) {
+            canvas.requestPaint();
+            chordFadeTimer.restart();
+        }
+        function onKeyChanged() {
+            canvas.requestPaint();
+        }
+    }
+
+    Timer {
+        id: chordFadeTimer
+        interval: 2000
+        onTriggered: canvas.requestPaint()
     }
 
     Canvas {
@@ -63,6 +67,9 @@ Item {
             ctx.translate(centerX, centerY)
             ctx.rotate(root.rotationAngle * Math.PI / 180)
             
+            var detRoot = root.chordRoot(root.detectedChord);
+            var isMinorChord = root.detectedChord.indexOf("m") > 0 && root.detectedChord.indexOf("maj") < 0;
+            
             // Draw segments
             for (var i = 0; i < 12; i++) {
                 var angle = (i * 30 - 105) * Math.PI / 180 // Center C at top center
@@ -77,11 +84,17 @@ Item {
                 ctx.arc(0, 0, innerRadius, nextAngle, angle, true)
                 ctx.closePath()
                 
-                // Styling
+                // Styling — highlight if this key matches the detected chord root (major chord)
                 var isCurrent = (majKey === root.activeKey)
-                var isActiveNote = (Date.now() - (root.activeMidiPitches[majKey] || 0) < 400)
+                var isDetected = (majKey === detRoot && !isMinorChord && root.detectedChord !== "")
                 
-                ctx.fillStyle = isCurrent ? "#2196F3" : (isActiveNote ? "#4CAF50" : "#2a2a2a")
+                if (isDetected) {
+                    ctx.fillStyle = "#FFD700" // Gold for detected chord
+                } else if (isCurrent) {
+                    ctx.fillStyle = "#2196F3" // Blue for active key
+                } else {
+                    ctx.fillStyle = "#2a2a2a"
+                }
                 ctx.fill()
                 ctx.strokeStyle = "#444444"
                 ctx.lineWidth = 1
@@ -90,7 +103,7 @@ Item {
                 // Label
                 ctx.save()
                 ctx.rotate(angle + 15 * Math.PI / 180)
-                ctx.fillStyle = isCurrent ? "#ffffff" : "#bbbbbb"
+                ctx.fillStyle = (isDetected || isCurrent) ? "#000000" : "#bbbbbb"
                 ctx.font = "bold " + (14 * mainWindow.uiScale) + "px Inter"
                 ctx.textAlign = "center"
                 ctx.fillText(root.formatKey(majKey), outerRadius * 0.82, 5)
@@ -102,16 +115,17 @@ Item {
                 ctx.arc(0, 0, holeRadius, nextAngle, angle, true)
                 ctx.closePath()
                 
-                isActiveNote = (Date.now() - (root.activeMidiPitches[minKey.replace('#', 's')] || 0) < 400) // normalize for simplicity
+                // Highlight minor ring if detected chord is minor and matches this key
+                var isMinorDetected = (isMinorChord && detRoot === minKey && root.detectedChord !== "")
                 
-                ctx.fillStyle = isActiveNote ? "#4CAF50" : "#1e1e1e"
+                ctx.fillStyle = isMinorDetected ? "#FFD700" : "#1e1e1e"
                 ctx.fill()
                 ctx.stroke()
                 
                 // Label
                 ctx.save()
                 ctx.rotate(angle + 15 * Math.PI / 180)
-                ctx.fillStyle = "#888888"
+                ctx.fillStyle = isMinorDetected ? "#000000" : "#888888"
                 ctx.font = (11 * mainWindow.uiScale) + "px Inter"
                 ctx.textAlign = "center"
                 ctx.fillText(root.formatKey(minKey), innerRadius * 0.72, 4)
@@ -155,7 +169,6 @@ Item {
             snapAnim.start()
             
             // Logic to update active key based on top position
-            // (Calculation: -rotationAngle relative to C at -90deg)
             var index = (360 - (snapped % 360)) / 30
             index = Math.round(index) % 12
             if (typeof appState !== "undefined" && appState && appState.circleOfFifths) {

@@ -61,7 +61,6 @@ class MidiHardwareService(QObject):
     midiNoteReceived = Signal(int, bool)
     sustainPedalChanged = Signal(bool)
     connectionStatusChanged = Signal(bool)
-    _probeSucceeded = Signal()
 
     def __init__(self, chordcoach_hw, ll_lib_path, midi_out_enabled=True):
         super().__init__()
@@ -76,10 +75,6 @@ class MidiHardwareService(QObject):
         self._ll_lib_path = ll_lib_path
         self._ll_midi_out = None
         
-        # SysEx identity probe state
-        self._awaiting_identity_reply = False
-        self._midi_out_verified = False
-        
         # We DO NOT initialize LowLevelMidiOutput here on Windows!
         # Opening ANY MIDI handle locks the Windows MM device list for the process.
         # This prevents hot-plugged USB MIDI devices from being discovered by polling.
@@ -87,11 +82,6 @@ class MidiHardwareService(QObject):
             
         self._polling_timer = QTimer(self)
         self._polling_timer.timeout.connect(self.initialize)
-        
-        self._probe_timeout_timer = QTimer(self)
-        self._probe_timeout_timer.setSingleShot(True)
-        self._probe_timeout_timer.timeout.connect(self._on_probe_timeout)
-        self._probeSucceeded.connect(self._on_probe_success)
             
     def initialize(self):
         """Bind hardware ports and start listening. If no ports found, starts polling."""
@@ -157,37 +147,46 @@ class MidiHardwareService(QObject):
             elif not self._midi_out_enabled:
                 print("MidiHardwareService: MIDI output DISABLED by user setting (Settings → Hardware)")
             
-            # Match Output Port to Input Port if possible
+            # Match Output Port — prefer a software synth on macOS, match by device name otherwise
             if self._ll_midi_out:
                 try:
                     out_names = self._ll_midi_out.get_port_names()
                     target = ports[0]
                     target_base = target.split(' ')[0] if ' ' in target else target
                     paired = False
+                    
+                    # First, try to match the currently connected input device (ideal for hardware synth keyboards)
                     for i, name in enumerate(out_names):
-                        if target_base in name and "Synth" not in name:
+                        if target_base in name:
                             self._ll_midi_out.open_port(i)
-                            print(f"MidiHardwareService: LowLevel Paired MIDI Output: {name}")
+                            print(f"MidiHardwareService: LowLevel MIDI Output Hardware Match: {name}")
                             paired = True
                             break
+
+                    # Second, try to find a software synth port (fallback if keyboard has no built-in synth)
+                    if not paired:
+                        for i, name in enumerate(out_names):
+                            if "Synth" in name or "FluidSynth" in name or "Microsoft GS" in name:
+                                self._ll_midi_out.open_port(i)
+                                print(f"MidiHardwareService: LowLevel MIDI Output (Synth): {name}")
+                                paired = True
+                                break
                     
-                    if not paired and len(out_names) == 1:
+                    # Last Fallback: open first available port
+                    if not paired and out_names:
                         self._ll_midi_out.open_port(0)
                         print(f"MidiHardwareService: LowLevel MIDI Output Fallback: {out_names[0]}")
                         paired = True
                     elif not paired:
-                        print(f"MidiHardwareService: LowLevel MIDI Output Pairing Failed for {target}. Found: {out_names}")
+                        print(f"MidiHardwareService: No MIDI output ports available")
                 except Exception as oe:
                     print(f"MidiHardwareService: MIDI Output Pairing Error: {oe}")
             else:
                 print("MidiHardwareService: Low-level MIDI output skipped (Not available)")
             
-            # --- SysEx Identity Probe ---
-            # Before sending any MIDI output, verify the device can handle it.
-            # Send a standard Identity Request; if the device replies, it supports input.
-            # If no reply within 500ms, disable output to avoid crashing budget keyboards.
+            # Play startup riff to confirm MIDI output is working
             if self._ll_midi_out and self._ll_midi_out._port_open:
-                self._run_identity_probe()
+                self.play_startup_riff()
             
             return True
         except Exception as e:
@@ -196,64 +195,10 @@ class MidiHardwareService(QObject):
             self.connectionStatusChanged.emit(False)
             return False
 
-    def _run_identity_probe(self):
-        """Send a MIDI SysEx Identity Request to check if the device supports MIDI input."""
-        try:
-            # Enable SysEx reception on the input handler (RtMidi ignores SysEx by default)
-            if self.hw_midi_in:
-                self.hw_midi_in.setIgnoreTypes(False, True, True)
-            
-            self._awaiting_identity_reply = True
-            self._midi_out_verified = False
-            
-            # Send Universal Non-Realtime Identity Request: F0 7E 7F 06 01 F7
-            if self._ll_midi_out:
-                self._ll_midi_out.send_message([0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7])
-            print("MidiHardwareService: SysEx Identity Request sent, waiting for reply...")
-            
-            # Start timeout — if no reply in 500ms, device doesn't support MIDI input
-            self._probe_timeout_timer.start(500)
-        except Exception as e:
-            print(f"MidiHardwareService: Identity probe error: {e}")
-            self._awaiting_identity_reply = False
-
-    def _on_probe_timeout(self):
-        """Called when the identity probe times out — device didn't respond."""
-        if not self._awaiting_identity_reply:
-            return
-        
-        self._awaiting_identity_reply = False
-        print("MidiHardwareService: Device did not respond to identity probe — MIDI output disabled.")
-        print("MidiHardwareService: (Keyboard does not support receiving MIDI messages)")
-        self._ll_midi_out = None  # Disables all output; existing guards handle this
-        
-        # Re-enable SysEx filtering
-        if self.hw_midi_in:
-            self.hw_midi_in.setIgnoreTypes(True, True, True)
-
-    def _on_probe_success(self):
-        """Called on main thread after device responds to identity probe."""
-        self._probe_timeout_timer.stop()
-        # Re-enable SysEx filtering for normal operation
-        if self.hw_midi_in:
-            self.hw_midi_in.setIgnoreTypes(True, True, True)
-        # Celebrate the connection
-        self.play_startup_riff()
-
     def _on_raw_midi_data(self, deltatime: float, message: list[int]):
         """Called by C++ RtMidi thread (from chordcoach_hw extension)."""
         if not message:
             return
-        
-        # Check for SysEx Identity Reply during probe window
-        if self._awaiting_identity_reply and message[0] == 0xF0:
-            if len(message) >= 5 and message[1] == 0x7E and message[3] == 0x06 and message[4] == 0x02:
-                self._awaiting_identity_reply = False
-                self._midi_out_verified = True
-                print(f"MidiHardwareService: Device responded to identity probe — MIDI output enabled.")
-                # Emit signal to bounce to main thread (QTimer.singleShot doesn't work from non-Qt threads)
-                self._probeSucceeded.emit()
-            return  # Don't process SysEx as note data
             
         status = message[0] & 0xF0
         if status == 0x90: # Note On

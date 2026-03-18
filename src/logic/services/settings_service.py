@@ -108,9 +108,7 @@ class SettingsService(QObject):
 
     @Property(bool, notify=midiOutChanged)
     def midiOutEnabled(self) -> bool: # type: ignore
-        # Default to disabled on macOS (budget USB-MIDI keyboards buzz)
-        default = "false" if sys.platform == "darwin" else "true"
-        return self._get_env("MIDI_OUT_ENABLED", default).lower() in ("true", "1", "yes")
+        return self._get_env("MIDI_OUT_ENABLED", "true").lower() in ("true", "1", "yes")
 
     @midiOutEnabled.setter  # type: ignore
     def midiOutEnabled(self, val: bool):
