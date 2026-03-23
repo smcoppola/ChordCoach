@@ -15,6 +15,14 @@ Rectangle {
         replaceExit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 200 } }
     }
 
+    function goHome() {
+        if (appState && appState.chordTrainer) {
+            appState.chordTrainer.end_lesson();
+        }
+        workspaceStack.replace(dashboardComponent);
+    }
+    // ── Watch for isCircleOfFifthsMode changes to route automatically ──────
+
     // ── Watch for isCircleOfFifthsMode changes to route automatically ──────
     Connections {
         target: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer : null

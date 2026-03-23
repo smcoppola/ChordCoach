@@ -37,6 +37,7 @@ ApplicationWindow {
             Layout.preferredWidth: 260 * mainWindow.uiScale
             Layout.fillHeight: true
             onOpenSettings: mainWindow.showSettings = true
+            onGoHome: centerWorkspace.goHome()
             onOpenOnboarding: {
                 onboardingOverlay.show();
             }
@@ -44,6 +45,7 @@ ApplicationWindow {
 
         // 2. MAIN WORKSPACE
         CenterWorkspace {
+            id: centerWorkspace
             Layout.fillWidth: true
             Layout.fillHeight: true
         }

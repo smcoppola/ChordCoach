@@ -5,8 +5,8 @@ Item {
     id: root
     
     property string activeKey: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.currentKey : "C"
-    property var majorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.majorOrder : []
-    property var minorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.minorOrder : []
+    property var majorKeys: ["C", "G", "D", "A", "E", "B", "Gb", "Db", "Ab", "Eb", "Bb", "F"]
+    property var minorKeys: ["A", "E", "B", "F#", "C#", "G#", "Eb", "Bb", "F", "C", "G", "D"]
     property string detectedChord: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.detectedChord : ""
     
     // Internal state for rotation and animation

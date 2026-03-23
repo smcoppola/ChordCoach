@@ -470,6 +470,7 @@ Rectangle {
                         {"label": "Right Hand C Pentascale", "track": "technique", "id": "rh_pentascale_c"},
                         {"label": "Major Triads (C, F, G)", "track": "technique", "id": "rh_major_triads"},
                         {"label": "Circle of Fifths Introduction", "track": "theory", "id": "circle_of_fifths"},
+                        {"label": "Dominant Motion (V→I)", "track": "theory", "id": "dominant_motion"},
                         {"label": "Hearing Tension (V -> I)", "track": "theory", "id": "v_to_i_listen"},
                         {"label": "Major vs Minor Recognition", "track": "ear", "id": "major_minor_recognition"}
                     ]

@@ -15,6 +15,7 @@ Rectangle {
     property bool isLessonComplete: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLessonComplete : false
     property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
     property bool isWaitingForAi: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
+    property bool isWaitingForUserContinue: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForUserContinue : false
     property string exerciseName: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.exerciseName : ""
     property string loadingStatusText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.loadingStatusText : ""
     property real estimatedGenerationMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.estimatedGenerationMs : 0.0
@@ -26,6 +27,7 @@ Rectangle {
     property bool showMajor: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.tutorialShowMajor : false
     property bool showMinor: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.tutorialShowMinor : false
     property var highlightedChords: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.highlightedChords : []
+    property var arrows: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.arrows : []
     property int tutorialStage: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.tutorialStage : 0
 
     // ── AI transcript ────────────────────────────────────────────────────────
@@ -52,6 +54,59 @@ Rectangle {
     onIsLoadingChanged: {
         if (isLoading) { loadingProgress = 0.0; loadingAnim.restart(); }
         else { loadingAnim.stop(); loadingProgress = 0.0; }
+    }
+
+    // ── Success/Fail flash animation ─────────────────────────────────────────
+    Rectangle {
+        id: bgFlash
+        anchors.fill: parent
+        color: "transparent"
+        opacity: 0.0
+        
+        SequentialAnimation on opacity {
+            id: successFlash
+            running: false
+            PropertyAction { target: bgFlash; property: "color"; value: "#4CAF50" }
+            NumberAnimation { to: 0.3; duration: 50; easing.type: Easing.OutQuad }
+            NumberAnimation { to: 0.0; duration: 400; easing.type: Easing.InQuad }
+        }
+        
+        SequentialAnimation on opacity {
+            id: failFlash
+            running: false
+            PropertyAction { target: bgFlash; property: "color"; value: "#F44336" }
+            NumberAnimation { to: 0.15; duration: 50; easing.type: Easing.OutQuad }
+            NumberAnimation { to: 0.0; duration: 400; easing.type: Easing.InQuad }
+        }
+    }
+
+    // ── Signal Connections ───────────────────────────────────────────────────
+    Connections {
+        target: (typeof appState !== "undefined" && appState !== null) ? appState.chordTrainer : null
+        
+        function onChordFailed() {
+            if (root.isActive) {
+                failFlash.start();
+            }
+        }
+        
+        function onChordSuccess(chordName, latencyMs) {
+            if (root.isActive) {
+                successFlash.start();
+                visualKeyboard.setTargetKeys([]); // Clear template guide on success
+            }
+        }
+
+        function onMidiOutRequested(pitches) {
+            if (root.isActive) {
+                var arr = [];
+                for (var i = 0; i < pitches.length; i++) {
+                    arr.push(pitches[i]);
+                }
+                visualKeyboard.setTargetKeys(arr);
+                // Removed clear timer to keep lit until played
+            }
+        }
     }
 
     // ── Main Layout ──────────────────────────────────────────────────────────
@@ -152,12 +207,12 @@ Rectangle {
 
                 SequentialAnimation on opacity {
                     running: root.showCircle
-                    NumberAnimation { to: 0.6; duration: 600; easing.type: Easing.OutQuad }
+                    NumberAnimation { to: 0.6; duration: 1000; easing.type: Easing.OutQuad }
                     NumberAnimation { to: 0.0; duration: 800; easing.type: Easing.InQuad }
                 }
                 SequentialAnimation on scale {
                     running: root.showCircle
-                    NumberAnimation { from: 0.85; to: 1.05; duration: 600; easing.type: Easing.OutQuad }
+                    NumberAnimation { from: 0.85; to: 1.05; duration: 1000; easing.type: Easing.OutQuad }
                     NumberAnimation { from: 1.05; to: 1.0; duration: 400 }
                 }
             }
@@ -193,6 +248,57 @@ Rectangle {
         }
     }
 
+    // ── Manual Progression Control (blur overlay + centered button) ────────
+    Rectangle {
+        anchors.fill: parent
+        color: "#000000"
+        opacity: root.isWaitingForUserContinue ? 0.55 : 0.0
+        visible: root.isWaitingForUserContinue
+        z: 99
+
+        Behavior on opacity { NumberAnimation { duration: 300 } }
+
+        MouseArea {
+            anchors.fill: parent
+            // Block clicks from passing through to elements below
+        }
+    }
+
+    Rectangle {
+        anchors.centerIn: parent
+        width: 220 * mainWindow.uiScale
+        height: 56 * mainWindow.uiScale
+        radius: 28 * mainWindow.uiScale
+        color: continueMouseArea.pressed ? "#1E88E5" : "#2196F3"
+        visible: root.isWaitingForUserContinue
+        z: 100
+        scale: root.isWaitingForUserContinue ? 1.0 : 0.8
+        opacity: root.isWaitingForUserContinue ? 1.0 : 0.0
+
+        Behavior on scale { NumberAnimation { duration: 250; easing.type: Easing.OutBack } }
+        Behavior on opacity { NumberAnimation { duration: 250 } }
+
+        Text {
+            anchors.centerIn: parent
+            text: "CONTINUE  ▶"
+            color: "white"
+            font.pixelSize: 16 * mainWindow.uiScale
+            font.bold: true
+            font.letterSpacing: 2
+        }
+
+        MouseArea {
+            id: continueMouseArea
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                if (appState && appState.chordTrainer) {
+                    appState.chordTrainer.continueCircleTutorial()
+                }
+            }
+        }
+    }
+
     // ── Loading Overlay ──────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
@@ -205,17 +311,18 @@ Rectangle {
             spacing: 36
 
             Rectangle {
+                id: loadingSpinner
                 Layout.alignment: Qt.AlignHCenter
                 width: 100 * mainWindow.uiScale; height: 100 * mainWindow.uiScale
                 radius: 50 * mainWindow.uiScale
                 color: "transparent"
                 border.width: 3; border.color: "#2196F3"
                 SequentialAnimation on scale {
-                    loops: Animation.Infinite; running: parent.visible
+                    loops: Animation.Infinite; running: loadingSpinner.visible
                     NumberAnimation { from: 0.5; to: 1.5; duration: 1500; easing.type: Easing.OutCubic }
                 }
                 SequentialAnimation on opacity {
-                    loops: Animation.Infinite; running: parent.visible
+                    loops: Animation.Infinite; running: loadingSpinner.visible
                     NumberAnimation { from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutCubic }
                 }
             }
@@ -293,12 +400,13 @@ Rectangle {
         property bool showMinor: false
         property string highlightKey: ""
         property var highlightedChords: []
+        property var revealedKeys: []
         property real rotationAngle: 0
 
         width: size; height: size
 
-        property var majorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.majorOrder : []
-        property var minorKeys: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths.minorOrder : []
+        property var majorKeys: ["C", "G", "D", "A", "E", "B", "Gb", "Db", "Ab", "Eb", "Bb", "F"]
+        property var minorKeys: ["A", "E", "B", "F#", "C#", "G#", "Eb", "Bb", "F", "C", "G", "D"]
 
         // Smooth rotation when highlightKey changes
         property real targetAngle: 0
@@ -306,28 +414,43 @@ Rectangle {
             if (!highlightKey || !majorKeys || majorKeys.length < 12) return;
             var idx = majorKeys.indexOf(highlightKey);
             if (idx >= 0) {
-                targetAngle = -idx * 30;
+                var newRawAngle = -idx * 30;
+                var diff = (newRawAngle - circleRoot.rotationAngle) % 360;
+                
+                // Shortest path interpolation
+                if (diff > 180) diff -= 360;
+                else if (diff < -180) diff += 360;
+                
+                targetAngle = circleRoot.rotationAngle + diff;
                 spinAnim.to = targetAngle;
                 spinAnim.restart();
             }
         }
         NumberAnimation {
             id: spinAnim; target: circleRoot; property: "rotationAngle"
-            duration: 600; easing.type: Easing.OutCubic
+            duration: 1000; easing.type: Easing.OutCubic
         }
 
         Connections {
             target: (typeof appState !== "undefined" && appState && appState.circleOfFifths) ? appState.circleOfFifths : null
-            function onTutorialShowBaseChanged() { theCanvas.requestPaint() }
+            function onTutorialShowBaseChanged() { theCanvas.requestPaint(); focusIndicator.requestPaint() }
             function onTutorialShowMajorChanged() { theCanvas.requestPaint() }
             function onTutorialShowMinorChanged() { theCanvas.requestPaint() }
             function onTutorialHighlightKeyChanged() { theCanvas.requestPaint() }
             function onHighlightedChordsChanged() { theCanvas.requestPaint() }
+            function onArrowsChanged() { theCanvas.requestPaint() }
+            function onTutorialRevealedKeysChanged() {
+                var newKeys = appState.circleOfFifths.tutorialRevealedKeys;
+                if (!newKeys) newKeys = [];
+                circleRoot.revealedKeys = newKeys;
+                theCanvas.requestPaint();
+            }
         }
 
         Canvas {
             id: theCanvas
             anchors.fill: parent
+            rotation: circleRoot.rotationAngle
             antialiasing: true
 
             onPaint: {
@@ -354,7 +477,6 @@ Rectangle {
 
                 ctx.save();
                 ctx.translate(cx, cy);
-                ctx.rotate(circleRoot.rotationAngle * Math.PI / 180);
 
                 for (var i = 0; i < 12; i++) {
                     var a1 = (i * 30 - 105) * Math.PI / 180;
@@ -362,37 +484,50 @@ Rectangle {
                     var majKey = circleRoot.majorKeys[i];
                     var minKey = circleRoot.minorKeys[i];
 
-                    // ── Outer ring (major) ──
-                    ctx.beginPath();
-                    ctx.arc(0, 0, outerR, a1, a2);
-                    ctx.arc(0, 0, innerR, a2, a1, true);
-                    ctx.closePath();
-
-                    var isSingleHL = (circleRoot.highlightKey === majKey);
-                    var neighborColor = chordColorMap[majKey];
-
-                    if (neighborColor) {
-                        ctx.fillStyle = neighborColor;
-                    } else if (isSingleHL) {
-                        ctx.fillStyle = "#FFD700";
-                    } else {
-                        ctx.fillStyle = "#2a2a2a";
+                    // Check if this specific key should be revealed
+                    var isRevealed = false;
+                    var rKeys = circleRoot.revealedKeys || [];
+                    if (rKeys.length === 0 || rKeys.indexOf("ALL") >= 0) {
+                        isRevealed = true; // Show all if empty or 'ALL'
+                    } else if (rKeys.indexOf(majKey) >= 0 || rKeys.indexOf(minKey + "m") >= 0) {
+                        isRevealed = true;
                     }
-                    ctx.fill();
-                    ctx.strokeStyle = "#555555"; ctx.lineWidth = 1; ctx.stroke();
 
-                    if (circleRoot.showMajor) {
+                    // Only draw the structural wedge if it is revealed, creating a piecemeal build-up effect
+                    if (isRevealed) {
+                        // ── Outer ring (major) ──
+                        ctx.beginPath();
+                        ctx.arc(0, 0, outerR, a1, a2);
+                        ctx.arc(0, 0, innerR, a2, a1, true);
+                        ctx.closePath();
+
+                        var isSingleHL = (circleRoot.highlightKey === majKey);
+                        var neighborColor = chordColorMap[majKey];
+
+                        if (neighborColor) {
+                            ctx.fillStyle = neighborColor;
+                        } else if (isSingleHL) {
+                            ctx.fillStyle = "#FFD700";
+                        } else {
+                            ctx.fillStyle = "#2a2a2a";
+                        }
+                        ctx.fill();
+                        ctx.strokeStyle = "#555555"; ctx.lineWidth = 1; ctx.stroke();
+                    }
+
+
+                    if (circleRoot.showMajor && isRevealed) {
                         ctx.save();
                         ctx.rotate(a1 + 15 * Math.PI / 180);
                         ctx.fillStyle = (isSingleHL || neighborColor) ? "#000000" : "#e0e0e0";
-                        ctx.font = "bold " + Math.round(16 * mainWindow.uiScale) + "px Inter";
+                        ctx.font = "bold " + Math.round(16 * mainWindow.uiScale) + "px Cinzel";
                         ctx.textAlign = "center";
                         ctx.fillText(majKey.replace('b', '♭'), outerR * 0.82, 6);
                         ctx.restore();
                     }
 
                     // ── Inner ring (minor) ──
-                    if (circleRoot.showMinor) {
+                    if (circleRoot.showMinor && isRevealed) {
                         ctx.beginPath();
                         ctx.arc(0, 0, innerR, a1, a2);
                         ctx.arc(0, 0, holeR, a2, a1, true);
@@ -401,19 +536,90 @@ Rectangle {
                         var isMinHL = (circleRoot.highlightKey === minKey || circleRoot.highlightKey === minKey + "m");
                         ctx.fillStyle = isMinHL ? "#FFD700" : "#1e1e1e";
                         ctx.fill();
-                        ctx.stroke();
+                        ctx.strokeStyle = "#444444"; ctx.lineWidth = 1; ctx.stroke();
 
                         ctx.save();
                         ctx.rotate(a1 + 15 * Math.PI / 180);
-                        ctx.fillStyle = isMinHL ? "#000000" : "#777777";
-                        ctx.font = Math.round(13 * mainWindow.uiScale) + "px Inter";
+                        ctx.fillStyle = isMinHL ? "#000000" : "#bbbbbb";
+                        ctx.font = Math.round(13 * mainWindow.uiScale) + "px Cinzel";
                         ctx.textAlign = "center";
-                        ctx.fillText(minKey.replace('b', '♭'), innerR * 0.72, 5);
+                        ctx.fillText(minKey.replace('b', '♭') + "m", innerR * 0.77, 4);
                         ctx.restore();
                     }
                 }
 
+                // ── Draw Arrows (if any) ──
+                var arrowList = circleRoot.arrows || [];
+                if (arrowList.length > 0) {
+                    ctx.save();
+                    ctx.translate(cx, cy);
+                    
+                    for (var j = 0; j < arrowList.length; j++) {
+                        var arrow = arrowList[j];
+                        var fromIdx = circleRoot.majorKeys.indexOf(arrow.from);
+                        var toIdx = circleRoot.majorKeys.indexOf(arrow.to);
+                        
+                        if (fromIdx >= 0 && toIdx >= 0) {
+                            // Calculate center angles for the two wedges
+                            var fromAngle = (fromIdx * 30 - 90) * Math.PI / 180;
+                            var toAngle = (toIdx * 30 - 90) * Math.PI / 180;
+                            
+                            // Draw arrow just outside the outer ring
+                            var arrowR = outerR + 25;
+                            var startX = Math.cos(fromAngle) * arrowR;
+                            var startY = Math.sin(fromAngle) * arrowR;
+                            var endX = Math.cos(toAngle) * arrowR;
+                            var endY = Math.sin(toAngle) * arrowR;
+                            
+                            // Draw the curved arc
+                            ctx.beginPath();
+                            ctx.arc(0, 0, arrowR, fromAngle, toAngle, fromAngle > toAngle);
+                            ctx.strokeStyle = arrow.color || "#4CAF50";
+                            ctx.lineWidth = 4;
+                            ctx.stroke();
+                            
+                            // Draw the arrowhead
+                            var headlen = 12;
+                            // Determine direction of the arrowhead
+                            var angleDir = (toAngle > fromAngle) ? 1 : -1;
+                            if (Math.abs(toIdx - fromIdx) > 6) {
+                                // Wrapping around 12 o'clock, invert direction
+                                angleDir *= -1;
+                            }
+                            // Tangent angle at the end point
+                            var tangent = toAngle + (angleDir * Math.PI / 2);
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(endX, endY);
+                            ctx.lineTo(endX - headlen * Math.cos(tangent - Math.PI / 6), 
+                                       endY - headlen * Math.sin(tangent - Math.PI / 6));
+                            ctx.lineTo(endX - headlen * Math.cos(tangent + Math.PI / 6), 
+                                       endY - headlen * Math.sin(tangent + Math.PI / 6));
+                            ctx.closePath();
+                            ctx.fillStyle = arrow.color || "#4CAF50";
+                            ctx.fill();
+                        }
+                    }
+                    ctx.restore();
+                }
+
                 ctx.restore();
+            }
+        }
+
+        Canvas {
+            id: focusIndicator
+            anchors.fill: parent
+            antialiasing: true
+
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.reset()
+                if (!circleRoot.showBase) return;
+
+                var W = width, H = height;
+                var cx = W / 2, cy = H / 2;
+                var outerR = W * 0.44;
 
                 // Focus indicator at 12 o'clock (fixed, non-rotating)
                 ctx.beginPath();

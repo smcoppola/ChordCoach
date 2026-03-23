@@ -10,6 +10,8 @@ Rectangle {
     signal openSettings()
     signal openOnboarding()
 
+    signal goHome()
+
     // Vertical split line
     Rectangle {
         width: 1
@@ -301,6 +303,43 @@ Rectangle {
                 Text {
                     text: "Settings"
                     color: "#888888"
+                    font.pixelSize: 13 * mainWindow.uiScale
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+            }
+        }
+
+        // Home button
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 42
+            visible: root.isLessonActive
+            color: homeMA.containsMouse ? "#2a2a2a" : "transparent"
+            radius: 8
+            
+            MouseArea {
+                id: homeMA
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.goHome()
+            }
+            
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 12
+                
+                Text {
+                    text: "🏠"
+                    font.pixelSize: 16 * mainWindow.uiScale
+                    color: "#f44336"
+                }
+                Text {
+                    text: "Quit Lesson"
+                    color: "#f44336"
                     font.pixelSize: 13 * mainWindow.uiScale
                     font.bold: true
                     Layout.fillWidth: true

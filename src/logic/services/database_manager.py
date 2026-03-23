@@ -218,6 +218,25 @@ class DatabaseManager:
             cursor.execute('SELECT exercise_type FROM exercise_intros')
             return [row[0] for row in cursor.fetchall()]
 
+    def get_dominant_motion_play_count(self) -> int:
+        """Returns the number of times the user has started the Dominant Motion drill."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM app_settings WHERE key = 'dominant_motion_play_count'")
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    def record_dominant_motion_play(self):
+        """Increments the play count for the Dominant Motion drill."""
+        current_count = self.get_dominant_motion_play_count()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('dominant_motion_play_count', ?)",
+                (str(current_count + 1),)
+            )
+            conn.commit()
+
     def record_chord_attempt(self, chord_name: str, success: bool, latency_ms: float = 0.0, 
                              wrong_notes: int = 0, is_simultaneous: bool = False):
         """Records a chord attempt, updating success/fail counts and average latency."""

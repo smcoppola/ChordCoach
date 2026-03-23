@@ -25,6 +25,7 @@ class CircleOfFifthsService(QObject):
     tutorialShowMajorChanged = Signal(bool)
     tutorialShowMinorChanged = Signal(bool)
     tutorialHighlightKeyChanged = Signal(str)
+    tutorialRevealedKeysChanged = Signal()
     highlightedChordsChanged = Signal()
     arrowsChanged = Signal()
     pathTraceChanged = Signal()
@@ -79,6 +80,7 @@ class CircleOfFifthsService(QObject):
         self._tutorial_show_minor = False
         self._tutorial_highlight_key = ""
         self._highlighted_chords: list[str] = []
+        self._tutorial_revealed_keys: list[str] = []
         self._arrows: list[dict] = []
         self._path_trace: list[str] = []
         self._waypoints: list[str] = []
@@ -131,6 +133,10 @@ class CircleOfFifthsService(QObject):
     @Property(list, notify=highlightedChordsChanged)
     def highlightedChords(self):
         return self._highlighted_chords
+
+    @Property(list, notify=tutorialRevealedKeysChanged)
+    def tutorialRevealedKeys(self):
+        return self._tutorial_revealed_keys
 
     @Property(list, notify=arrowsChanged)
     def arrows(self):
@@ -187,6 +193,10 @@ class CircleOfFifthsService(QObject):
             self._highlighted_chords = data["highlighted_chords"]
             self.highlightedChordsChanged.emit()
 
+        if "revealed_keys" in data:
+            self._tutorial_revealed_keys = data["revealed_keys"]
+            self.tutorialRevealedKeysChanged.emit()
+
         if "arrows" in data:
             self._arrows = data["arrows"]
             self.arrowsChanged.emit()
@@ -221,6 +231,7 @@ class CircleOfFifthsService(QObject):
         self._tutorial_show_minor = False
         self._tutorial_highlight_key = ""
         self._highlighted_chords = []
+        self._tutorial_revealed_keys = []
         self._arrows = []
         self._path_trace = []
         self._waypoints = []
@@ -232,6 +243,7 @@ class CircleOfFifthsService(QObject):
         self.tutorialShowMinorChanged.emit(False)
         self.tutorialHighlightKeyChanged.emit("")
         self.highlightedChordsChanged.emit()
+        self.tutorialRevealedKeysChanged.emit()
         self.arrowsChanged.emit()
         self.pathTraceChanged.emit()
         self.waypointsChanged.emit()

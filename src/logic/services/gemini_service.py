@@ -70,6 +70,7 @@ class GeminiService(QObject):
         self._is_speaking_state = False
         self._turn_complete = True # Start as complete
         self._exercise_pending = False  # Track if an exercise is awaiting completion
+        self._tools_disabled = False  # When True, omit tools from session setup (voice-only mode)
         
         # Start the asyncio loop in a background thread so we don't block the Qt UI
         self._loop_thread = threading.Thread(target=self._start_loop, daemon=True)
@@ -154,6 +155,13 @@ class GeminiService(QObject):
     def disconnect_service(self):
         self._intentional_disconnect = True
         asyncio.run_coroutine_threadsafe(self._disconnect_ws(), self.loop)
+
+    @Slot(bool)
+    def set_tools_disabled(self, disabled: bool):
+        """Enable or disable tool declarations for the next session setup.
+        Must be called BEFORE connect_service to take effect."""
+        self._tools_disabled = disabled
+        print(f"Gemini Service: Tools {'DISABLED' if disabled else 'ENABLED'} for next session.")
 
     async def _connect_ws(self):
         if self.connected:
@@ -270,144 +278,150 @@ class GeminiService(QObject):
                         "parts": [{
                             "text": base_instruction
                         }]
-                    },
-                    "tools": [{
-                        "functionDeclarations": [
-                            {
-                                "name": "set_exercise",
-                                "description": (
-                                    "Set the next piano exercise for the student. "
-                                    "CRITICAL: Call this EXACTLY ONCE per turn. DO NOT use parallel function calling to queue multiple exercises. "
-                                    "You must wait for the user to perform the exercise before calling this tool again. "
-                                    "Multiple simultaneous calls will be ignored."
-                                ),
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "exercise_type": {
-                                            "type": "STRING",
-                                            "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal"
-                                        },
-                                        "exercise_name": {
-                                            "type": "STRING",
-                                            "description": "Human-readable name for this exercise group (e.g. 'Minor Triads')"
-                                        },
-                                        "root_idx": {
-                                            "type": "INTEGER",
-                                            "description": "Root note as semitone offset from C: C=0, C#=1, D=2, ... B=11"
-                                        },
-                                        "chord_type_name": {
-                                            "type": "STRING",
-                                            "description": "Chord quality: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7"
-                                        },
-                                        "hand": {
-                                            "type": "STRING",
-                                            "description": "Which hand: right, left, or both"
-                                        },
-                                        "hold_ms": {
-                                            "type": "INTEGER",
-                                            "description": "How long the student must hold the chord in ms. 0 = strike only, 2000+ = sustain"
-                                        },
-                                        "track": {
-                                            "type": "STRING",
-                                            "description": "Curriculum track: technique, theory, ear, repertoire"
-                                        },
-                                        "milestone_id": {
-                                            "type": "STRING",
-                                            "description": "Curriculum milestone identifier"
-                                        },
-                                        "scale_type": {
-                                            "type": "STRING",
-                                            "description": "For pentascale exercises: Major or Minor"
-                                        },
-                                        "direction": {
-                                            "type": "STRING",
-                                            "description": "For pentascale: ascending or descending"
-                                        },
-                                        "octave": {
-                                            "type": "INTEGER",
-                                            "description": "Octave number, usually 4"
-                                        },
-                                        "bpm": {
-                                            "type": "INTEGER",
-                                            "description": "Metronome BPM for timed exercises. 0 or omit for free play"
-                                        },
-                                        "preview_chord": {
-                                            "type": "BOOLEAN",
-                                            "description": "If true, play the chord on the MIDI keyboard before the student tries"
-                                        },
-                                        "target_quality": {
-                                            "type": "STRING",
-                                            "description": "For listen exercises: Major or Minor"
-                                        },
-                                        "pedal_type": {
-                                            "type": "STRING",
-                                            "description": "For sustain_pedal exercises: direct or legato"
-                                        },
-                                        "inversion": {
-                                            "type": "INTEGER",
-                                            "description": "Chord inversion: 0 = root position (default), 1 = 1st inversion, 2 = 2nd inversion. Omit or 0 for root position."
-                                        },
-                                        "progression_steps": {
-                                            "type": "ARRAY",
-                                            "description": "For progression exercises: array of chord steps",
-                                            "items": {
-                                                "type": "OBJECT",
-                                                "properties": {
-                                                    "root_idx": {"type": "INTEGER"},
-                                                    "chord_type_name": {"type": "STRING"},
-                                                    "numeral": {"type": "STRING"}
-                                                }
-                                            }
-                                        }
-                                    },
-                                    "required": ["exercise_type", "exercise_name", "track", "milestone_id"]
-                                }
-                            },
-                            {
-                                "name": "end_lesson",
-                                "description": (
-                                    "End the current lesson. Call this when the student has completed "
-                                    "enough exercises or the session time is up. Speak your closing "
-                                    "feedback AND call this tool."
-                                ),
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "feedback_summary": {
-                                            "type": "STRING",
-                                            "description": "Brief text summary of the student's performance"
-                                        }
-                                    }
-                                }
-                            },
-                            {
-                                "name": "update_theory_visual",
-                                "description": (
-                                    "Updates the interactive Circle of Fifths visualization in real-time. "
-                                    "Call this at specific beats during the voice narrative to sync animations. "
-                                    "Supports multi-chord highlighting, prediction arrows, path tracing, and stage control."
-                                ),
-                                "parameters": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "show_base": { "type": "BOOLEAN", "description": "True to draw the blank base wheel." },
-                                        "show_major": { "type": "BOOLEAN", "description": "True to reveal the outer Major key names." },
-                                        "show_minor": { "type": "BOOLEAN", "description": "True to reveal the inner Minor key ring." },
-                                        "highlight_key": { "type": "STRING", "description": "A specific key to highlight (e.g. 'C', 'G'), or empty string to clear highlights." },
-                                        "highlighted_chords": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "List of chord keys to highlight simultaneously (e.g. ['C', 'F', 'G'] for I-IV-V neighborhood)." },
-                                        "arrows": { "type": "ARRAY", "items": {"type": "OBJECT", "properties": {"from": {"type": "STRING"}, "to": {"type": "STRING"}, "label": {"type": "STRING"}}}, "description": "Prediction arrows to draw between keys on the circle." },
-                                        "path": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "Ordered key sequence to trace as a connected path on the circle." },
-                                        "stage": { "type": "INTEGER", "description": "Tutorial stage number (1-5). Controls which interactive mode is active." },
-                                        "waypoints": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "Target chord waypoints for guided progression challenges." }
-                                    },
-                                    "required": ["show_base", "show_major", "show_minor", "highlight_key"]
-                                }
-                            }
-                        ]
-                    }]
+                    }
                 }
             }
+
+            # Only include tools if they are not disabled (e.g., during circle tutorial voice-only mode)
+            if not self._tools_disabled:
+                setup_msg["setup"]["tools"] = [{
+                    "functionDeclarations": [
+                        {
+                            "name": "set_exercise",
+                            "description": (
+                                "Set the next piano exercise for the student. "
+                                "CRITICAL: Call this EXACTLY ONCE per turn. DO NOT use parallel function calling to queue multiple exercises. "
+                                "You must wait for the user to perform the exercise before calling this tool again. "
+                                "Multiple simultaneous calls will be ignored."
+                            ),
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "exercise_type": {
+                                        "type": "STRING",
+                                        "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal"
+                                    },
+                                    "exercise_name": {
+                                        "type": "STRING",
+                                        "description": "Human-readable name for this exercise group (e.g. 'Minor Triads')"
+                                    },
+                                    "root_idx": {
+                                        "type": "INTEGER",
+                                        "description": "Root note as semitone offset from C: C=0, C#=1, D=2, ... B=11"
+                                    },
+                                    "chord_type_name": {
+                                        "type": "STRING",
+                                        "description": "Chord quality: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7"
+                                    },
+                                    "hand": {
+                                        "type": "STRING",
+                                        "description": "Which hand: right, left, or both"
+                                    },
+                                    "hold_ms": {
+                                        "type": "INTEGER",
+                                        "description": "How long the student must hold the chord in ms. 0 = strike only, 2000+ = sustain"
+                                    },
+                                    "track": {
+                                        "type": "STRING",
+                                        "description": "Curriculum track: technique, theory, ear, repertoire"
+                                    },
+                                    "milestone_id": {
+                                        "type": "STRING",
+                                        "description": "Curriculum milestone identifier"
+                                    },
+                                    "scale_type": {
+                                        "type": "STRING",
+                                        "description": "For pentascale exercises: Major or Minor"
+                                    },
+                                    "direction": {
+                                        "type": "STRING",
+                                        "description": "For pentascale: ascending or descending"
+                                    },
+                                    "octave": {
+                                        "type": "INTEGER",
+                                        "description": "Octave number, usually 4"
+                                    },
+                                    "bpm": {
+                                        "type": "INTEGER",
+                                        "description": "Metronome BPM for timed exercises. 0 or omit for free play"
+                                    },
+                                    "preview_chord": {
+                                        "type": "BOOLEAN",
+                                        "description": "If true, play the chord on the MIDI keyboard before the student tries"
+                                    },
+                                    "target_quality": {
+                                        "type": "STRING",
+                                        "description": "For listen exercises: Major or Minor"
+                                    },
+                                    "pedal_type": {
+                                        "type": "STRING",
+                                        "description": "For sustain_pedal exercises: direct or legato"
+                                    },
+                                    "inversion": {
+                                        "type": "INTEGER",
+                                        "description": "Chord inversion: 0 = root position (default), 1 = 1st inversion, 2 = 2nd inversion. Omit or 0 for root position."
+                                    },
+                                    "progression_steps": {
+                                        "type": "ARRAY",
+                                        "description": "For progression exercises: array of chord steps",
+                                        "items": {
+                                            "type": "OBJECT",
+                                            "properties": {
+                                                "root_idx": {"type": "INTEGER"},
+                                                "chord_type_name": {"type": "STRING"},
+                                                "numeral": {"type": "STRING"}
+                                            }
+                                        }
+                                    }
+                                },
+                                "required": ["exercise_type", "exercise_name", "track", "milestone_id"]
+                            }
+                        },
+                        {
+                            "name": "end_lesson",
+                            "description": (
+                                "End the current lesson. Call this when the student has completed "
+                                "enough exercises or the session time is up. Speak your closing "
+                                "feedback AND call this tool."
+                            ),
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "feedback_summary": {
+                                        "type": "STRING",
+                                        "description": "Brief text summary of the student's performance"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "name": "update_theory_visual",
+                            "description": (
+                                "Updates the interactive Circle of Fifths visualization in real-time. "
+                                "Call this at specific beats during the voice narrative to sync animations. "
+                                "Supports multi-chord highlighting, prediction arrows, path tracing, and stage control."
+                            ),
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "show_base": { "type": "BOOLEAN", "description": "True to draw the blank base wheel." },
+                                    "show_major": { "type": "BOOLEAN", "description": "True to reveal the outer Major key names." },
+                                    "show_minor": { "type": "BOOLEAN", "description": "True to reveal the inner Minor key ring." },
+                                    "highlight_key": { "type": "STRING", "description": "The specific key (e.g. 'C' or 'Am') to highlight with a golden outline." },
+                                    "highlighted_chords": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "List of chord keys to highlight simultaneously (e.g. ['C', 'F', 'G'])." },
+                                    "revealed_keys": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "List of keys (e.g. ['C', 'G']) whose text labels should be visible on the ring. If 'ALL', all keys are shown." },
+                                    "arrows": { "type": "ARRAY", "items": {"type": "OBJECT", "properties": {"from": {"type": "STRING"}, "to": {"type": "STRING"}, "label": {"type": "STRING"}}}, "description": "Prediction arrows to draw between keys on the circle." },
+                                    "path": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "Ordered key sequence to trace as a connected path on the circle." },
+                                    "stage": { "type": "INTEGER", "description": "Tutorial stage number (1-5). Controls which interactive mode is active." },
+                                    "waypoints": { "type": "ARRAY", "items": {"type": "STRING"}, "description": "Target chord waypoints for guided progression challenges." }
+                                },
+                                "required": ["show_base", "show_major", "show_minor", "highlight_key"]
+                            }
+                        }
+                    ]
+                }]
+            else:
+                print("Gemini Service: Tools DISABLED for this session (voice-only mode).")
             await self.ws.send(json.dumps(setup_msg))  # type: ignore
             
             # Start the receive loop
@@ -444,6 +458,19 @@ class GeminiService(QObject):
                 if "toolCall" in data:
                     tool_call = data["toolCall"]
                     function_calls = tool_call.get("functionCalls", [])
+                    
+                    # When tools are disabled (voice-only mode), silently acknowledge and skip
+                    if self._tools_disabled:
+                        silent_responses = []
+                        for fc in function_calls:
+                            silent_responses.append({
+                                "id": fc.get("id", ""),
+                                "name": fc.get("name", ""),
+                                "response": {"status": "ok"}
+                            })
+                        if silent_responses:
+                            await self.ws.send(json.dumps({"toolResponse": {"functionResponses": silent_responses}}))  # type: ignore
+                        continue
                     
                     responses = []
                     
@@ -526,8 +553,14 @@ class GeminiService(QObject):
                         # If the model turn is complete but we never started speaking, it was silent!
                         # But wait to make sure the audio playback buffer is actually empty.
                         if not self._is_speaking_state and len(self._audio_buffer) == 0:
-                            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Turn complete with NO audio. Emitting finished speaking manually.")
-                            self.aiFinishedSpeaking.emit()
+                            if "toolCall" in data:
+                                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Tool call yielded turn. Waiting for model to follow up with audio.")
+                            else:
+                                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Turn complete with NO audio. Emitting finished speaking manually.")
+                                try:
+                                    self.aiFinishedSpeaking.emit()
+                                except RuntimeError:
+                                    pass  # Signal source deleted during shutdown
                                 
         except ConnectionClosed as e:
             print(f"Gemini Service: Connection closed by server. Code: {e.code}, Reason: {e.reason}")
@@ -539,7 +572,10 @@ class GeminiService(QObject):
                 print("Gemini Service: Connection dropped while speaking. Emitting finished speaking to clear locks.")
                 self._is_speaking_state = False
                 self._audio_buffer = b""
-                self.aiFinishedSpeaking.emit()
+                try:
+                    self.aiFinishedSpeaking.emit()
+                except RuntimeError:
+                    pass  # Signal source deleted during shutdown
             
             # Clean up current connection state without emitting disconnected yet
             ws_to_close = self.ws

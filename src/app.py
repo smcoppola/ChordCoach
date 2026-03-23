@@ -113,6 +113,7 @@ class AppState(QObject):
         
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
+        self.chord_trainer.midiOutRequested.connect(self.hw_service.play_chord_preview)
         
         # Initialize the hardware layer
         self.hw_service.initialize()
