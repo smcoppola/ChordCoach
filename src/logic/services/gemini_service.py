@@ -90,9 +90,14 @@ class GeminiService(QObject):
         fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
         
         # We start the sink immediately so it is ready to receive bytes
-        self.audio_sink = QAudioSink(QMediaDevices.defaultAudioOutput(), fmt, self)
-        self.audio_sink.setBufferSize(32768)
-        self.audio_io = self.audio_sink.start()
+        try:
+            self.audio_sink = QAudioSink(QMediaDevices.defaultAudioOutput(), fmt, self)
+            self.audio_sink.setBufferSize(32768)
+            self.audio_io = self.audio_sink.start()
+        except Exception as e:
+            print(f"Gemini Service: Audio playback setup failed: {e}")
+            self.audio_sink = None
+            self.audio_io = None
 
     @Slot(bytes)
     def _play_audio_chunk(self, data: bytes):
@@ -100,11 +105,14 @@ class GeminiService(QObject):
 
     @Slot()
     def _pump_audio(self):
+        if not self.audio_sink:
+            return
+
         # We only consider finishing speech if the server turn is definitively over AND the local buffer has drained.
         if self._is_speaking_state and not self._audio_buffer and self._turn_complete:
             time_since_last = time.time() - self._last_audio_write_time
             if time_since_last > 0.2:
-                is_empty = self.audio_sink and self.audio_sink.bytesFree() >= self.audio_sink.bufferSize() * 0.95
+                is_empty = self.audio_sink.bytesFree() >= self.audio_sink.bufferSize() * 0.95
                 if is_empty or time_since_last > 1.0:
                     print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Audio playback FINISHED (Turn Complete)")
                     self._is_speaking_state = False
@@ -115,7 +123,14 @@ class GeminiService(QObject):
             
         # Restart the active IO device if the QAudioSink has stopped or been suspended (common on underrun)
         if not self.audio_io or not self.audio_io.isOpen() or self.audio_sink.state() == QAudio.State.StoppedState:
-            self.audio_io = self.audio_sink.start()
+            try:
+                self.audio_io = self.audio_sink.start()
+            except Exception as e:
+                print(f"Gemini Service: Audio sink restart failed: {e}")
+                return
+
+        if not self.audio_io:
+            return
             
         free_bytes = self.audio_sink.bytesFree()
         if free_bytes > 0:
@@ -299,7 +314,7 @@ class GeminiService(QObject):
                                 "properties": {
                                     "exercise_type": {
                                         "type": "STRING",
-                                        "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal"
+                                        "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal, steady_pulse"
                                     },
                                     "exercise_name": {
                                         "type": "STRING",
@@ -360,6 +375,10 @@ class GeminiService(QObject):
                                     "inversion": {
                                         "type": "INTEGER",
                                         "description": "Chord inversion: 0 = root position (default), 1 = 1st inversion, 2 = 2nd inversion. Omit or 0 for root position."
+                                    },
+                                    "pulse_count": {
+                                        "type": "INTEGER",
+                                        "description": "For steady_pulse exercises: how many beats to play. Default is 16."
                                     },
                                     "progression_steps": {
                                         "type": "ARRAY",
@@ -422,7 +441,7 @@ class GeminiService(QObject):
                 }]
             else:
                 print("Gemini Service: Tools DISABLED for this session (voice-only mode).")
-            await self.ws.send(json.dumps(setup_msg))  # type: ignore
+            await self._safe_ws_send(json.dumps(setup_msg))
             
             # Start the receive loop
             asyncio.create_task(self._receive_loop())
@@ -437,11 +456,27 @@ class GeminiService(QObject):
             self.connected = False
             self.connectionStatusChanged.emit(False)
 
+    async def _safe_ws_send(self, message: str):
+        """Send a message to the WebSocket, handling connection errors gracefully."""
+        ws = self.ws
+        if not ws:
+            return
+        try:
+            await ws.send(message)
+        except ConnectionClosed:
+            print("Gemini Service: WebSocket closed during send.")
+        except Exception as e:
+            print(f"Gemini Service: Send failed: {e}")
+
     async def _disconnect_ws(self):
-        if self.ws:
-            await self.ws.close()  # type: ignore
+        ws = self.ws
         self.ws = None
         self.connected = False
+        if ws:
+            try:
+                await ws.close()
+            except Exception:
+                pass
         self.connectionStatusChanged.emit(False)
         print("Gemini Service: WebSocket Disconnected.")
 
@@ -469,7 +504,7 @@ class GeminiService(QObject):
                                 "response": {"status": "ok"}
                             })
                         if silent_responses:
-                            await self.ws.send(json.dumps({"toolResponse": {"functionResponses": silent_responses}}))  # type: ignore
+                            await self._safe_ws_send(json.dumps({"toolResponse": {"functionResponses": silent_responses}}))
                         continue
                     
                     responses = []
@@ -519,7 +554,7 @@ class GeminiService(QObject):
                                 "functionResponses": responses
                             }
                         }
-                        await self.ws.send(json.dumps(tool_resp))  # type: ignore
+                        await self._safe_ws_send(json.dumps(tool_resp))
                     
                 if "serverContent" in data:
                     content = data["serverContent"]
@@ -595,6 +630,9 @@ class GeminiService(QObject):
 
     async def _attempt_reconnect(self):
         """Attempt to reconnect with exponential backoff."""
+        # Reset exercise lock so new exercises can flow after reconnect
+        self._exercise_pending = False
+
         while self._reconnect_attempts < self._max_reconnect_attempts:
             self._reconnect_attempts += 1
             delay = min(2 ** self._reconnect_attempts, 30)
@@ -640,7 +678,7 @@ class GeminiService(QObject):
                 "turnComplete": True
             }
         }
-        asyncio.run_coroutine_threadsafe(self.ws.send(json.dumps(msg)), self.loop)  # type: ignore
+        asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)
 
     @Slot()
     def clear_exercise_pending(self):
@@ -679,4 +717,4 @@ class GeminiService(QObject):
         }
         
         # 4. Fire and forget to the websocket thread
-        asyncio.run_coroutine_threadsafe(self.ws.send(json.dumps(msg)), self.loop)  # type: ignore
+        asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)

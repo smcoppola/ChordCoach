@@ -40,8 +40,7 @@
 - Expose to QML as `curriculumService` context property
 - Wire to `ChordTrainerService`
 
-#### [MODIFY] `src/ui/LeftSidebar.qml`
-- Add curriculum progress section: current milestone per track, review items due
+
 
 ### Verification
 - Launch app → "Start Lesson" still generates and plays exercises
@@ -178,27 +177,9 @@
 - `get_diatonic_chords(key_name) → [(numeral, chord_name, quality)]`
 - `get_shared_notes(key_a, key_b) → [pitch_names]`
 
-#### [MODIFY] `src/ui/LeftSidebar.qml`
-- Embed `CircleOfFifths` as persistent sidebar widget
-- Reacts to current exercise key: highlights active key segment
-- During progressions: animates chord arcs
-
-#### [MODIFY] `src/logic/services/chord_trainer.py`
-- New exercise types: `"key_explorer"` and `"progression_navigator"`
-- Key Explorer: validate scale playback against `circle_of_fifths_service.get_key_data()`
-- Progression Navigator: animate arcs on the circle as chords are played correctly
-
 #### [MODIFY] `src/resources/curriculum_tracks.json`
 - Theory track: `circle_of_fifths` milestone exercises reference new types
 
-### Verification
-- Circle visible in sidebar during all exercises
-- Play notes → matching segment pulses
-- Key Explorer lesson: coach narrates, circle animates, user plays scale
-- Progression Navigator: I-V-VI-IV arcs animate as user plays correctly
-- Drag-to-transpose: drag stencil, see new chord names
-
----
 
 ## Phase 6 — music21 Integration
 

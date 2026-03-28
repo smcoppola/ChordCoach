@@ -37,9 +37,13 @@ class CurriculumService(QObject):
         """Load curriculum track definitions from JSON."""
         tracks_file = self._resources_dir / "curriculum_tracks.json"
         if tracks_file.exists():
-            with open(tracks_file, "r", encoding="utf-8") as f:
-                self._tracks_data = json.load(f)
-            print(f"CurriculumService: Loaded {sum(len(v) for v in self._tracks_data.values())} milestones across {len(self._tracks_data)} tracks")
+            try:
+                with open(tracks_file, "r", encoding="utf-8") as f:
+                    self._tracks_data = json.load(f)
+                print(f"CurriculumService: Loaded {sum(len(v) for v in self._tracks_data.values())} milestones across {len(self._tracks_data)} tracks")
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(f"CurriculumService: ERROR — Failed to parse {tracks_file}: {e}")
+                self._tracks_data = {}
         else:
             print(f"CurriculumService: WARNING — {tracks_file} not found, using empty curriculum")
             self._tracks_data = {}
@@ -70,8 +74,13 @@ class CurriculumService(QObject):
         - review_items: spaced repetition items due today
         - total_estimated_steps: rough step count for the session
         """
+        # Auto-finish a previous session if plan_session is called again
+        # (e.g., user starts a new lesson without finishing the old one)
+        if self._session_start_time > 0:
+            print("CurriculumService: Previous session still active, auto-finishing.")
+            self.finish_session()
+
         active_milestones = self.db.get_active_milestones()
-        recent_sessions = self.db.get_recent_sessions(limit=3)
 
         # Build blocks from active milestones (pick up to 3 tracks)
         blocks = []
@@ -173,14 +182,15 @@ class CurriculumService(QObject):
             context += "\nRecent Sessions:\n"
             for s in recent:
                 tracks = s.get("tracks_covered", "[]")
-                acc = f"{s['overall_accuracy']:.0%}" if s.get("overall_accuracy") else "N/A"
+                overall_acc = s.get("overall_accuracy")
+                acc = f"{overall_acc:.0%}" if overall_acc is not None else "N/A"
                 try:
                     dt = datetime.fromisoformat(s['session_date'])
                     date_str = dt.strftime('%B %d') # e.g. "March 10"
-                except ValueError:
-                    date_str = s['session_date'][:10]
+                except (ValueError, KeyError):
+                    date_str = str(s.get('session_date', 'unknown'))[:10]
                     
-                context += f"- {date_str}: {tracks}, accuracy {acc}, {s['exercises_completed']} exercises\n"
+                context += f"- {date_str}: {tracks}, accuracy {acc}, {s.get('exercises_completed', 0)} exercises\n"
 
         return context
 
@@ -199,40 +209,44 @@ class CurriculumService(QObject):
 
         # Update milestone progress if we know which one
         if track and milestone_id:
-            print(f"CurriculumService: Recording attempt for {track}/{milestone_id} (success={success})")
-            self.db.record_milestone_attempt(track, milestone_id, success)
+            try:
+                self.db.record_milestone_attempt(track, milestone_id, success)
 
-            # Check if milestone should advance
-            meta = self._get_milestone_meta(track, milestone_id)
-            if meta:
-                ms_state = None
-                for m in self.db.get_curriculum_state(track):
-                    if m["milestone_id"] == milestone_id:
-                        ms_state = m
-                        break
+                # Check if milestone should advance
+                meta = self._get_milestone_meta(track, milestone_id)
+                if meta:
+                    ms_state = None
+                    for m in self.db.get_curriculum_state(track):
+                        if m["milestone_id"] == milestone_id:
+                            ms_state = m
+                            break
 
-                if ms_state and ms_state["status"] == "active":
-                    min_att = meta.get("min_attempts_to_advance", 5)
-                    min_acc = meta.get("min_accuracy_to_advance", 0.80)
-                    attempts = ms_state["attempts"]
-                    accuracy = ms_state["successes"] / attempts if attempts > 0 else 0
+                    if ms_state and ms_state["status"] == "active":
+                        min_att = meta.get("min_attempts_to_advance", 5)
+                        min_acc = meta.get("min_accuracy_to_advance", 0.80)
+                        attempts = ms_state["attempts"]
+                        accuracy = ms_state["successes"] / attempts if attempts > 0 else 0
 
-                    if attempts >= min_att and accuracy >= min_acc:
-                        self.db.advance_milestone(track, milestone_id)
-                        print(f"CurriculumService: 🎉 Milestone advanced! {track}/{milestone_id} "
-                              f"({attempts} attempts, {accuracy:.0%} accuracy)")
+                        if attempts >= min_att and accuracy >= min_acc:
+                            self.db.advance_milestone(track, milestone_id)
+                            print(f"CurriculumService: 🎉 Milestone advanced! {track}/{milestone_id} "
+                                  f"({attempts} attempts, {accuracy:.0%} accuracy)")
+            except Exception as e:
+                print(f"CurriculumService: Error updating milestone {track}/{milestone_id}: {e}")
             
-            # Notify UI that progress (attempts/accuracy) has changed, even if milestone didn't advance
-            print(f"CurriculumService: Emitting curriculumChanged signal!")
+            # Notify UI that progress has changed, even if milestone didn't advance
             self.curriculumChanged.emit()
 
 
     def finish_session(self):
-        """Record the completed session in history."""
-        if self._session_start_time > 0:
-            elapsed = int(time.time() - self._session_start_time)
-            accuracy = (self._session_successes / self._session_exercises
-                       if self._session_exercises > 0 else 0.0)
+        """Record the completed session in history. Safe to call multiple times."""
+        if self._session_start_time <= 0:
+            return  # Already finished or never started
+
+        elapsed = int(time.time() - self._session_start_time)
+        accuracy = (self._session_successes / self._session_exercises
+                   if self._session_exercises > 0 else 0.0)
+        try:
             self.db.record_session(
                 self._session_tracks,
                 self._session_milestones,
@@ -242,9 +256,16 @@ class CurriculumService(QObject):
             )
             print(f"CurriculumService: Session recorded — {self._session_exercises} exercises, "
                   f"{accuracy:.0%} accuracy, {elapsed}s")
-            self._session_start_time = 0.0
-            self._session_tracks = []
-            self.curriculumChanged.emit() # Restore full curriculum list in UI
+        except Exception as e:
+            print(f"CurriculumService: Error recording session: {e}")
+
+        # Reset all session state
+        self._session_start_time = 0.0
+        self._session_tracks = []
+        self._session_milestones = []
+        self._session_exercises = 0
+        self._session_successes = 0
+        self.curriculumChanged.emit()
 
     # ── QML Properties ────────────────────────────────────────────────
 
@@ -292,8 +313,7 @@ class CurriculumService(QObject):
                 "progress": progress,
                 "status": ms["status"],
             })
-            
-        print(f"CurriculumService: Extracted {len(result)} active milestones for QML: {result}")
+
         return result
 
     @Property(list, notify=curriculumChanged)

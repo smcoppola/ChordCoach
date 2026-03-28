@@ -63,6 +63,11 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE chords ADD COLUMN simultaneous_successes INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass # Already exists
+
+            try:
+                cursor.execute("ALTER TABLE chords ADD COLUMN avg_timing_offset_ms REAL DEFAULT 0.0")
+            except sqlite3.OperationalError:
+                pass # Already exists
         
             # Generation stats table for adaptive timeout
             cursor.execute('''
@@ -238,20 +243,23 @@ class DatabaseManager:
             conn.commit()
 
     def record_chord_attempt(self, chord_name: str, success: bool, latency_ms: float = 0.0, 
-                             wrong_notes: int = 0, is_simultaneous: bool = False):
-        """Records a chord attempt, updating success/fail counts and average latency."""
+                             wrong_notes: int = 0, is_simultaneous: bool = False,
+                             timing_offset_ms: float = 0.0):
+        """Records a chord attempt, updating success/fail counts, average latency, and timing offset."""
         now = datetime.now().isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT success_count, fail_count, avg_latency_ms, total_wrong_notes, simultaneous_successes 
+                SELECT success_count, fail_count, avg_latency_ms, total_wrong_notes, 
+                       simultaneous_successes, avg_timing_offset_ms
                 FROM chords WHERE name = ?
             ''', (chord_name,))
             row = cursor.fetchone()
             
             if row:
-                s_count, f_count, avg_lat, w_notes, sim_s = row
+                s_count, f_count, avg_lat, w_notes, sim_s, avg_timing = row
+                avg_timing = avg_timing or 0.0
                 new_s_count = s_count + (1 if success else 0)
                 new_f_count = f_count + (0 if success else 1)
                 new_w_notes = w_notes + wrong_notes
@@ -263,22 +271,33 @@ class DatabaseManager:
                    new_avg_lat = ((avg_lat * total_attempts) + latency_ms) / (total_attempts + 1)
                 else:
                    new_avg_lat = latency_ms
+
+                # Running average for timing offset (only update when non-zero)
+                if timing_offset_ms != 0.0:
+                    if total_attempts > 0:
+                        new_avg_timing = ((avg_timing * total_attempts) + timing_offset_ms) / (total_attempts + 1)
+                    else:
+                        new_avg_timing = timing_offset_ms
+                else:
+                    new_avg_timing = avg_timing
     
                 cursor.execute('''
                     UPDATE chords
                     SET last_played = ?, success_count = ?, fail_count = ?, 
-                        avg_latency_ms = ?, total_wrong_notes = ?, simultaneous_successes = ?
+                        avg_latency_ms = ?, total_wrong_notes = ?, simultaneous_successes = ?,
+                        avg_timing_offset_ms = ?
                     WHERE name = ?
-                ''', (now, new_s_count, new_f_count, new_avg_lat, new_w_notes, new_sim_s, chord_name))
+                ''', (now, new_s_count, new_f_count, new_avg_lat, new_w_notes, new_sim_s, new_avg_timing, chord_name))
             else:
                 new_s_count = 1 if success else 0
                 new_f_count = 0 if success else 1
                 new_sim_s = 1 if (success and is_simultaneous) else 0
                 cursor.execute('''
                     INSERT INTO chords (name, last_played, success_count, fail_count, 
-                                       avg_latency_ms, total_wrong_notes, simultaneous_successes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (chord_name, now, new_s_count, new_f_count, latency_ms, wrong_notes, new_sim_s))
+                                       avg_latency_ms, total_wrong_notes, simultaneous_successes,
+                                       avg_timing_offset_ms)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (chord_name, now, new_s_count, new_f_count, latency_ms, wrong_notes, new_sim_s, timing_offset_ms))
             
             conn.commit()
 

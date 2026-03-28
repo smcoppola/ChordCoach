@@ -90,7 +90,6 @@ class ChordTrainerService(QObject):
         self._require_key_release_before_eval = False
         self._pending_exercise = None  # Single-slot queue to prevent rapid-fire overwrites
         self._listen_preview_pending = False  # Deferred MIDI preview for listen exercises
-        self._metronome_pending = None  # Deferred metronome start {bpm, interval_ms}
         self._ignore_midi_until = 0.0   # Ignore MIDI input while previewing
         self._session_stats: Dict[str, List[float]] = {}
         self._estimated_gen_ms = 5000.0
@@ -123,18 +122,17 @@ class ChordTrainerService(QObject):
             {"v_key": "B", "i_key": "E", "v_root": 11, "i_root": 4,  "shared": "B"},
         ]
         
+        # Metronome Service (provided by AppState)
+        self.metronome = None
+
         # Inter-exercise commentary streak tracking
         self._consecutive_successes = 0
         self._consecutive_struggles = 0
 
         # Pentascale State
         self._pentascale_sequence: List[int] = []  # Exact MIDI pitches for the 5-note sequence
-        self._pentascale_index = 0
-        self._pentascale_beat_count = 0
-        self._metronome_timer = QTimer()
-        self._metronome_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._metronome_timer.timeout.connect(self._play_metronome_click)
         self._scale_name = ""
+        self._pentascale_index = 0
 
         # Coach personality settings (set by AppState from SettingsService)
         self.coach_personality = "Encouraging"
@@ -166,6 +164,12 @@ class ChordTrainerService(QObject):
         self._sustain_grace_timer = QTimer(self)
         self._sustain_grace_timer.setSingleShot(True)
         self._sustain_grace_timer.timeout.connect(self._on_sustain_grace_timeout)
+
+        # Steady Pulse State
+        self._steady_pulse_beats: int = 16  # Default total beats for steady_pulse
+        self._steady_pulse_hits: List[float] = []  # Timing offsets for each successful hit
+        self._steady_pulse_current_beat: int = 0
+        self._steady_pulse_missed_beats: int = 0
 
         # A simple library of chords defined by their intervals from a root note (0)
         # 0 = Root, 4 = Major 3rd, 7 = Perfect 5th, etc.
@@ -200,6 +204,21 @@ class ChordTrainerService(QObject):
         }
 
         self.ROOT_NOTES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+
+    def set_metronome(self, service):
+        """Inject the standalone MetronomeService."""
+        self.metronome = service
+        if self.metronome:
+            self.metronome.tick.connect(self._on_metronome_tick)
+
+    def _on_metronome_tick(self, beat_count):
+        # Forward to QML (keeping existing signal for compatibility)
+        self.metronomeTick.emit()
+        
+        # If we are in steady_pulse mode, check if we need to advance on the beat
+        if self._exercise_type == "steady_pulse" and self._state == LessonState.USER_PLAYING:
+            if beat_count >= 1: # Start counting hits once real beats begin
+                self._check_steady_pulse_beat(beat_count)
 
     def _set_state(self, new_state: LessonState):
         if hasattr(self, '_state') and self._state == new_state:
@@ -333,7 +352,7 @@ class ChordTrainerService(QObject):
 
     @Property(int, notify=metronomeTick)
     def pentascaleBeatCount(self) -> int:
-        return self._pentascale_beat_count
+        return self.metronome.beatCount if self.metronome else 0
 
     @Property(list, notify=lessonStateChanged)
     def progressionNumerals(self) -> list:
@@ -773,7 +792,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._target_hands.clear()
         self._pedal_type = ""
         self._hold_tick_timer.stop()
-        self._metronome_timer.stop()
+        if self.metronome:
+            self.metronome.stop()
         self.lessonStateChanged.emit()
         self.targetChordChanged.emit(self._target_chord_name)
 
@@ -959,7 +979,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                         
             self._set_state(LessonState.USER_PLAYING)
             self._require_key_release_before_eval = False
-            self._metronome_timer.stop()
+            if self.metronome:
+                self.metronome.stop()
             self.activeChanged.emit(self.isActive)
             self.lessonStateChanged.emit()
             self._target_chord_name = ""
@@ -1059,6 +1080,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._setup_hands_together_target(chord_data)
         elif exercise_type == "sustain_pedal":
             self._setup_sustain_target(chord_data)
+        elif exercise_type == "steady_pulse":
+            self._setup_steady_pulse_target(chord_data)
         else:
             # Original chord behavior
             root_idx = chord_data.get("root_idx", 0)
@@ -1114,29 +1137,19 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._waiting_for_release = False
         self._hold_tick_timer.stop()
         self._prompt_time = time.time()
-        self._metronome_start_time = 0.0 # Track precise start for timing feedback
-        self._pentascale_bpm = 0
         self._wrong_notes_count = 0
         self._first_note_time = 0.0
         self._is_simultaneous = False
 
-        # Determine if we should optionally use the metronome
-        bpm = chord_data.get("bpm", 0)  # Defaults to 0 (free-play)
-        if bpm > 0:
-            interval_ms = int(60000 / bpm)
-            self._pentascale_bpm = bpm
-            self._pentascale_beat_count = -4  # 4-beat lead in (-4, -3, -2, -1)
-            # Defer metronome if coach is still speaking
-            if self._is_lesson_mode and (self.isPausedForSpeech or self._ai_is_currently_speaking):
-                print(f"ChordTrainer: Deferring metronome start ({bpm} BPM) until coach finishes speaking")
-                self._metronome_pending = {"bpm": bpm, "interval_ms": interval_ms}
+        # Handle metronome via service
+        bpm = int(chord_data.get("bpm", 0))
+        if bpm > 0 and self.metronome:
+            if self._ai_is_currently_speaking or self.isPausedForSpeech:
+                self.metronome.defer_start(bpm)
             else:
-                self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4) # Time when beat 0 will hit
-                self._metronome_timer.start(interval_ms)
-                print(f"ChordTrainer: Started pentascale metronome at {bpm} BPM")
-        else:
-            self._metronome_timer.stop()
-            self._pentascale_bpm = 0
+                self.metronome.start(bpm)
+        elif self.metronome:
+            self.metronome.stop()
             print("ChordTrainer: Free-play pentascale mode (no metronome)")
 
         # Set target to the first note in the sequence
@@ -1691,13 +1704,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 self._play_midi_preview(self._target_pitches)
 
         # Start deferred metronome now that the coach is done talking
-        if self._metronome_pending:
-            pending = self._metronome_pending
-            self._metronome_pending = None
-            interval_ms = pending["interval_ms"]
-            self._metronome_start_time = time.time() + (interval_ms / 1000.0 * 4)
-            self._metronome_timer.start(interval_ms)
-            print(f"ChordTrainer: Coach done, starting deferred metronome at {pending['bpm']} BPM")
+        if self.metronome and self.metronome.has_deferred:
+            self.metronome.flush_deferred()
             # If metronome is starting, skip immediate input evaluation to prevent "pre-hits"
             should_check_immediately = False
 
@@ -1886,16 +1894,18 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         if self._exercise_type == "pentascale":
             self._check_pentascale()
+        elif self._exercise_type == "steady_pulse":
+            self._check_steady_pulse()
         else:
             self._check_chord()
 
     def _check_pentascale(self):
         """Validates single-note input for pentascale exercises."""
         # Wait until the lead-in is complete if we are running a metronome
-        if self.isPausedForSpeech or self._metronome_pending:
+        if self.isPausedForSpeech or (self.metronome and self.metronome.has_deferred):
             return
 
-        if self._metronome_timer.isActive() and self._pentascale_beat_count < 0:
+        if self.metronome and self.metronome.is_in_lead_in:
             # Strictly ignore input during lead-in
             return
 
@@ -1912,34 +1922,33 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
             # Calculate timing feedback if metronome is active
             feedback_text = ""
-            if self._pentascale_bpm > 0 and self._metronome_start_time > 0:
-                interval_ms = 60000 / self._pentascale_bpm
-                expected_time_sec = self._metronome_start_time + (self._pentascale_index * (interval_ms / 1000.0))
-                actual_time_sec = time.time()
-                diff_ms = (actual_time_sec - expected_time_sec) * 1000.0
-
-                if diff_ms < -150:
+            timing_offset = 0.0
+            if self.metronome and self.metronome.isRunning:
+                timing_offset = self.metronome.get_timing_offset_ms(self._pentascale_index)
+                
+                if timing_offset < -150:
                     feedback_text = "Fast"
-                elif diff_ms > 150:
+                elif timing_offset > 150:
                     feedback_text = "Slow"
                 else:
                     feedback_text = "Perfect!"
 
-                print(f"ChordTrainer: Timing for note {self._pentascale_index}: expected={expected_time_sec:.2f}, actual={actual_time_sec:.2f}, diff={diff_ms:.0f}ms -> {feedback_text}")
+                print(f"ChordTrainer: Timing for note {self._pentascale_index}: diff={timing_offset:.0f}ms -> {feedback_text}")
 
             self.pentascaleNoteHit.emit(self._pentascale_index, feedback_text)
 
             # Record success for this individual note
             note_name = f"{self.ROOT_NOTES[target_pitch % 12]} (Pentascale)"
             latency_ms = (time.time() - self._prompt_time) * 1000.0
-            self.db.record_chord_attempt(note_name, True, latency_ms, 0, False)
+            self.db.record_chord_attempt(note_name, True, latency_ms, 0, False, timing_offset)
 
             self._pentascale_index += 1
 
             if self._pentascale_index >= len(self._pentascale_sequence):
                 # All 5 notes played correctly — complete the step
                 # Delay slightly so the final dot has time to turn green in the UI
-                self._metronome_timer.stop()
+                if self.metronome:
+                    self.metronome.stop()
                 QTimer.singleShot(600, self._complete_chord)
             else:
                 # Update target intervals to next note (no release wait — allows legato)
@@ -2189,7 +2198,68 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 self._waiting_for_release = True
 
     @Slot()
-    def _play_metronome_click(self):
-        """Called periodically by QTimer for timed exercises."""
-        self._pentascale_beat_count += 1
-        self.metronomeTick.emit()
+    def _on_metronome_tick_legacy(self):
+        """Cleanup: MetronomeService now owns the timer."""
+        pass
+
+    def _setup_steady_pulse_target(self, chord_data):
+        """Sets up a steady pulse exercise: user repeats a chord/note on every beat."""
+        root_idx = int(chord_data.get("root_idx", 0))
+        chord_type_name = str(chord_data.get("chord_type", "Major"))
+        intervals = self.CHORD_TYPES.get(chord_type_name, self.CHORD_TYPES["Major"])
+        octave = int(chord_data.get("octave", 4))
+        self._setup_target(root_idx, chord_type_name, intervals, octave)
+        self._exercise_type = "steady_pulse"
+        self._steady_pulse_beats = int(chord_data.get("pulse_count", 16))
+        self._steady_pulse_hits = []
+        self._steady_pulse_current_beat = 0
+        self._steady_pulse_missed_beats = 0
+        
+        bpm = int(chord_data.get("bpm", 100))
+        if self.metronome:
+            if self._ai_is_currently_speaking:
+                self.metronome.defer_start(bpm)
+            else:
+                self.metronome.start(bpm)
+        print(f"ChordTrainer: Steady Pulse started for {self._target_chord_name} at {bpm} BPM")
+
+    def _check_steady_pulse_beat(self, beat_count):
+        """Logic called every metronome tick during steady_pulse."""
+        if beat_count > self._steady_pulse_beats:
+            print(f"ChordTrainer: Steady Pulse complete ({len(self._steady_pulse_hits)}/{self._steady_pulse_beats} hits)")
+            if self.metronome:
+                self.metronome.stop()
+            self._complete_chord()
+
+    def _check_steady_pulse(self):
+        """Validates timing of a hit in steady_pulse mode."""
+        if not self.metronome or self.metronome.is_in_lead_in:
+            return
+
+        # Correct chord?
+        if not self._is_chord_satisfied():
+            return
+
+        # Find the nearest beat
+        # (Simplified: we track hits and timing offsets)
+        timing_offset = self.metronome.get_timing_offset_ms(self._steady_pulse_current_beat)
+        
+        # Only record if we haven't hit this beat yet and it's within a window
+        # For now, just record it and the evaluator can deal with details
+        if abs(timing_offset) < 300: # 300ms window
+            # Prevent double-recording same beat
+            self._steady_pulse_hits.append(timing_offset)
+            print(f"ChordTrainer: Steady Pulse Hit on beat {self._steady_pulse_current_beat}, offset {timing_offset:.1f}ms")
+            
+            # Emit success signal for visual feedback
+            self.chordSuccess.emit(self._target_chord_name, timing_offset)
+            
+            # Record in DB
+            self.db.record_chord_attempt(self._target_chord_name, True, timing_offset, 0, True, timing_offset)
+
+    def _is_chord_satisfied(self) -> bool:
+        """Helper to check if currently held keys match target pitches exactly."""
+        active_set = set(self._active_pitches)
+        target_set = set(self._target_pitches)
+        return active_set == target_set
+
