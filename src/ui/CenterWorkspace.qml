@@ -16,8 +16,8 @@ Rectangle {
     }
 
     function goHome() {
-        if (appState && appState.chordTrainer) {
-            appState.chordTrainer.end_lesson();
+        if (appState && appState.appCoordinator) {
+            appState.appCoordinator.stopSession();
         }
         workspaceStack.replace(dashboardComponent);
     }

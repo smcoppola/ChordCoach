@@ -973,16 +973,16 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     @Slot()
     def stop_session(self):
+        """Stops the current exercise or lesson and returns the trainer to IDLE state."""
         if self.isActive or self.isWaitingToBegin:
+            print("ChordTrainer: stop_session called. Returning to IDLE.")
             self._set_state(LessonState.IDLE)
+            self._is_lesson_complete = False
             
-                        
-            self._set_state(LessonState.USER_PLAYING)
             self._require_key_release_before_eval = False
             if self.metronome:
                 self.metronome.stop()
-            self.activeChanged.emit(self.isActive)
-            self.lessonStateChanged.emit()
+                
             self._target_chord_name = ""
             self._target_intervals.clear()
             self._target_pitches.clear()
@@ -993,11 +993,21 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._is_holding = False
             self._pending_exercise = None
             self._consecutive_successes = 0
-            self._consecutive_struggles = 0
-            # Clear circle of fifths mode on manual stop
+            
+            # Reset Circle mode if it was on
             if self._is_circle_of_fifths_mode:
                 self._is_circle_of_fifths_mode = False
                 self.isCircleOfFifthsModeChanged.emit(False)
+                
+            self.activeChanged.emit(False)
+            self.lessonStateChanged.emit()
+
+    @Slot()
+    def end_lesson(self):
+        """Manual lesson end triggered from UI (e.g. Quit Lesson button)."""
+        print("ChordTrainer: end_lesson triggered manually from UI.")
+        self._consecutive_struggles = 0
+        self.stop_session()
 
     def get_resume_context(self) -> str:
         """Build a prompt for the AI to resume a lesson after reconnection."""

@@ -171,6 +171,27 @@ class GeminiService(QObject):
         self._intentional_disconnect = True
         asyncio.run_coroutine_threadsafe(self._disconnect_ws(), self.loop)
 
+    @Slot()
+    def stop_current_audio(self):
+        """Immediately stop any AI audio currently playing and clear buffers."""
+        print("Gemini Service: Force-stopping current audio playback.")
+        self._audio_buffer = b""
+        
+        if self.audio_sink:
+            # Stop playback immediately
+            self.audio_sink.stop()
+            # Reset internal speak state
+            if self._is_speaking_state:
+                self._is_speaking_state = False
+                self.aiFinishedSpeaking.emit()
+            
+            # Restart the sink's IO device so it's fresh for the next turn
+            # (QAudioSink.start() clears its internal buffer)
+            try:
+                self.audio_io = self.audio_sink.start()
+            except Exception as e:
+                print(f"Gemini Service: Failed to restart audio sink after stop: {e}")
+
     @Slot(bool)
     def set_tools_disabled(self, disabled: bool):
         """Enable or disable tool declarations for the next session setup.

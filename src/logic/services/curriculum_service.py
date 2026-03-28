@@ -324,6 +324,51 @@ class CurriculumService(QObject):
     def currentSessionPlan(self) -> dict:
         return self._session_plan
 
+    @Property(list, notify=curriculumChanged)
+    def drillsByTrack(self) -> list:
+        """Categorized list of all possible milestones/drills for the Drill Picker UI."""
+        # Standard display metadata for each track
+        track_meta = {
+            "technique": {"name": "Technique", "icon": "🎹"},
+            "theory": {"name": "Theory", "icon": "🎓"},
+            "repertoire": {"name": "Repertoire", "icon": "🎵"},
+            "ear": {"name": "Ear Training", "icon": "👂"}
+        }
+
+        result = []
+        for track_id, meta in track_meta.items():
+            track_drills = []
+            
+            # Special Case: Dominant Motion (Theory)
+            # This is hardcoded in chord_trainer.py but we want it in the picker
+            if track_id == "theory":
+                track_drills.append({
+                    "label": "Dominant Motion (V→I)",
+                    "id": "dominant_motion",
+                    "track": "theory"
+                })
+
+            # Add milestones found in the curriculum tracks
+            milestones = self._tracks_data.get(track_id, [])
+            for m in milestones:
+                # Avoid duplicates if we manually added something (like dominant_motion)
+                if m["id"] == "dominant_motion": continue
+                    
+                track_drills.append({
+                    "label": m.get("title", m["id"]),
+                    "id": m["id"],
+                    "track": track_id
+                })
+            
+            if track_drills:
+                result.append({
+                    "name": meta["name"],
+                    "icon": meta["icon"],
+                    "drills": track_drills
+                })
+        
+        return result
+
     @Slot()
     def refreshCurriculum(self):
         """Force a refresh of curriculum state (e.g. after settings reset)."""

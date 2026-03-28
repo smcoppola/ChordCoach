@@ -421,7 +421,7 @@ Rectangle {
         id: drillPicker
         anchors.centerIn: parent
         width: 520 * mainWindow.uiScale
-        height: 380 * mainWindow.uiScale
+        height: 520 * mainWindow.uiScale
         modal: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
@@ -461,44 +461,71 @@ Rectangle {
                 Layout.alignment: Qt.AlignHCenter
             }
 
-            ColumnLayout {
+            ScrollView {
                 Layout.fillWidth: true
-                spacing: 8
-                
-                Repeater {
-                    model: [
-                        {"label": "Right Hand C Pentascale", "track": "technique", "id": "rh_pentascale_c"},
-                        {"label": "Major Triads (C, F, G)", "track": "technique", "id": "rh_major_triads"},
-                        {"label": "Circle of Fifths Introduction", "track": "theory", "id": "circle_of_fifths"},
-                        {"label": "Dominant Motion (V→I)", "track": "theory", "id": "dominant_motion"},
-                        {"label": "Hearing Tension (V -> I)", "track": "theory", "id": "v_to_i_listen"},
-                        {"label": "Major vs Minor Recognition", "track": "ear", "id": "major_minor_recognition"}
-                    ]
+                Layout.fillHeight: true
+                clip: true
 
-                    delegate: Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 45 * mainWindow.uiScale
-                        radius: 8
-                        color: drillMouse.containsMouse ? "#332244" : "#2a2a2a"
-                        border.color: drillMouse.containsMouse ? "#9C27B0" : "#444444"
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            color: "#ffffff"
-                            font.pixelSize: 14 * mainWindow.uiScale
-                        }
-
-                        MouseArea {
-                            id: drillMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                drillPicker.close();
-                                root.startSpecificDrill(modelData.track, modelData.id);
+                ColumnLayout {
+                    width: drillPicker.width - 48 // Account for margins
+                    spacing: 16
+                    
+                    Repeater {
+                        model: (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine) ? appState.curriculumEngine.drillsByTrack : []
+                        
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            
+                            // Track Header
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Text {
+                                    text: modelData.icon
+                                    font.pixelSize: 16 * mainWindow.uiScale
+                                }
+                                Text {
+                                    text: modelData.name.toUpperCase()
+                                    font.pixelSize: 11 * mainWindow.uiScale
+                                    font.bold: true
+                                    font.letterSpacing: 2 * mainWindow.uiScale
+                                    color: "#888888"
+                                }
                             }
+                            
+                            // Drills in this track
+                            Repeater {
+                                model: modelData.drills
+                                delegate: Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 45 * mainWindow.uiScale
+                                    radius: 8
+                                    color: itemMouse.containsMouse ? "#332244" : "#2a2a2a"
+                                    border.color: itemMouse.containsMouse ? "#9C27B0" : "#444444"
+                                    border.width: 1
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        color: "#ffffff"
+                                        font.pixelSize: 14 * mainWindow.uiScale
+                                    }
+
+                                    MouseArea {
+                                        id: itemMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            drillPicker.close();
+                                            root.startSpecificDrill(modelData.track, modelData.id);
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            Item { Layout.preferredHeight: 12 } // Section spacer
                         }
                     }
                 }
