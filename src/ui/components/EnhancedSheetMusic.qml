@@ -40,24 +40,21 @@ Rectangle {
     }
     
     // Hardcode the pitch colors (matches midi_ingestor.py and VisualKeyboard needs)
-    function getColorForPitch(pitch) {
-        var colors = [
-            "#FF5252", // C - Red
-            "#FF9800", // C# - Orange
-            "#FFC107", // D - Yellow
-            "#CDDC39", // D# - Lime
-            "#2E7D32", // E - Darker Green
-            "#00BFA5", // F - Mint
-            "#00BCD4", // F# - Cyan
-            "#2196F3", // G - Blue
-            "#3F51B5", // G# - Indigo
-            "#9C27B0", // A - Purple
-            "#E040FB", // A# - Magenta
-            "#E91E63", // B - Pink
-        ];
-        return colors[pitch % 12];
-    }
     
+    function getColorForFinger(finger) {
+        if (!finger) return "#888888";
+        // User-Specified pedagogical color mapping:
+        // 1=Green, 2=Yellow, 3=Purple, 4=Blue, 5=Red
+        var colors = {
+            1: "#4CAF50",
+            2: "#FFD600",
+            3: "#9C27B0",
+            4: "#2196F3",
+            5: "#F44336"
+        };
+        return colors[finger] || "#888888";
+    }
+
     function getNoteName(pitch) {
         var names = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"];
         return names[pitch % 12];
@@ -109,17 +106,34 @@ Rectangle {
     }
     property var activeTargets: {
         if (typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.targetPitches) {
-            if (exerciseType === "pentascale" && appState.chordTrainer.pentascaleNotes) {
+            var pitches = appState.chordTrainer.targetPitches;
+            var hands = appState.chordTrainer.targetHands;
+            var fingers = appState.chordTrainer.targetFingers;
+            var idx = appState.chordTrainer.currentNoteIndex || 0;
+            var seq = appState.chordTrainer.pentascaleNotes;
+
+            if (exerciseType === "pentascale" && seq) {
                 // In pentascale mode, only show the current note as the active target
-                var idx = appState.chordTrainer.currentNoteIndex || 0;
-                var seq = appState.chordTrainer.pentascaleNotes;
-                if (seq && idx < seq.length) {
-                    return [seq[idx]];
+                if (idx < seq.length) {
+                    var p = seq[idx];
+                    // Service now sends only the CURRENT finger as a length-1 array
+                    var f = (fingers && fingers.length > 0) ? fingers[0] : (idx + 1);
+                    return [{ pitch: p, hand: currentHand, finger: f }];
                 }
                 return [];
             }
-            // For chords/progressions, show all notes
-            return appState.chordTrainer.targetPitches.slice().sort(function(a, b){return a-b});
+            
+            // For chords/progressions, combine parallel arrays into objects for sorting
+            var combined = [];
+            for (var i = 0; i < pitches.length; i++) {
+                combined.push({
+                    pitch: pitches[i],
+                    hand: (hands && i < hands.length) ? hands[i] : currentHand,
+                    finger: (fingers && i < fingers.length) ? fingers[i] : 0
+                });
+            }
+            // Sort low-to-high by pitch so Reaper draws back-to-front
+            return combined.sort(function(a, b){ return a.pitch - b.pitch });
         }
         return [];
     }
@@ -274,10 +288,11 @@ Rectangle {
             
             Rectangle {
                 visible: root.displayMode === "trainer"
-                property int pitch: modelData
+                property int pitch: modelData.pitch
+                property int finger: modelData.finger
+                property string hand: modelData.hand
                 property bool isTreble: {
-                    var h = root.getHandForTargetPitch(pitch);
-                    return h === "left" ? false : h === "right" ? true : pitch >= 60;
+                    return hand === "left" ? false : hand === "right" ? true : pitch >= 60;
                 }
                 property int referencePitch: isTreble ? 71 : 50 // B4 or D3
                 property real referenceY: isTreble ? parent.trebleCenterY : parent.bassCenterY
@@ -287,7 +302,7 @@ Rectangle {
                 property bool isStaggeredRight: {
                     if (root.exerciseType === "pentascale") return false; // pentascale uses horizontal layout
                     if (index === 0) return false;
-                    var prevPitch = root.activeTargets[index - 1];
+                    var prevPitch = root.activeTargets[index - 1].pitch;
                     var stepDiff = root.getDiatonicStepsDifference(prevPitch, pitch);
                     return stepDiff < 2;
                 }
@@ -298,6 +313,7 @@ Rectangle {
                 property int pentaIdx: root.currentNoteIndex
                 
                 y: referenceY - (steps * (parent.lineSpacing / 2)) - (height / 2)
+                // Use modelData.pitch for persistent Z sorting so higher notes are always on top
                 z: isPentascale ? 200 : pitch
                 
                 x: isPentascale
@@ -308,7 +324,8 @@ Rectangle {
                     : parent.width - x
                 height: parent.lineSpacing * 0.95
                 
-                color: root.getColorForPitch(pitch)
+                // NEW: Color by finger!
+                color: root.getColorForFinger(finger)
                 radius: 4
                 
                 Behavior on x { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
@@ -414,7 +431,8 @@ Rectangle {
                     return -1;
                 }
                 property bool isCompleted: noteIdx < root.currentNoteIndex
-                property bool isCurrent: noteIdx === root.currentNoteIndex
+                property int finger: noteIdx + 1
+                property string fingerColor: root.getColorForFinger(finger)
                 
                 // Don't draw the current note here — it's drawn by the activeTargets repeater
                 visible: !isCurrent
@@ -427,11 +445,11 @@ Rectangle {
                 width: parent.pentaNoteWidth
                 height: parent.lineSpacing * 0.95
                 
-                color: isCompleted ? "#4CAF50" : "transparent"
-                border.color: isCompleted ? "#4CAF50" : "#999999"
+                color: isCompleted ? fingerColor : "transparent"
+                border.color: fingerColor
                 border.width: isCompleted ? 0 : 2
                 radius: 4
-                opacity: isCompleted ? 0.7 : 0.4
+                opacity: isCompleted ? 0.9 : 0.4
                 
                 Text {
                     anchors.left: parent.left
@@ -568,7 +586,7 @@ Rectangle {
                     // Coloring: pending = pitch color, hit = green, miss = red
                     color: noteState === "hit" ? "#4CAF50" :
                            noteState === "miss" ? "#F44336" :
-                           root.getColorForPitch(pitch)
+                           root.getColorForFinger(modelData.finger)
                     opacity: noteState === "miss" ? 0.4 : 1.0
 
                     // Efficiency check (global coordinate check)

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
 from logic.services.database_manager import DatabaseManager # type: ignore
+import music21
 
 
 class EvaluationService(QObject):
@@ -62,7 +63,10 @@ class EvaluationService(QObject):
         if seq_path.exists():
             with open(seq_path, "r", encoding="utf-8") as f:
                 self._sequences = json.load(f)
-            print(f"EvaluationService: Loaded {len(self._sequences)} sequences")
+            # Add fingerings on-the-fly for all sequences
+            for seq in self._sequences:
+                self._calculate_fingering(seq.get("notes", []))
+            print(f"EvaluationService: Loaded {len(self._sequences)} sequences with pedagogical fingering")
         else:
             print(f"EvaluationService: WARNING - {seq_path} not found!")
 
@@ -216,6 +220,28 @@ class EvaluationService(QObject):
 
         self.sequenceChanged.emit()
         self.evaluationFinished.emit()
+
+    def _calculate_fingering(self, notes: List[Dict[str, Any]]):
+        """Augment notes with pedagogical fingerings for simple evaluation melodies."""
+        for n in notes:
+            if "finger" in n: continue
+            # Map Hand 'R'/'L' to boolean
+            is_right = n.get("hand", "R").upper() == "R"
+            pitch = n.get("pitch", 60)
+            
+            # Diatonic C-Position mapping (semitone offset: finger)
+            base = 60 if is_right else 48
+            offset = pitch - base
+            if is_right:
+                # RH: C(0)=1, D(2)=2, E(4)=3, F(5)=4, G(7)=5
+                mapping = {0: 1, 1: 1, 2: 2, 3: 2, 4: 3, 5: 4, 6: 4, 7: 5}
+                f = mapping.get(offset, 1 if offset < 0 else 5)
+            else:
+                # LH: C(0)=1, B(-1)=2, A(-3)=3, G(-5)=4, F(-7)=5
+                mapping = {0: 1, -1: 2, -2: 2, -3: 3, -4: 3, -5: 4, -6: 4, -7: 5}
+                f = mapping.get(offset, 1 if offset > 0 else 5)
+                
+            n["finger"] = int(f)
 
     # ── Beat Timer ──────────────────────────────────────────────────
 

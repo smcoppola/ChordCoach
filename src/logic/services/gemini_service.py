@@ -547,8 +547,9 @@ class GeminiService(QObject):
                             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
                             if fn_name == "set_exercise":
                                 if self._exercise_pending:
-                                    print(f"Gemini Service: REJECTING duplicate set_exercise — waiting for student completion")
-                                    tool_response = {"status": "error", "message": "System: Exercise already active. Do NOT speak or apologize. Just stay silent and wait for student completion."}
+                                    print(f"Gemini Service: Informing AI of pending exercise — skipping duplicate set_exercise")
+                                    # Use a success status but inform the model to wait (prevents model retry-loop spam)
+                                    tool_response = {"status": "awaiting_completion", "message": "System: An exercise is already active. Please WAIT for the student to finish. Do NOT speak or resend the tool call."}
                                 else:
                                     self._exercise_pending = True
                                     self.exerciseReceived.emit(fn_args)
@@ -556,8 +557,8 @@ class GeminiService(QObject):
                                 self.theoryVisualReceived.emit(fn_args)
                             elif fn_name == "end_lesson":
                                 if self._exercise_pending:
-                                    print(f"Gemini Service: REJECTING early end_lesson — waiting for student completion")
-                                    tool_response = {"status": "error", "message": "System: Exercise active. Do not call end_lesson yet. Do NOT speak — just wait."}
+                                    print(f"Gemini Service: Informing AI of pending exercise — skipping early end_lesson")
+                                    tool_response = {"status": "awaiting_completion", "message": "System: Exercise in progress. Finish the current drill before ending the lesson. Please WAIT."}
                                 else:
                                     self._exercise_pending = False
                                     self.lessonEndReceived.emit(fn_args.get("feedback_summary", ""))
@@ -658,7 +659,10 @@ class GeminiService(QObject):
             self._reconnect_attempts += 1
             delay = min(2 ** self._reconnect_attempts, 30)
             print(f"Gemini Service: Connection lost. Reconnecting ({self._reconnect_attempts}/{self._max_reconnect_attempts}) in {delay}s...")
-            self.reconnecting.emit(self._reconnect_attempts, self._max_reconnect_attempts)
+            try:
+                self.reconnecting.emit(self._reconnect_attempts, self._max_reconnect_attempts)
+            except RuntimeError:
+                pass # Already deleted
             
             await asyncio.sleep(delay)
             

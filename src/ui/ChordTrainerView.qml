@@ -93,7 +93,9 @@ Rectangle {
             if (tp && tp.length > 0) {
                 var arr = [];
                 for (var i = 0; i < tp.length; i++) arr.push(tp[i]);
-                visualKeyboard.setTargetKeys(arr);
+                var hands = appState.chordTrainer.targetHands;
+                var fingers = appState.chordTrainer.targetFingers;
+                visualKeyboard.setTargetKeys(arr, hands, fingers);
             }
         }
     }
@@ -154,8 +156,10 @@ Rectangle {
                 if (tp) {
                     for (var i = 0; i < tp.length; i++) arr.push(tp[i]);
                 }
-                visualKeyboard.setTargetKeys(arr);
-                console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr);
+                var hands = appState.chordTrainer.targetHands;
+                var fingers = appState.chordTrainer.targetFingers;
+                visualKeyboard.setTargetKeys(arr, hands, fingers);
+                console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr + ", fingers: " + fingers);
             }
         }
         

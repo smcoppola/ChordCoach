@@ -9,24 +9,31 @@ Rectangle {
 
     property var targetKeys: []
     property var targetHands: [] // Array of "left" or "right" mapping to targetKeys
+    property var targetFingers: [] // Array of 1-5 mapping to targetKeys
     property real keySpacing: 1
     property real keyWidth: (width - (87 * keySpacing)) / 88
 
-    function getColorForPitch(pitch) {
-        var colors = [
-            "#FF5252", "#FF9800", "#FFC107", "#CDDC39", 
-            "#4CAF50", "#00BFA5", "#00BCD4", "#2196F3", 
-            "#3F51B5", "#9C27B0", "#E040FB", "#E91E63"
-        ];
-        return colors[pitch % 12];
+    function getColorForFinger(finger) {
+        if (!finger) return "#00BCD4"; // Cyan for target with no finger assigned
+        // Standard pedagogical colors: Thumb=Green, Index=Yellow, Middle=Purple, Ring=Blue, Little=Red
+        var colors = {
+            1: "#4CAF50",
+            2: "#FFD600",
+            3: "#9C27B0",
+            4: "#2196F3",
+            5: "#F44336"
+        };
+        return colors[finger] || "#00BCD4";
     }
 
-    function setTargetKeys(keys, hands) {
+    function setTargetKeys(keys, hands, fingers) {
         root.targetKeys = []; // Force change signal
         root.targetHands = [];
+        root.targetFingers = [];
         root.targetKeys = keys;
         root.targetHands = hands || [];
-        console.log("VisualKeyboard targetKeys updated via function:", keys, "hands:", hands);
+        root.targetFingers = fingers || [];
+        console.log("VisualKeyboard targetKeys updated via function:", keys, "hands:", hands, "fingers:", fingers);
         mathOverlay.requestPaint();
     }
 
@@ -80,18 +87,21 @@ Rectangle {
                     return "right";
                 }
 
-                property string pitchColor: {
-                    if (!isTarget) return "#00BCD4";
-                    // Visually distinguish Left Hand notes (e.g., purple) from Right Hand notes
-                    if (handTag === "left") return "#9C27B0";
-                    return root.getColorForPitch(index + 21);
+                property int finger: {
+                    var midiPitch = index + 21;
+                    for (var i = 0; i < root.targetKeys.length; i++) {
+                        if (root.targetKeys[i] === midiPitch) return root.targetFingers[i] || 0;
+                    }
+                    return 0;
                 }
+                
+                property string fingerColor: root.getColorForFinger(finger)
 
                 Rectangle {
                     anchors.fill: parent
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: isTarget ? Qt.darker(pitchColor, 1.2) : (isBlackKey(index) ? "#333" : "#FFF") }
-                        GradientStop { position: 1.0; color: isTarget ? pitchColor : (isBlackKey(index) ? "#000" : "#EEE") }
+                        GradientStop { position: 0.0; color: isTarget ? Qt.darker(fingerColor, 1.2) : (isBlackKey(index) ? "#333" : "#FFF") }
+                        GradientStop { position: 1.0; color: isTarget ? fingerColor : (isBlackKey(index) ? "#000" : "#EEE") }
                     }
                 }
 
@@ -101,7 +111,7 @@ Rectangle {
                     width: Math.max(2, parent.width - (4 * mainWindow.uiScale))
                     height: 10 * mainWindow.uiScale
                     radius: 5 * mainWindow.uiScale
-                    color: pitchColor
+                    color: fingerColor
                     visible: isTarget
                 }
             }

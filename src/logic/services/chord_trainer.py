@@ -6,6 +6,7 @@ from typing import Set, List, Dict, Tuple
 from datetime import datetime
 from enum import Enum, auto
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
+import music21
 
 class LessonState(Enum):
     IDLE = auto()               # Not in a lesson
@@ -38,6 +39,9 @@ class ChordTrainerService(QObject):
     exerciseRequestUnlocked = Signal()  # Emitted when a dropped tool call failsafe triggers
     isCircleOfFifthsModeChanged = Signal(bool)  # Emitted when entering/leaving circle of fifths lesson
     theoryVisualDirect = Signal(dict)  # Directly push visual state from Python (bypass AI)
+    targetFingersChanged = Signal()
+    pentascaleNotesChanged = Signal()
+    currentNoteIndexChanged = Signal()
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
         super().__init__()
@@ -57,6 +61,7 @@ class ChordTrainerService(QObject):
         self._current_inversion: int = 0
         self._target_pitches: List[int] = []
         self._target_hands: List[str] = []  # "left" or "right" for each target pitch
+        self._target_fingers: List[int] = [] # 1-5 for each pitch
         self._pedal_type: str = "" # "direct", "legato", or ""
         self._pedal_satisfied = False
         self._is_pedal_down = False
@@ -248,11 +253,27 @@ class ChordTrainerService(QObject):
 
     @Property(list, notify=targetChordChanged)
     def targetPitches(self) -> list:
-        return self._target_pitches
+        # ALWAYS return sorted for UI/Fingering consistency (except sequential drills)
+        if self._exercise_type == "pentascale":
+            return self._target_pitches
+        return sorted(self._target_pitches)
 
     @Property(list, notify=targetChordChanged)
     def targetHands(self) -> list:
         return self._target_hands
+
+    @Property(list, notify=pentascaleNotesChanged)
+    def pentascaleNotes(self) -> list:
+        # Full 5-note sequence for UI guides/scrolling
+        return self._pentascale_sequence or []
+
+    @Property(int, notify=currentNoteIndexChanged)
+    def currentNoteIndex(self) -> int:
+        return self._pentascale_index
+
+    @Property(list, notify=targetFingersChanged)
+    def targetFingers(self) -> list:
+        return self._target_fingers
 
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:
@@ -338,17 +359,11 @@ class ChordTrainerService(QObject):
     def exerciseType(self) -> str:
         return self._exercise_type
 
-    @Property(list, notify=targetChordChanged)
-    def pentascaleNotes(self) -> list:
-        return self._pentascale_sequence
     @Property(list, notify=lessonStateChanged)
     def struggledItems(self):
         """List of items where user performance was below threshold."""
         return self._struggled_items
 
-    @Property(int, notify=targetChordChanged)
-    def currentNoteIndex(self) -> int:
-        return self._pentascale_index
 
     @Property(int, notify=metronomeTick)
     def pentascaleBeatCount(self) -> int:
@@ -1136,12 +1151,19 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         if direction == "descending":
             sequence = list(reversed(sequence))
 
-        root_name = self.ROOT_NOTES[root_idx]
-        self._scale_name = f"{root_name} {scale_type} Pentascale"
-        self._pentascale_sequence = sequence
-        self._pentascale_index = 0
-
-        # Reset common state
+        # Set target to the first note in the sequence
+        self._target_chord_name = self._scale_name
+        self._target_chord_type = "Pentascale"
+        self._target_pitches = [sequence[0]]
+        self._target_hands = [self._current_hand]
+        
+        # Calculate full fingering sequence for the 5-note pentascale
+        full_fingers = self._calculate_fingerings(sequence if direction == "ascending" else list(reversed(sequence)), self._current_hand)
+        if direction == "descending":
+            full_fingers = list(reversed(full_fingers))
+        self._pentascale_fingers = full_fingers
+        self._target_fingers = full_fingers  # Show all 5 fingers at start
+        self.targetFingersChanged.emit()
         self._hold_progress = 0.0
         self._is_holding = False
         self._waiting_for_release = False
@@ -1178,8 +1200,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         current_pitch = sequence[0]
         self._target_intervals = {current_pitch % 12}
 
+        self._pentascale_sequence = sequence
+        self._pentascale_index = 0
+        
         self.lessonStateChanged.emit()
         self.targetChordChanged.emit(self._target_chord_name)
+        self.pentascaleNotesChanged.emit()
+        self.currentNoteIndexChanged.emit()
         print(f"ChordTrainer: Pentascale target: {self._scale_name} ({direction}), notes: {sequence}")
 
     def _setup_progression_target(self, chord_data):
@@ -1269,6 +1296,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         lh_base_pitch = (lh_octave + 1) * 12 + root_idx
         self._target_pitches.insert(0, lh_base_pitch)
         self._target_hands.insert(0, "left")
+        
+        # Add LH finger (usually thumb/1 but calculation will handle it)
+        lh_fingers = self._calculate_fingerings([lh_base_pitch], "left")
+        if lh_fingers:
+            self._target_fingers.insert(0, lh_fingers[0])
+            self.targetFingersChanged.emit()
 
         self.targetChordChanged.emit(self._target_chord_name)
 
@@ -1356,6 +1389,67 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             # Optionally replay the sound as feedback
             self.replay_preview()
 
+    def _calculate_fingerings(self, pitches: List[int], hand: str, inversion: int = 0) -> List[int]:
+        """Use music21 to represent the chord/note and assign pedagogical fingerings."""
+        if not pitches:
+            return []
+            
+        # ALWAYS sort pitches low-to-high before analysis!
+        # This ensures the assigned fingerings match the canonical pianistic view.
+        pitches = sorted(list(pitches))
+        
+        # Create a music21 Chord or Note
+        if len(pitches) > 1:
+            m21_obj = music21.chord.Chord(pitches)
+        else:
+            m21_obj = music21.note.Note(pitches[0])
+            
+        assigned_fingers = []
+        
+        # Standard piano pedagogical fingerings
+        if len(pitches) == 3:
+            # Triads
+            if hand == "right":
+                if inversion == 1: # 1st inversion (e.g. E-G-C)
+                    assigned_fingers = [1, 2, 5]
+                else: # Root or 2nd inversion (1-3-5)
+                    assigned_fingers = [1, 3, 5]
+            else: # left
+                if inversion == 2: # 2nd inversion (e.g. G-C-E)
+                    assigned_fingers = [5, 2, 1]
+                else: # Root or 1st inversion (5-3-1)
+                    assigned_fingers = [5, 3, 1]
+        elif len(pitches) == 1:
+            # Single notes: usually thumb for RH, pinky for LH
+            assigned_fingers = [1 if hand == "right" else 5]
+        elif len(pitches) == 5:
+            # Pentascales
+            if hand == "right":
+                assigned_fingers = [1, 2, 3, 4, 5]
+            else:
+                assigned_fingers = [5, 4, 3, 2, 1]
+        else:
+            # Fallback for complex chords (sequential from thumb/pinky)
+            if hand == "right":
+                assigned_fingers = [(i % 5) + 1 for i in range(len(pitches))]
+            else:
+                assigned_fingers = [max(1, 5 - (i % 5)) for i in range(len(pitches))]
+
+        # Attach fingerings to music21 object as articulations (as requested)
+        try:
+            if isinstance(m21_obj, music21.chord.Chord):
+                for i, f_num in enumerate(assigned_fingers):
+                    if i < len(m21_obj.notes):
+                        f = music21.articulations.Fingering(f_num)
+                        m21_obj.notes[i].articulations.append(f)
+            else:
+                f = music21.articulations.Fingering(assigned_fingers[0])
+                m21_obj.articulations.append(f)
+        except Exception as e:
+            print(f"ChordTrainer: music21 fingering attachment failed: {e}")
+            
+        return assigned_fingers
+
     def _setup_target(self, root_idx, chord_type_name, intervals, octave, preview_chord=False, suppress_signal=False):
         self._hold_progress = 0.0
         self._is_holding = False
@@ -1392,13 +1486,17 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                  steps.append(str(diff))
              self._target_formula_text = "Root + " + " + ".join(steps)
 
-        # Calculate the exact MIDI pitches for the staff visualizer
-        self._target_pitches = [(base_pitch + interval) for interval in intervals]
+        # Calculate the exact MIDI pitches (ALWAYS sorted for chord consistency)
+        self._target_pitches = sorted([(base_pitch + interval) for interval in intervals])
 
         # Populate target hands: left if the exercise specifically calls for it,
         # otherwise default to right hand for normal chords (or the fallback).
         hand_tag = "left" if self._current_hand == "left" else "right"
         self._target_hands = [hand_tag] * len(self._target_pitches)
+
+        # Calculate fingerings using music21 logic
+        self._target_fingers = self._calculate_fingerings(self._target_pitches, hand_tag, inversion)
+        self.targetFingersChanged.emit()
 
         # Calculate the absolute intervals (0-11) for the logic evaluator
         self._target_intervals = {(root_idx + interval) % 12 for interval in intervals}
@@ -1782,7 +1880,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         elif self._current_hand == "left":
             octave = max(2, min(3, octave))
         base_pitch = (octave + 1) * 12 + root_idx
-        self._target_pitches = [(base_pitch + interval) for interval in intervals]
+        self._target_pitches = sorted([(base_pitch + interval) for interval in intervals])
 
         hand_tag = "left" if self._current_hand == "left" else "right"
         self._target_hands = [hand_tag] * len(self._target_pitches)
@@ -1953,6 +2051,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self.db.record_chord_attempt(note_name, True, latency_ms, 0, False, timing_offset)
 
             self._pentascale_index += 1
+            self.currentNoteIndexChanged.emit()
 
             if self._pentascale_index >= len(self._pentascale_sequence):
                 # All 5 notes played correctly — complete the step
@@ -1964,6 +2063,14 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 # Update target intervals to next note (no release wait — allows legato)
                 next_pitch = self._pentascale_sequence[self._pentascale_index]
                 self._target_intervals = {next_pitch % 12}
+                
+                hand_tag = "left" if self._current_hand == "left" else "right"
+                self._target_pitches = [next_pitch]
+                self._target_fingers = [self._pentascale_fingers[self._pentascale_index]]
+                self._current_hand = hand_tag # Standard hand from exercise
+                self._target_hands = [hand_tag]
+                self.targetFingersChanged.emit()
+                self.targetChordChanged.emit("")
                 self._prompt_time = time.time()  # Reset timing for next note
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
         self.targetChordChanged.emit(self._target_chord_name)

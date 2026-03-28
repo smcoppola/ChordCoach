@@ -12,6 +12,7 @@ dependencies = [
     "pretty-midi",
     "websockets",
     "certifi",
+    "music21",
 ]
 
 [build-system]
