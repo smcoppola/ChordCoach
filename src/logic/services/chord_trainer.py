@@ -42,6 +42,9 @@ class ChordTrainerService(QObject):
     targetFingersChanged = Signal()
     pentascaleNotesChanged = Signal()
     currentNoteIndexChanged = Signal()
+    scrollBeatChanged = Signal(float)
+    scrollingNotesChanged = Signal()
+    scrollBpmChanged = Signal()
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
         super().__init__()
@@ -76,6 +79,10 @@ class ChordTrainerService(QObject):
         self._wrong_notes_count = 0
         self._first_note_time = 0.0
         self._is_simultaneous = False
+
+        self._scroll_beat: float = 0.0
+        self._scrolling_notes: list = []
+        self._scroll_bpm: int = 0
 
         # Dashboard and Performance Review
         self._struggled_items: List[Dict] = []
@@ -215,6 +222,7 @@ class ChordTrainerService(QObject):
         self.metronome = service
         if self.metronome:
             self.metronome.tick.connect(self._on_metronome_tick)
+            self.metronome.beatPositionChanged.connect(self._on_metronome_beat_position)
 
     def _on_metronome_tick(self, beat_count):
         # Forward to QML (keeping existing signal for compatibility)
@@ -224,6 +232,10 @@ class ChordTrainerService(QObject):
         if self._exercise_type == "steady_pulse" and self._state == LessonState.USER_PLAYING:
             if beat_count >= 1: # Start counting hits once real beats begin
                 self._check_steady_pulse_beat(beat_count)
+
+    def _on_metronome_beat_position(self, pos: float):
+        self._scroll_beat = pos
+        self.scrollBeatChanged.emit(pos)
 
     def _set_state(self, new_state: LessonState):
         if hasattr(self, '_state') and self._state == new_state:
@@ -274,6 +286,18 @@ class ChordTrainerService(QObject):
     @Property(list, notify=targetFingersChanged)
     def targetFingers(self) -> list:
         return self._target_fingers
+
+    @Property(float, notify=scrollBeatChanged)
+    def scrollBeat(self) -> float:
+        return self._scroll_beat
+
+    @Property(list, notify=scrollingNotesChanged)
+    def scrollingNotes(self) -> list:
+        return self._scrolling_notes
+
+    @Property(int, notify=scrollBpmChanged)
+    def scrollBpm(self) -> int:
+        return self._scroll_bpm
 
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:
@@ -1152,6 +1176,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             sequence = list(reversed(sequence))
 
         # Set target to the first note in the sequence
+        self._scale_name = f"{self.ROOT_NOTES[root_idx % 12]} {scale_type}"
         self._target_chord_name = self._scale_name
         self._target_chord_type = "Pentascale"
         self._target_pitches = [sequence[0]]
@@ -1203,6 +1228,23 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._pentascale_sequence = sequence
         self._pentascale_index = 0
         
+        # Build scrolling notes
+        sn = []
+        for i, p in enumerate(sequence):
+            sn.append({
+                "pitch": p,
+                "start_beat": i,
+                "duration_beats": 1,
+                "finger": self._pentascale_fingers[i],
+                "hand": "R" if self._current_hand == "right" else "L"
+            })
+        self._scrolling_notes = sn
+        self.scrollingNotesChanged.emit()
+        self._scroll_bpm = bpm
+        self.scrollBpmChanged.emit()
+        self._scroll_beat = 0.0 if bpm == 0 else (self.metronome.currentBeatPosition if self.metronome else 0.0)
+        self.scrollBeatChanged.emit(self._scroll_beat)
+        
         self.lessonStateChanged.emit()
         self.targetChordChanged.emit(self._target_chord_name)
         self.pentascaleNotesChanged.emit()
@@ -1237,7 +1279,48 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._progression_numerals.append(str(step.get("numeral", ""))) # type: ignore
 
         self._progression_index = 0
+        self._target_hold_ms = 0
+        self._required_hold_ms = 0
         self.lessonStateChanged.emit()
+
+        # Build scrolling notes for the progression
+        sn = []
+        for i, step in enumerate(self._progression_steps):
+            root_idx = step["root_idx"]
+            intervals = step["intervals"]
+            octave = step["octave"]
+            
+            c_hand = self._current_hand
+            if c_hand == "right":
+                oct_clamped = max(4, min(5, octave))
+            elif c_hand == "left":
+                oct_clamped = max(2, min(3, octave))
+            else:
+                oct_clamped = octave
+                
+            base_pitch = (oct_clamped + 1) * 12 + root_idx
+            pitches = sorted([(base_pitch + inv) for inv in intervals])
+            fingers = self._calculate_fingerings(pitches, "right" if c_hand != "left" else "left")
+            if not fingers or len(fingers) != len(pitches):
+                fingers = [j + 1 for j in range(len(pitches))]
+            
+            for j, p in enumerate(pitches):
+                sn.append({
+                    "pitch": p,
+                    "hand": "R" if c_hand in ("right", "both") else "L",
+                    "finger": fingers[j],
+                    "start_beat": float(i),
+                    "duration_beats": 1.0
+                })
+
+        self._scrolling_notes = sn
+        self.scrollingNotesChanged.emit()
+        self._scroll_beat = 0.0
+        self.scrollBeatChanged.emit(self._scroll_beat)
+        
+        # User-driven pacing (no metronome by default for progressions)
+        self._scroll_bpm = 0
+        self.scrollBpmChanged.emit(self._scroll_bpm)
 
         # Set up the first chord in the progression
         self._advance_progression_chord()
@@ -1985,9 +2068,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                         pass
                     else:
                         QTimer.singleShot(700, self._next_chord)
-                elif self._exercise_type == "progression" and self._progression_index < len(self._progression_steps):
-                    # Advance to next chord in progression, adding a short pause so user can reset hands
-                    QTimer.singleShot(700, self._advance_progression_chord)
                 else:
                     QTimer.singleShot(700, self._next_chord)
             return
@@ -2052,6 +2132,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
             self._pentascale_index += 1
             self.currentNoteIndexChanged.emit()
+            if self._scroll_bpm == 0:
+                self._scroll_beat = float(self._pentascale_index)
+                self.scrollBeatChanged.emit(self._scroll_beat)
 
             if self._pentascale_index >= len(self._pentascale_sequence):
                 # All 5 notes played correctly — complete the step
@@ -2293,12 +2376,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         # Handle progression sub-step advancement
         if self._exercise_type == "progression":
             self._progression_index += 1
+            if self._scroll_bpm == 0:
+                self._scroll_beat = float(self._progression_index)
+                self.scrollBeatChanged.emit(self._scroll_beat)
+                
             if self._progression_index < len(self._progression_steps):
-                # More chords in this progression — wait for release then advance
-                print(f"ChordTrainer: Waiting for release before next progression chord...")
-                self._waiting_for_release = True
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
-                self.targetChordChanged.emit(self._target_chord_name)
+                print(f"ChordTrainer: Advancing to next progression chord immediately...")
+                self._advance_progression_chord()
                 return
             # else: progression complete, fall through to _next_chord
 
@@ -2332,7 +2416,25 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._steady_pulse_current_beat = 0
         self._steady_pulse_missed_beats = 0
         
+        # Build scrolling notes
+        sn = []
+        base_pitch = (octave + 1) * 12 + root_idx
+        for i in range(self._steady_pulse_beats):
+            sn.append({
+                "pitch": base_pitch,
+                "start_beat": i,
+                "duration_beats": 1,
+                "finger": 1,
+                "hand": "R" if octave >= 4 else "L"
+            })
+        self._scrolling_notes = sn
+        self.scrollingNotesChanged.emit()
+
         bpm = int(chord_data.get("bpm", 100))
+        self._scroll_bpm = bpm
+        self.scrollBpmChanged.emit()
+        self._scroll_beat = 0.0 if bpm == 0 else (self.metronome.currentBeatPosition if self.metronome else 0.0)
+        self.scrollBeatChanged.emit(self._scroll_beat)
         if self.metronome:
             if self._ai_is_currently_speaking:
                 self.metronome.defer_start(bpm)
