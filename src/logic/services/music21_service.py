@@ -1,7 +1,7 @@
 import music21
 from PySide6.QtCore import QObject, Signal, Slot # type: ignore
 from music21 import corpus, note, chord, stream
-from logic.utils.fingering_optimizer import inject_fingering_to_stream
+from logic.utils.fingering_optimizer import inject_fingering_to_stream, distribute_chord_fingers
 
 class Music21Service(QObject):
     """
@@ -276,6 +276,56 @@ class Music21Service(QObject):
                             offset_map[off]['fingers'].append(f_val)
                 
                 part_index += 1
+            
+            # --- ANATOMICAL REBALANCING ---
+            # Automatically split impossible spans (> 13 semitones) between hands
+            for off in offset_map:
+                step = offset_map[off]
+                rh_indices = [i for i, h in enumerate(step['hands']) if h == "right"]
+                lh_indices = [i for i, h in enumerate(step['hands']) if h == "left"]
+                
+                # Check Right Hand for impossible stretches (like the Beethoven G3-G4-G5)
+                if len(rh_indices) > 1:
+                    rh_pitches = sorted([step['pitches'][i] for i in rh_indices])
+                    if (rh_pitches[-1] - rh_pitches[0]) > 13:
+                        # Find the bottom outlier and move it to the Left Hand
+                        bottom_pitch = rh_pitches[0]
+                        orig_idx = step['pitches'].index(bottom_pitch)
+                        step['hands'][orig_idx] = "left"
+                        # Re-finger the moved note for the new hand (preferring thumb/1 for LH top)
+                        step['fingers'][orig_idx] = 1
+                
+                # Check Left Hand
+                if len(lh_indices) > 1:
+                    lh_pitches = sorted([step['pitches'][i] for i in lh_indices])
+                    if (lh_pitches[-1] - lh_pitches[0]) > 13:
+                        # Find the top outlier and move it to the Right Hand
+                        top_pitch = lh_pitches[-1]
+                        orig_idx = step['pitches'].index(top_pitch)
+                        step['hands'][orig_idx] = "right"
+                
+                # --- FINAL UNIQUENESS PASS ---
+                # Re-run the chord distributor ONLY if it's a chord (len > 1)
+                # This prevents monophonic melodies from being forced into a single finger (the "all-red" bug)
+                for h_tag in ["right", "left"]:
+                    h_indices = [i for i, h in enumerate(step['hands']) if h == h_tag]
+                    if len(h_indices) <= 1:
+                        continue
+                        
+                    h_pitches = [step['pitches'][i] for i in h_indices]
+                    # Map Midi pitches to music21.pitch.Pitch objects for the optimizer
+                    m21_pitches = [music21.pitch.Pitch(p) for p in h_pitches]
+                    
+                    # For chords, ensure they use unique fingers by anchoring at 1 or 5
+                    # Orchestral chords will still follow the 1-5 logic implemented in the optimizer
+                    anchor = 5 if h_tag == "right" else 1
+                    new_fingers = distribute_chord_fingers(m21_pitches, anchor, h_tag)
+                    
+                    # Store back in the correct indices (distribute_chord_fingers returns in pitch order)
+                    pitch_to_finger = {p.midi: f for p, f in zip(sorted(m21_pitches, key=lambda x: x.midi), new_fingers)}
+                    for idx in h_indices:
+                        p_midi = step['pitches'][idx]
+                        step['fingers'][idx] = pitch_to_finger.get(p_midi, 1)
                 
             # Process map into sorted list of steps
             sorted_offsets = sorted(offset_map.keys())

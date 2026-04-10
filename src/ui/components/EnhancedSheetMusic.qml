@@ -285,13 +285,15 @@ Rectangle {
             anchors.verticalCenterOffset: parent.bassCenterY - (parent.lineSpacing * 0.5)
         }
         
-        // Vertical Barline
+        // Vertical Barline — marks the staff start
         Rectangle {
             x: parent.noteStartX
             y: parent.trebleCenterY - (parent.lineSpacing * 2)
-            width: Math.max(1, 3 * mainWindow.uiScale)
+            width: Math.max(1, 1.5 * mainWindow.uiScale) // Match staff line weight
             height: (parent.bassCenterY + (parent.lineSpacing * 2)) - y
             color: "#111111"
+            // Hide during scrolling lessons to avoid clashing with the green playhead
+            visible: !root.isScrollingMode && root.displayMode !== "evaluation"
         }
         
         // Playhead Line (Green) — tracks current note in pentascale mode
