@@ -275,14 +275,9 @@ class GeminiService(QObject):
                 "5. Keep transitions fast. Call set_exercise immediately after receiving performance data. "
                 "If the next exercise is the same type as the last, do NOT speak - just call the tool."
                 "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson. "
-                "7. ROLEPLAY RULE (CRITICAL): NEVER narrate what you are doing. NEVER output any internal "
-                "monologue or 'background thoughts'. Phrases like 'Let me see...', 'I'll just check...', 'Now searching...', "
-                "or 'I am going to...' are strictly forbidden. You are an expert piano teacher; talking to yourself "
-                "is unprofessional. You have NO internal monologue in your voice output. Talk ONLY to the student. "
-                "8. DIRECT-TO-STUDENT RULE: Your instructions must be direct. Instead of 'I'm going to have you play C major', "
-                "just say 'Play C major'. Skip all preambles.\n"
+                "7. THOUGHT BUCKET RULE (CRITICAL): You are a native audio model. EVERY WORD of your main response is immediately synthesized into speech and spoken aloud. Put all your internal reasoning, step-by-step planning, performance evaluation, and state tracking into the 'internal_monologue' parameter of your tool calls. BUT CRITICALLY: DO NOT put musical explanations or theory teaching into the thought bucket! If you are introducing a new concept (like 'What is an Inversion?'), you MUST speak the explanation ALOUD so the student hears it.\n"
                 "CRITICAL RULES FOR EXERCISE GENERATION:\n"
-                "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME.\n"
+                "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME. (Note: A 'progression' exercise containing multiple chords counts as a single exercise. Use 'progression' for ANY chord transition drills).\n"
                 "- DO NOT use parallel function calling to dispense the entire block at once.\n"
                 "- Always wait for me to report the student's performance before giving the next step.\n"
                 "- For 'exercise_name', provide a descriptive name for the specific drill you are giving (e.g., \"C Major Root Position\"), NOT the name of the entire lesson block.\n"
@@ -333,6 +328,10 @@ class GeminiService(QObject):
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
+                                    "internal_monologue": {
+                                        "type": "STRING",
+                                        "description": "MANDATORY THOUGHT BUCKET. Put all your internal reasoning, step-by-step planning, performance evaluation, and state tracking here. Do NOT speak this out loud. Provide a detailed explanation of why you are calling this tool and what your plan is."
+                                    },
                                     "exercise_type": {
                                         "type": "STRING",
                                         "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal, steady_pulse"
@@ -427,6 +426,10 @@ class GeminiService(QObject):
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
+                                    "internal_monologue": {
+                                        "type": "STRING",
+                                        "description": "MANDATORY THOUGHT BUCKET. Put all your internal reasoning and summary generation here instead of speaking it."
+                                    },
                                     "feedback_summary": {
                                         "type": "STRING",
                                         "description": "Brief text summary of the student's performance"
@@ -444,6 +447,10 @@ class GeminiService(QObject):
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
+                                    "internal_monologue": {
+                                        "type": "STRING",
+                                        "description": "MANDATORY THOUGHT BUCKET. Put all your calculations for the next visual stage update here instead of speaking them."
+                                    },
                                     "show_base": { "type": "BOOLEAN", "description": "True to draw the blank base wheel." },
                                     "show_major": { "type": "BOOLEAN", "description": "True to reveal the outer Major key names." },
                                     "show_minor": { "type": "BOOLEAN", "description": "True to reveal the inner Minor key ring." },
@@ -545,6 +552,11 @@ class GeminiService(QObject):
                             }
                         else:
                             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
+                            
+                            # Intercept and print the thought bucket
+                            if "internal_monologue" in fn_args:
+                                print(f"\n🧠 [AI THOUGHT BUCKET] ->\n{fn_args['internal_monologue']}\n")
+
                             if fn_name == "set_exercise":
                                 if self._exercise_pending:
                                     print(f"Gemini Service: Informing AI of pending exercise — skipping duplicate set_exercise")

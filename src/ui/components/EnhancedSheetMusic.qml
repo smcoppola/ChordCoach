@@ -150,6 +150,31 @@ Rectangle {
         }
         return "";
     }
+
+    property real scrollBeat: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.scrollBeat || 0.0;
+        }
+        return 0.0;
+    }
+
+    property var scrollingNotes: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.scrollingNotes || [];
+        }
+        return [];
+    }
+
+    property int scrollBpm: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.scrollBpm || 0;
+        }
+        return 0;
+    }
+
+    property bool isScrollingMode: {
+        return (exerciseType === "pentascale" || exerciseType === "steady_pulse" || exerciseType === "progression");
+    }
     
     function getHandForTargetPitch(pitch) {
         if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
@@ -249,13 +274,14 @@ Rectangle {
         // Playhead Line (Green) — tracks current note in pentascale mode
         Rectangle {
             x: root.displayMode === "evaluation" ? parent.noteStartX :
+               root.isScrollingMode ? parent.noteStartX :
                root.exerciseType === "pentascale"
                 ? parent.noteStartX + (root.currentNoteIndex * parent.pentaNoteSpacing) - 6
                 : parent.noteStartX - 100
             y: parent.trebleCenterY - (parent.lineSpacing * 3)
             width: Math.max(1, 4 * mainWindow.uiScale)
             height: (parent.bassCenterY + (parent.lineSpacing * 3)) - y
-            visible: root.displayMode === "evaluation"
+            visible: root.displayMode === "evaluation" || root.isScrollingMode
             color: "#8BC34A"
             radius: 2 * mainWindow.uiScale
             
@@ -287,7 +313,7 @@ Rectangle {
             model: root.activeTargets
             
             Rectangle {
-                visible: root.displayMode === "trainer"
+                visible: root.displayMode === "trainer" && !root.isScrollingMode
                 property int pitch: modelData.pitch
                 property int finger: modelData.finger
                 property string hand: modelData.hand
@@ -431,11 +457,13 @@ Rectangle {
                     return -1;
                 }
                 property bool isCompleted: noteIdx < root.currentNoteIndex
+                property bool isCurrent: noteIdx === root.currentNoteIndex
                 property int finger: noteIdx + 1
                 property string fingerColor: root.getColorForFinger(finger)
                 
                 // Don't draw the current note here — it's drawn by the activeTargets repeater
-                visible: !isCurrent
+                // Don't draw them at all if we are in scrolling mode
+                visible: !isCurrent && !root.isScrollingMode
                 
                 y: referenceY - (steps * (parent.lineSpacing / 2)) - (height / 2)
                 z: 100 + pitch
@@ -591,6 +619,99 @@ Rectangle {
 
                     // Efficiency check (global coordinate check)
                     property real globalX: x + scrollingContainer.x
+                    visible: (globalX + width > 0) && (globalX < root.width + 100)
+
+                    // Note name label
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 6 * mainWindow.uiScale
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 0
+                        visible: parent.width > 30
+
+                        property string fullNoteName: root.getNoteName(parent.pitch)
+                        property bool hasAccidental: fullNoteName.length > 1
+
+                        Text {
+                            text: parent.fullNoteName.charAt(0)
+                            color: "#ffffff"
+                            font.pixelSize: parent.parent.height * 0.65
+                            font.bold: true
+                        }
+                        Text {
+                            visible: parent.hasAccidental
+                            text: parent.hasAccidental ? parent.fullNoteName.charAt(1) : ""
+                            color: "#ffffff"
+                            font.pixelSize: parent.parent.height * 0.45
+                            font.bold: true
+                            anchors.baseline: parent.children[0].baseline
+                            anchors.baselineOffset: -parent.parent.height * 0.12
+                        }
+                    }
+
+                    // Ledger lines for notes outside the staff
+                    Repeater {
+                        model: root.getLedgerSteps(parent.steps)
+                        Rectangle {
+                            z: -1
+                            x: -10 * mainWindow.uiScale
+                            width: parent.width + (20 * mainWindow.uiScale)
+                            height: Math.max(1, 3 * mainWindow.uiScale)
+                            color: "#111111"
+                            y: ((parent.steps - modelData) * (parent.parent.parent.lineSpacing / 2)) + (parent.height / 2) - (height / 2)
+                        }
+                    }
+                }
+            }
+        }
+        // ── 5. Scrolling Trainer Notes (Live Lessons) ───────────────────────
+        Item {
+            id: trainerScrollingContainer
+            y: 0
+            height: parent.height
+            visible: root.displayMode === "trainer" && root.isScrollingMode
+            
+            x: - (root.scrollBeat * root.pixelsPerBeat)
+            
+            // Only smooth animation if metronome is running; otherwise step normally
+            Behavior on x {
+                SmoothedAnimation {
+                    velocity: -1
+                    duration: root.scrollBpm > 0 ? 80 : 200
+                }
+            }
+
+            Repeater {
+                model: root.scrollingNotes
+
+                Rectangle {
+                    property int pitch: modelData.pitch || 60
+                    property string hand: modelData.hand || "R"
+                    property real startBeat: modelData.startBeat || modelData.start_beat || 0
+                    property real durBeats: modelData.durationBeats || modelData.duration_beats || 1
+                    property int finger: modelData.finger || 1
+                    // A note is completed if the playhead (scrollBeat) has passed the end of the note duration
+                    property bool isCompleted: root.scrollBeat >= (startBeat + durBeats)
+                    // The note currently crossing the start line
+                    property bool isCurrentlyActive: root.scrollBeat >= startBeat && root.scrollBeat < (startBeat + durBeats)
+                    
+                    property bool isTreble: hand === "L" || hand === "left" ? false : hand === "R" || hand === "right" ? true : pitch >= 60
+                    property int referencePitch: isTreble ? 71 : 50
+                    property real referenceY: isTreble ? staffBackground.trebleCenterY : staffBackground.bassCenterY
+                    property int steps: root.getDiatonicStepsDifference(referencePitch, pitch)
+
+                    x: staffBackground.noteStartX + (startBeat * root.pixelsPerBeat)
+                    y: referenceY - (steps * (staffBackground.lineSpacing / 2)) - (height / 2)
+                    width: Math.max(durBeats * root.pixelsPerBeat - 4, 8)
+                    height: staffBackground.lineSpacing * 0.95
+                    radius: 4
+                    z: pitch
+
+                    color: isCompleted ? "#4CAF50" : root.getColorForFinger(finger)
+                    opacity: isCompleted ? 0.3 : (isCurrentlyActive ? 1.0 : 0.8)
+
+                    // Efficiency check (global coordinate check)
+                    property real globalX: x + trainerScrollingContainer.x
                     visible: (globalX + width > 0) && (globalX < root.width + 100)
 
                     // Note name label

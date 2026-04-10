@@ -14,6 +14,7 @@ class MetronomeService(QObject):
     leadInComplete = Signal()       # Emitted when lead-in beats finish (beat_count reaches 0)
     bpmChanged = Signal(int)
     runningChanged = Signal(bool)
+    beatPositionChanged = Signal(float) # Emits continuous float beat position for smooth scrolling
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,6 +23,8 @@ class MetronomeService(QObject):
         self._is_running: bool = False
         self._lead_in_beats: int = 4
         self._start_time: float = 0.0  # Wall-clock time when beat 0 will occur
+        self._current_beat_position: float = 0.0
+        self._last_tick_time: float = 0.0
 
         # Deferred start state (wait for AI speech to finish)
         self._deferred_bpm: int = 0
@@ -32,6 +35,12 @@ class MetronomeService(QObject):
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._on_tick)
+
+        # High-frequency timer for smooth UI animations
+        self._beat_clock_timer = QTimer(self)
+        self._beat_clock_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._beat_clock_timer.setInterval(10)
+        self._beat_clock_timer.timeout.connect(self._update_beat_position)
 
     # ── Properties ────────────────────────────────────────────────────
 
@@ -46,6 +55,10 @@ class MetronomeService(QObject):
     @Property(bool, notify=runningChanged)
     def isRunning(self) -> bool:
         return self._is_running
+
+    @Property(float, notify=beatPositionChanged)
+    def currentBeatPosition(self) -> float:
+        return self._current_beat_position
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -62,15 +75,19 @@ class MetronomeService(QObject):
         self._beat_count = -lead_in_beats  # e.g., -4, -3, -2, -1, then 0 = first real beat
         interval_ms = int(60000 / bpm)
 
-        # Calculate the wall-clock time when beat 0 will occur
         self._start_time = time.time() + (interval_ms / 1000.0 * lead_in_beats)
 
+        self._current_beat_position = -float(lead_in_beats)
+        self._last_tick_time = time.perf_counter()
+
         self._timer.start(interval_ms)
+        self._beat_clock_timer.start()
         self._is_running = True
         self._has_deferred = False
 
         self.bpmChanged.emit(bpm)
         self.runningChanged.emit(True)
+        self.beatPositionChanged.emit(self._current_beat_position)
         print(f"MetronomeService: Started at {bpm} BPM ({lead_in_beats}-beat lead-in)")
 
     @Slot()
@@ -80,12 +97,14 @@ class MetronomeService(QObject):
             return
 
         self._timer.stop()
+        self._beat_clock_timer.stop()
         was_running = self._is_running
         self._is_running = False
         self._has_deferred = False
         self._deferred_bpm = 0
         self._bpm = 0
         self._beat_count = 0
+        self._current_beat_position = 0.0
         self._start_time = 0.0
 
         if was_running:
@@ -162,3 +181,14 @@ class MetronomeService(QObject):
         # Notify when lead-in finishes (transition from -1 → 0)
         if self._beat_count == 0:
             self.leadInComplete.emit()
+
+    def _update_beat_position(self):
+        """Called by high-frequency timer to compute fractional beat position smoothly."""
+        now = time.perf_counter()
+        elapsed_sec = now - self._last_tick_time
+        self._last_tick_time = now
+
+        beats_per_sec = self._bpm / 60.0
+        beat_delta = elapsed_sec * beats_per_sec
+        self._current_beat_position += beat_delta
+        self.beatPositionChanged.emit(self._current_beat_position)

@@ -482,6 +482,7 @@ class ChordTrainerService(QObject):
             for i, b in enumerate(session_plan["blocks"]):
                 blocks_text += f"\nBlock {i+1}: {b['milestone_title']} (track: '{b['track']}', milestone_id: '{b['milestone_id']}')\n"
                 blocks_text += f"- Goal: {b['milestone_description']}\n"
+                blocks_text += f"- Required Exercise Types: {b.get('exercise_types', ['chord'])}\n"
                 blocks_text += f"- Target Keys: {b['target_keys']}\n"
                 blocks_text += f"- Target Chords: {b['target_chords']}\n"
                 blocks_text += f"- Target exercise count: {b['step_count']}\n"
@@ -1254,8 +1255,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     def _setup_progression_target(self, chord_data):
         """Sets up a chord progression exercise: multiple chords played in sequence."""
         prog_steps = chord_data.get("progression_steps", []) # type: ignore
+        print(f"[PROG DEBUG] _setup_progression_target called. prog_steps count={len(prog_steps)}")
         if not prog_steps:
             # Fallback: treat as a regular chord step
+            print(f"[PROG DEBUG] No progression_steps! Falling back to chord. chord_data keys={list(chord_data.keys())}")
             self._exercise_type = "chord"
             root_idx = chord_data.get("root_idx", 0)
             chord_type_name = chord_data.get("chord_type_name", "Major")
@@ -1320,7 +1323,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         
         # User-driven pacing (no metronome by default for progressions)
         self._scroll_bpm = 0
-        self.scrollBpmChanged.emit(self._scroll_bpm)
+        self.scrollBpmChanged.emit()
+        
+        print(f"[PROG DEBUG] Built {len(self._progression_steps)} progression steps, {len(sn)} scrolling notes")
 
         # Set up the first chord in the progression
         self._advance_progression_chord()
@@ -1942,8 +1947,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     def _advance_progression_chord(self):
         """Sets up the current chord within a progression sequence."""
+        print(f"[PROG DEBUG] _advance_progression_chord called. index={self._progression_index}/{len(self._progression_steps) if self._progression_steps else 0}")
         if self._progression_index >= len(self._progression_steps):
             # Progression complete
+            print(f"[PROG DEBUG] Progression complete (index >= len). Skipping.")
             return
 
         step = self._progression_steps[self._progression_index]
@@ -1985,12 +1992,14 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._hold_progress = 0.0
         self._is_holding = False
         self._waiting_for_release = False
+        self._required_hold_ms = 0
         self._hold_tick_timer.stop()
         self._prompt_time = time.time()
         self._wrong_notes_count = 0
         self._first_note_time = 0.0
         self._is_simultaneous = False
 
+        print(f"[PROG DEBUG] _advance_progression_chord set target: name={self._target_chord_name} pitches={self._target_pitches} intervals={self._target_intervals}")
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._target_chord_name})")
         self.targetChordChanged.emit(self._target_chord_name)
         print(f"ChordTrainer: Progression chord {self._progression_index + 1}/{len(self._progression_steps)}: {self._target_chord_name}")
@@ -2076,6 +2085,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     def _check_input(self):
         """Routes input validation based on exercise type."""
+        if self._exercise_type == "progression":
+            print(f"[PROG DEBUG] _check_input called. exercise_type={self._exercise_type} "
+                  f"progression_index={self._progression_index}/{len(self._progression_steps) if self._progression_steps else 0} "
+                  f"active_pitches={sorted(self._active_pitches)} target_pitches={sorted(self._target_pitches) if self._target_pitches else []}")
         if self._exercise_type == "listen":
             # Listen exercises are answered via QML UI buttons, not MIDI keyboard
             return
@@ -2168,6 +2181,15 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         active_set = set(self._active_pitches)
         target_set = set(self._target_pitches)
+
+        # DEBUG: Log every chord check for progression exercises
+        if self._exercise_type == "progression" and len(active_set) > 0:
+            active_intervals = {p % 12 for p in active_set}
+            target_intervals_check = {p % 12 for p in target_set}
+            print(f"[PROG DEBUG] _check_chord: active_pitches={sorted(active_set)} target_pitches={sorted(target_set)} "
+                  f"active_intervals={active_intervals} target_intervals={target_intervals_check} "
+                  f"exact_match={active_set == target_set} interval_match={active_intervals == target_intervals_check} "
+                  f"_is_holding={self._is_holding} _required_hold_ms={self._required_hold_ms}")
 
         # Check for exact pitch match (octave-strict)
         if active_set == target_set:

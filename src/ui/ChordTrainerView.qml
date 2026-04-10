@@ -339,11 +339,11 @@ Rectangle {
             }
         }
         
-        // Pentascale Note Progress Indicator  
+        // Pentascale Note Progress Indicator (Deprecated in favor of scrolling)
         Row {
             Layout.alignment: Qt.AlignHCenter
             spacing: 32 * mainWindow.uiScale
-            visible: root.isActive && !root.isLessonComplete && root.exerciseType === "pentascale"
+            visible: false // Legacy: replaced by scrolling bars
             
             Repeater {
                 model: 5
@@ -433,7 +433,7 @@ Rectangle {
             }
         }
 
-        // --- Rhythm Progress Bar (The moving target cursor) ---
+        // --- Rhythm Progress Bar (The moving target cursor) (Deprecated in favor of scrolling) ---
         Rectangle {
             id: rhythmGuide
             Layout.alignment: Qt.AlignHCenter
@@ -441,7 +441,7 @@ Rectangle {
             height: 6 * mainWindow.uiScale
             color: "#1a1a1b"
             radius: 3 * mainWindow.uiScale
-            visible: root.isActive && root.exerciseType === "pentascale" && root.pentascaleBpm > 0
+            visible: false // Legacy: replaced by scrolling bars
             
             Rectangle {
                 id: rhythmCursor
