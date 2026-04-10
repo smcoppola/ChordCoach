@@ -37,6 +37,26 @@ Rectangle {
             }
         }
     }
+
+    // ── Global Signal Relay for Repertoire Catalog ──
+    Connections {
+        target: (typeof appState !== "undefined" && appState !== null && appState.music21Service) ? appState.music21Service : null
+        
+        function onSongRequested(songId) {
+            console.log("CenterWorkspace: Song requested via global signal: " + songId);
+            if (appState && appState.chordTrainer) {
+                // Important: Python handles the heavy lifting, we just route the view
+                appState.chordTrainer.start_song(songId);
+                
+                // Ensure we are not stuck in a transition
+                if (workspaceStack.depth > 0) {
+                    workspaceStack.replace(trainerViewComponent);
+                } else {
+                    workspaceStack.push(trainerViewComponent);
+                }
+            }
+        }
+    }
     
     Component {
         id: dashboardComponent

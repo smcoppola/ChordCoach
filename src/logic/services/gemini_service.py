@@ -278,6 +278,7 @@ class GeminiService(QObject):
                 "7. THOUGHT BUCKET RULE (CRITICAL): You are a native audio model. EVERY WORD of your main response is immediately synthesized into speech and spoken aloud. Put all your internal reasoning, step-by-step planning, performance evaluation, and state tracking into the 'internal_monologue' parameter of your tool calls. BUT CRITICALLY: DO NOT put musical explanations or theory teaching into the thought bucket! If you are introducing a new concept (like 'What is an Inversion?'), you MUST speak the explanation ALOUD so the student hears it.\n"
                 "CRITICAL RULES FOR EXERCISE GENERATION:\n"
                 "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME. (Note: A 'progression' exercise containing multiple chords counts as a single exercise. Use 'progression' for ANY chord transition drills).\n"
+                "- If the curriculum requires 'song_application', you MUST use the `song_application` exercise_type and provide a `piece_name` (e.g. 'bach/bwv1.6.mxl').\n"
                 "- DO NOT use parallel function calling to dispense the entire block at once.\n"
                 "- Always wait for me to report the student's performance before giving the next step.\n"
                 "- For 'exercise_name', provide a descriptive name for the specific drill you are giving (e.g., \"C Major Root Position\"), NOT the name of the entire lesson block.\n"
@@ -411,6 +412,10 @@ class GeminiService(QObject):
                                                 "numeral": {"type": "STRING"}
                                             }
                                         }
+                                    },
+                                    "piece_name": {
+                                        "type": "STRING",
+                                        "description": "For song_application exercises: music21 corpus identifier, e.g. 'bach/bwv1.6.mxl' or 'essenFolksong/erk5'"
                                     }
                                 },
                                 "required": ["exercise_type", "exercise_name", "track", "milestone_id"]

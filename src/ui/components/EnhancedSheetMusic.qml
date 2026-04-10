@@ -4,7 +4,7 @@ import Qt5Compat.GraphicalEffects
 
 Rectangle {
     id: root
-    color: "#eaeaeb" // Light gray backing paper color from the mock
+    color: "#fcfcfc" // Light, clean paper color
     clip: true
     Layout.fillWidth: true
     Layout.fillHeight: true
@@ -44,15 +44,20 @@ Rectangle {
     function getColorForFinger(finger) {
         if (!finger) return "#888888";
         // User-Specified pedagogical color mapping:
-        // 1=Green, 2=Yellow, 3=Purple, 4=Blue, 5=Red
+        // 1=Green, 2=Yellow (Deepened for contrast), 3=Purple, 4=Blue, 5=Red
         var colors = {
             1: "#4CAF50",
-            2: "#FFD600",
+            2: "#FFB300", // "Amber" instead of bright yellow for white text contrast
             3: "#9C27B0",
             4: "#2196F3",
             5: "#F44336"
         };
         return colors[finger] || "#888888";
+    }
+
+    function getTextColorForFinger(finger) {
+        // Uniform white text per user request
+        return "#ffffff";
     }
 
     function getNoteName(pitch) {
@@ -172,8 +177,22 @@ Rectangle {
         return 0;
     }
 
+    property string songTitle: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.songTitle || "";
+        }
+        return "";
+    }
+
+    property string songKey: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.songKey || "";
+        }
+        return "";
+    }
+
     property bool isScrollingMode: {
-        return (exerciseType === "pentascale" || exerciseType === "steady_pulse" || exerciseType === "progression");
+        return (exerciseType === "pentascale" || exerciseType === "steady_pulse" || exerciseType === "progression" || exerciseType === "song_application");
     }
     
     function getHandForTargetPitch(pitch) {
@@ -204,14 +223,18 @@ Rectangle {
         property real pentaNoteWidth: Math.min(120, (width - noteStartX - 40) / pentaNoteCount * 0.85)
         property real pentaNoteSpacing: (width - noteStartX - 40) / pentaNoteCount
         
-        // Target Chord Name Header
         Text {
             anchors.top: parent.top
             anchors.topMargin: 20 * mainWindow.uiScale
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width * 0.9
-            text: root.formatChordTitle(root.targetChordName)
-            font.pixelSize: 32 * mainWindow.uiScale
+            text: {
+                if (root.exerciseType === "song_application" && root.songTitle !== "") {
+                    return root.songTitle + (root.songKey !== "" ? (" — " + root.songKey) : "");
+                }
+                return root.formatChordTitle(root.targetChordName);
+            }
+            font.pixelSize: (root.exerciseType === "song_application") ? (24 * mainWindow.uiScale) : (32 * mainWindow.uiScale)
             font.bold: true
             color: "#333333"
             visible: text !== ""
@@ -225,8 +248,8 @@ Rectangle {
             model: 5
             Rectangle {
                 width: parent.width
-                height: Math.max(1, 2 * mainWindow.uiScale)
-                color: "#111111"
+                height: Math.max(1, 1.5 * mainWindow.uiScale)
+                color: "#e0e0e0" // Subtle staff lines
                 y: parent.trebleCenterY - ((4 - (index * 2)) * (parent.lineSpacing / 2))
             }
         }
@@ -236,8 +259,8 @@ Rectangle {
             model: 5
             Rectangle {
                 width: parent.width
-                height: Math.max(1, 2 * mainWindow.uiScale)
-                color: "#111111"
+                height: Math.max(1, 1.5 * mainWindow.uiScale)
+                color: "#e0e0e0" // Subtle staff lines
                 y: parent.bassCenterY - ((4 - (index * 2)) * (parent.lineSpacing / 2))
             }
         }
@@ -278,12 +301,15 @@ Rectangle {
                root.exerciseType === "pentascale"
                 ? parent.noteStartX + (root.currentNoteIndex * parent.pentaNoteSpacing) - 6
                 : parent.noteStartX - 100
-            y: parent.trebleCenterY - (parent.lineSpacing * 3)
-            width: Math.max(1, 4 * mainWindow.uiScale)
-            height: (parent.bassCenterY + (parent.lineSpacing * 3)) - y
+            y: parent.trebleCenterY - (parent.lineSpacing * 3.1)
+            width: Math.max(1, 1.8 * mainWindow.uiScale) // Thinner playhead
+            height: (parent.bassCenterY + (parent.lineSpacing * 3.1)) - y
             visible: root.displayMode === "evaluation" || root.isScrollingMode
-            color: "#8BC34A"
-            radius: 2 * mainWindow.uiScale
+            color: "#4CAF50"
+            radius: width / 2
+            z: 1000
+            
+            // Halo removed for professional clarity
             
             Behavior on x { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
             
@@ -348,11 +374,27 @@ Rectangle {
                 width: isPentascale
                     ? parent.pentaNoteWidth
                     : parent.width - x
-                height: parent.lineSpacing * 0.95
+                height: parent.lineSpacing * 0.70 // Refined: 70% of spacing
                 
-                // NEW: Color by finger!
+                // Solid content logic: Apply transparency ONLY to background
                 color: root.getColorForFinger(finger)
-                radius: 4
+                radius: height / 2 // Capsule look
+                
+                // --- STANDARD HAND STEM ---
+                Rectangle {
+                    id: noteStem
+                    width: Math.max(1, 1.5 * mainWindow.uiScale)
+                    height: staffBackground.lineSpacing * 2.5
+                    color: "#111111" // Standard black
+                    
+                    // Logic: RH = Up Right, LH = Down Left
+                    anchors.bottom: (hand === "right" || hand === "R") ? parent.verticalCenter : undefined
+                    anchors.top: (hand === "left" || hand === "L") ? parent.verticalCenter : undefined
+                    anchors.right: (hand === "right" || hand === "R") ? parent.right : undefined
+                    anchors.left: (hand === "left" || hand === "L") ? parent.left : undefined
+                    
+                    z: -5 // Behind the pill but in front of staff
+                }
                 
                 Behavior on x { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
                 Behavior on y { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
@@ -391,42 +433,28 @@ Rectangle {
                 }
                 
                 // Text label inside the note bar
-                Row {
+                Text {
+                    id: labelText
                     anchors.left: parent.left
-                    anchors.leftMargin: 8 * mainWindow.uiScale
+                    anchors.leftMargin: 10 * mainWindow.uiScale
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 0
-                    
-                    property string fullNoteName: root.getNoteName(pitch)
-                    property bool hasAccidental: fullNoteName.length > 1
-                    
-                    Text {
-                        text: parent.fullNoteName.charAt(0)
-                        color: "#ffffff"
-                        font.pixelSize: parent.parent.height * 0.7
-                        font.bold: true
-                    }
-                    Text {
-                        visible: parent.hasAccidental
-                        text: parent.hasAccidental ? parent.fullNoteName.charAt(1) : ""
-                        color: "#ffffff"
-                        font.pixelSize: parent.parent.height * 0.5
-                        font.bold: true
-                        anchors.baseline: parent.children[0].baseline
-                        anchors.baselineOffset: -parent.parent.height * 0.15
-                    }
+                    text: root.getNoteName(pitch)
+                    color: root.getTextColorForFinger(finger)
+                    font.pixelSize: parent.height * 0.65
+                    font.bold: true
+                    opacity: 1.0 // Ensure text is never faded
                 }
                 
                 // Ledger lines if note is outside the staff
                 Repeater {
                     model: root.getLedgerSteps(parent.steps)
                     Rectangle {
-                        z: -1
+                        z: -10 // Strictly behind the note
                         anchors.left: parent.left
-                        anchors.leftMargin: (-15 * mainWindow.uiScale) - parent.staggerOffset
-                        width: (50 * mainWindow.uiScale) + parent.staggerOffset
-                        height: Math.max(1, 3 * mainWindow.uiScale)
-                        color: "#111111"
+                        anchors.leftMargin: -8 * mainWindow.uiScale
+                        width: 38 * mainWindow.uiScale // Fixed professional width
+                        height: Math.max(1, 1.5 * mainWindow.uiScale) // Standard staff weight
+                        color: "#111111" // Pure black for clarity
                         y: ((parent.steps - modelData) * (parent.parent.lineSpacing / 2)) + (parent.height / 2) - (height / 2)
                     }
                 }
@@ -471,12 +499,12 @@ Rectangle {
                 // Stagger horizontally by sequence position
                 x: parent.noteStartX + (noteIdx * parent.pentaNoteSpacing)
                 width: parent.pentaNoteWidth
-                height: parent.lineSpacing * 0.95
+                height: parent.lineSpacing * 0.70 // Refined: 70% height
                 
                 color: isCompleted ? fingerColor : "transparent"
                 border.color: fingerColor
                 border.width: isCompleted ? 0 : 2
-                radius: 4
+                radius: height / 2 // Capsule look
                 opacity: isCompleted ? 0.9 : 0.4
                 
                 Text {
@@ -493,12 +521,12 @@ Rectangle {
                 Repeater {
                     model: root.getLedgerSteps(parent.steps)
                     Rectangle {
-                        z: -1
-                        x: -15 * mainWindow.uiScale
-                        width: parent.width + (30 * mainWindow.uiScale)
-                        height: Math.max(1, 3 * mainWindow.uiScale)
-                        color: "#111111"
-                        y: ((parent.steps - modelData) * (parent.parent.lineSpacing / 2)) + (parent.height / 2) - (height / 2)
+                        z: -10 // Strictly behind the note
+                        x: -8 * mainWindow.uiScale
+                        width: 38 * mainWindow.uiScale // Fixed professional width
+                        height: Math.max(1, 1.5 * mainWindow.uiScale) // Standard staff weight
+                        color: "#111111" // Pure black for clarity
+                        y: ((parent.steps - modelData) * (parent.parent.parent.lineSpacing / 2)) + (parent.height / 2) - (height / 2)
                     }
                 }
             }
@@ -607,15 +635,33 @@ Rectangle {
                     x: staffBackground.noteStartX + (startBeat * root.pixelsPerBeat)
                     y: referenceY - (steps * (staffBackground.lineSpacing / 2)) - (height / 2)
                     width: Math.max(durBeats * root.pixelsPerBeat - 4, 8)
-                    height: staffBackground.lineSpacing * 0.95
-                    radius: 4
+                    height: staffBackground.lineSpacing * 0.70 // Refined: 70% height
+                    radius: height / 2 // Capsule look
                     z: pitch
+
+                    // Distance-based focus: notes arriving soon are opaque
+                    property real distanceInBeats: startBeat - root.evalBeat
+                    opacity: noteState === "miss" ? 0.4 : 
+                             (distanceInBeats > 8 ? 0.3 : (distanceInBeats > 4 ? 0.6 : 1.0))
 
                     // Coloring: pending = pitch color, hit = green, miss = red
                     color: noteState === "hit" ? "#4CAF50" :
                            noteState === "miss" ? "#F44336" :
                            root.getColorForFinger(modelData.finger)
-                    opacity: noteState === "miss" ? 0.4 : 1.0
+                    
+                    // --- STANDARD HAND STEM (SCROLLING) ---
+                    Rectangle {
+                        width: Math.max(1, 1.5 * mainWindow.uiScale)
+                        height: staffBackground.lineSpacing * 2.5
+                        color: "#111111"
+                        opacity: parent.opacity // Follow the distance-fade
+                        
+                        anchors.bottom: (hand === "right" || hand === "R") ? parent.verticalCenter : undefined
+                        anchors.top: (hand === "left" || hand === "L") ? parent.verticalCenter : undefined
+                        anchors.right: (hand === "right" || hand === "R") ? parent.right : undefined
+                        anchors.left: (hand === "left" || hand === "L") ? parent.left : undefined
+                        z: -5
+                    }
 
                     // Efficiency check (global coordinate check)
                     property real globalX: x + scrollingContainer.x
@@ -635,17 +681,17 @@ Rectangle {
                         Text {
                             text: parent.fullNoteName.charAt(0)
                             color: "#ffffff"
-                            font.pixelSize: parent.parent.height * 0.65
+                            font.pixelSize: parent.parent.height * 0.45
                             font.bold: true
                         }
                         Text {
                             visible: parent.hasAccidental
                             text: parent.hasAccidental ? parent.fullNoteName.charAt(1) : ""
                             color: "#ffffff"
-                            font.pixelSize: parent.parent.height * 0.45
+                            font.pixelSize: parent.parent.height * 0.35
                             font.bold: true
                             anchors.baseline: parent.children[0].baseline
-                            anchors.baselineOffset: -parent.parent.height * 0.12
+                            anchors.baselineOffset: -parent.parent.height * 0.08
                         }
                     }
 
@@ -703,12 +749,40 @@ Rectangle {
                     x: staffBackground.noteStartX + (startBeat * root.pixelsPerBeat)
                     y: referenceY - (steps * (staffBackground.lineSpacing / 2)) - (height / 2)
                     width: Math.max(durBeats * root.pixelsPerBeat - 4, 8)
-                    height: staffBackground.lineSpacing * 0.95
-                    radius: 4
+                    height: staffBackground.lineSpacing * 0.70 // Refined: 70% height
+                    radius: height / 2 // Capsule look
                     z: pitch
 
-                    color: isCompleted ? "#4CAF50" : root.getColorForFinger(finger)
-                    opacity: isCompleted ? 0.3 : (isCurrentlyActive ? 1.0 : 0.8)
+                    // Distance-based focus: Apply alpha to background ONLY
+                    property real absDistance: Math.abs(startBeat - root.scrollBeat)
+                    property real focalAlpha: isCurrentlyActive ? 1.0 : Math.max(0.15, 0.8 - (absDistance / 10.0))
+                    
+                    color: {
+                        var base = isCompleted ? "#4CAF50" : root.getColorForFinger(finger);
+                        return Qt.styleHints.colorScheme === Qt.Dark ? Qt.darker(base, focalAlpha) : Qt.rgba(
+                            parseInt(base.substring(1,3), 16)/255,
+                            parseInt(base.substring(3,5), 16)/255,
+                            parseInt(base.substring(5,7), 16)/255,
+                            focalAlpha
+                        );
+                    }
+                    
+                    // Standardize: No parent opacity so children stay solid
+                    opacity: 1.0
+                    
+                    // --- STANDARD HAND STEM (TRAINER SCROLLING) ---
+                    Rectangle {
+                        width: Math.max(1, 1.5 * mainWindow.uiScale)
+                        height: staffBackground.lineSpacing * 2.5
+                        color: "#111111"
+                        opacity: parent.opacity
+                        
+                        anchors.bottom: (hand === "right" || hand === "R") ? parent.verticalCenter : undefined
+                        anchors.top: (hand === "left" || hand === "L") ? parent.verticalCenter : undefined
+                        anchors.right: (hand === "right" || hand === "R") ? parent.right : undefined
+                        anchors.left: (hand === "left" || hand === "L") ? parent.left : undefined
+                        z: -5
+                    }
 
                     // Efficiency check (global coordinate check)
                     property real globalX: x + trainerScrollingContainer.x
@@ -728,6 +802,8 @@ Rectangle {
                         Text {
                             text: parent.fullNoteName.charAt(0)
                             color: "#ffffff"
+                            style: Text.Outline
+                            styleColor: "#44000000" // Subtle drop shadow for focus
                             font.pixelSize: parent.parent.height * 0.65
                             font.bold: true
                         }
@@ -735,6 +811,8 @@ Rectangle {
                             visible: parent.hasAccidental
                             text: parent.hasAccidental ? parent.fullNoteName.charAt(1) : ""
                             color: "#ffffff"
+                            style: Text.Outline
+                            styleColor: "#44000000"
                             font.pixelSize: parent.parent.height * 0.45
                             font.bold: true
                             anchors.baseline: parent.children[0].baseline

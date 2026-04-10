@@ -146,22 +146,13 @@ Rectangle {
         }
         
         function onTargetChordChanged(chordName) {
-            root.currentTarget = chordName;
-            root.pentascaleFeedbackList = ["", "", "", "", ""]; // Reset feedback on new target
-            
-            // Re-sync visual keyboard target keys
-            if (appState && appState.chordTrainer) {
-                var tp = appState.chordTrainer.targetPitches;
-                var arr = [];
-                if (tp) {
-                    for (var i = 0; i < tp.length; i++) arr.push(tp[i]);
-                }
-                var hands = appState.chordTrainer.targetHands;
-                var fingers = appState.chordTrainer.targetFingers;
-                visualKeyboard.setTargetKeys(arr, hands, fingers);
-                console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr + ", fingers: " + fingers);
-            }
+            root._syncVisualKeyboard(chordName);
         }
+        
+        function onTargetFingersChanged() {
+            root._syncVisualKeyboard(root.currentTarget);
+        }
+        
         
         function onPentascaleNoteHit(noteIndex, feedbackText) {
             var newFeedback = root.pentascaleFeedbackList.slice(); // Copy array
@@ -173,6 +164,24 @@ Rectangle {
             // Trigger large central feedback
             centralFeedbackText.text = feedbackText;
             centralFeedbackAnim.restart();
+        }
+    }
+
+    function _syncVisualKeyboard(chordName) {
+        root.currentTarget = chordName;
+        root.pentascaleFeedbackList = ["", "", "", "", ""]; // Reset feedback on new target
+        
+        // Re-sync visual keyboard target keys
+        if (appState && appState.chordTrainer) {
+            var tp = appState.chordTrainer.targetPitches;
+            var arr = [];
+            if (tp) {
+                for (var i = 0; i < tp.length; i++) arr.push(tp[i]);
+            }
+            var hands = appState.chordTrainer.targetHands;
+            var fingers = appState.chordTrainer.targetFingers;
+            visualKeyboard.setTargetKeys(arr, hands, fingers);
+            console.log("ChordTrainerView updated -> target: '" + root.currentTarget + "', keys: " + arr + ", fingers: " + fingers);
         }
     }
     
@@ -508,6 +517,24 @@ Rectangle {
                 id: sheetMusicPane
                 anchors.fill: parent
                 targetChordName: root.currentTarget
+            }
+
+            // Professional Visual Hand Guides (Image-based)
+            Components.HandGuide {
+                handType: "left"
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: -125 * mainWindow.uiScale
+                opacity: 1.0
+            }
+
+            Components.HandGuide {
+                handType: "right"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: -125 * mainWindow.uiScale
+                opacity: 1.0
+            }
             
             Text {
                 id: latencyText
@@ -531,7 +558,6 @@ Rectangle {
             
             // (Phase Complete overlay moved to full-pane level)
         } // End of Target display area container
-        }
         
         // Ear Training Quiz View
         Rectangle {

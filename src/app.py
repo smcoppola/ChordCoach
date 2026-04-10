@@ -40,6 +40,7 @@ from logic.services.settings_service import SettingsService # type: ignore
 from logic.services.curriculum_service import CurriculumService # type: ignore
 from logic.services.metronome_service import MetronomeService # type: ignore
 from logic.services.circle_of_fifths_service import CircleOfFifthsService # type: ignore
+from logic.services.music21_service import Music21Service # type: ignore
 from logic.coordinators.app_coordinator import AppCoordinator # type: ignore
 
 class AppState(QObject):
@@ -72,7 +73,10 @@ class AppState(QObject):
         self._metronome = MetronomeService()
         self._metronome.setParent(self)
         
-        self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings)
+        self.music21_service = Music21Service()
+        self.music21_service.setParent(self)
+        
+        self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings, self.music21_service)
         self.chord_trainer.set_metronome(self._metronome)
         self.chord_trainer.setParent(self)
         
@@ -209,6 +213,10 @@ class AppState(QObject):
     @Property(QObject, constant=True)
     def metronome(self):
         return self._metronome
+        
+    @Property(QObject, constant=True)
+    def music21Service(self):
+        return self.music21_service
             
     @Slot(str)
     def fetch_song(self, query: str):

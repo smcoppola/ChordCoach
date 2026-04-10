@@ -7,9 +7,24 @@ Rectangle {
     id: root
     color: "#121212"
     
+    function getColorForGrade(level) {
+        if (!level) return "#666666";
+        var match = level.match(/Grade (\d+)/);
+        if (!match) return "#666666";
+        var g = parseInt(match[1]);
+        
+        // Gradient: Green -> Yellow -> Orange -> Red
+        var colors = [
+            "#4CAF50", "#8BC34A", "#CDDC39", "#FFEB3B", "#FFC107",
+            "#FF9800", "#FF5722", "#F44336", "#D32F2F", "#B71C1C"
+        ];
+        return colors[Math.max(0, Math.min(g-1, 9))];
+    }
+    
     signal startLesson(int minutes)
     signal startReview()
     signal freePractice()
+    signal startSong(string pieceName)
     signal startSpecificDrill(string track, string milestoneId)
 
     layer.enabled: durationPicker.visible
@@ -110,15 +125,13 @@ Rectangle {
             // 4. Free Practice
             ActionCard {
                 title: "Free Play"
-                description: "Just jam. I'll listen and identify what you play. (Coming Soon)"
+                description: "Play along with classic pieces at your own pace."
                 icon: "🎹"
                 accentColor: "#2196F3"
-                enabled: false
-                opacity: 0.4
+                enabled: true
+                opacity: 1.0
                 onClicked: {
-                    if (enabled) {
-                        root.freePractice()
-                    }
+                    songPicker.open()
                 }
             }
         }
@@ -528,6 +541,306 @@ Rectangle {
                             Item { Layout.preferredHeight: 12 } // Section spacer
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ── Song Picker Popup (Hierarchical) ──
+    Popup {
+        id: songPicker
+        anchors.centerIn: parent
+        width: 520 * mainWindow.uiScale
+        height: 600 * mainWindow.uiScale
+        modal: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        
+        property var catalogPath: []
+
+        background: Rectangle {
+            color: "#1c1c1e"
+            radius: 16
+            border.color: "#2196F3"
+            border.width: 1
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -1
+                radius: 16
+                color: "transparent"
+                border.color: "#2196F3"
+                border.width: 2
+                opacity: 0.3
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 16
+            
+            // Bridge the dashboard ID directly into the popup's content scope
+            property var hostDashboard: root
+
+            // Header Section
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                
+                Text {
+                    text: "REPERTOIRE CATALOG"
+                    font.pixelSize: 12 * mainWindow.uiScale
+                    font.bold: true
+                    font.letterSpacing: 4 * mainWindow.uiScale
+                    color: "#666666"
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
+                Text {
+                    text: songPicker.catalogPath.length === 0 ? "Choose Difficulty" : 
+                          songPicker.catalogPath.length === 1 ? "Select Style" :
+                          songPicker.catalogPath.length === 2 ? "Select Composer" : "Pick a Song"
+                    font.pixelSize: 22 * mainWindow.uiScale
+                    font.bold: true
+                    color: "#ffffff"
+                    Layout.alignment: Qt.AlignHCenter
+                }
+            }
+
+            // Navigation / Breadcrumbs
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40 * mainWindow.uiScale
+                visible: songPicker.catalogPath.length > 0
+                
+                Rectangle {
+                    width: 80 * mainWindow.uiScale
+                    height: 30 * mainWindow.uiScale
+                    radius: 15
+                    color: backMouse.containsMouse ? "#333333" : "#2a2a2a"
+                    border.color: "#444444"
+                    
+                    Text {
+                        anchors.centerIn: parent
+                        text: "← BACK"
+                        color: "#2196F3"
+                        font.bold: true
+                        font.pixelSize: 11 * mainWindow.uiScale
+                    }
+                    
+                    MouseArea {
+                        id: backMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                            onClicked: {
+                                var p = songPicker.catalogPath;
+                                songPicker.catalogPath = p.slice(0, -1); // Force fresh reference
+                            }
+                        }
+                    }
+                    
+                    Row {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        // Recently Played Shelf (only at root level)
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: songPicker.catalogPath.length === 0 && appState.music21Service.get_recent_songs().length > 0
+                        spacing: 8
+                        
+                        Text {
+                            text: "RECENTLY PLAYED"
+                            color: "#666666"
+                            font.pixelSize: 10 * mainWindow.uiScale
+                            font.bold: true
+                            Layout.leftMargin: 4
+                        }
+                        
+                        RowLayout {
+                            spacing: 12
+                            Repeater {
+                                model: appState.music21Service.get_recent_songs()
+                                delegate: Rectangle {
+                                    width: 140 * mainWindow.uiScale
+                                    height: 80 * mainWindow.uiScale
+                                    radius: 10
+                                    color: recentMouse.containsMouse ? "#2196F315" : "#1a1a1a"
+                                    border.color: recentMouse.containsMouse ? "#2196F3" : "#333333"
+                                    
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 2
+                                        Text {
+                                            text: modelData.title
+                                            color: "white"
+                                            font.pixelSize: 12 * mainWindow.uiScale
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                        Text {
+                                            text: modelData.artist
+                                            color: "#888888"
+                                            font.pixelSize: 10 * mainWindow.uiScale
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                        Item { Layout.fillHeight: true }
+                                        Rectangle {
+                                            width: 50 * mainWindow.uiScale
+                                            height: 14 * mainWindow.uiScale
+                                            radius: 3
+                                            color: root.getColorForGrade(modelData.level)
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData.level
+                                                font.pixelSize: 8 * mainWindow.uiScale
+                                                color: "white"
+                                                font.bold: true
+                                            }
+                                        }
+                                    }
+                                    
+                                    MouseArea {
+                                        id: recentMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            appState.music21Service.mark_song_played(modelData.id);
+                                            appState.music21Service.songRequested(modelData.id);
+                                            songPicker.close();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Item { Layout.preferredHeight: 15 } // Spacer
+                        
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 1
+                            color: "#333333"
+                        }
+                        
+                        Item { Layout.preferredHeight: 10 } // Spacer
+                    }
+
+                    Repeater {
+                            model: songPicker.catalogPath
+                            delegate: Text {
+                                text: modelData + (index < songPicker.catalogPath.length - 1 ? "  ›  " : "")
+                                color: breadMouse.containsMouse ? "#ffffff" : "#666666"
+                                font.pixelSize: 12 * mainWindow.uiScale
+                                font.bold: index === songPicker.catalogPath.length - 1
+                                
+                                MouseArea {
+                                    id: breadMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        songPicker.catalogPath = songPicker.catalogPath.slice(0, index + 1);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                ColumnLayout {
+                    width: songPicker.width - 48
+                    spacing: 10
+                    
+                    Repeater {
+                        model: (typeof appState !== "undefined" && appState !== null && appState.music21Service) ? appState.music21Service.get_catalog_level(songPicker.catalogPath) : []
+                        delegate: Rectangle {
+                            id: catalogEntry
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: (modelData.isCategory ? 50 : 70) * mainWindow.uiScale
+                            radius: 8
+                            color: entryMouse.containsMouse ? "#1a2a3a" : "#2a2a2a"
+                            border.color: entryMouse.containsMouse ? "#2196F3" : "#444444"
+                            border.width: 1
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 2
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text {
+                                        text: (!!modelData.isCategory ? "📁  " : "🎵  ") + (modelData.title || modelData.id || "")
+                                        color: "#ffffff"
+                                        font.pixelSize: (!!modelData.isCategory ? 16 : 15) * mainWindow.uiScale
+                                        font.bold: true
+                                        Layout.fillWidth: true
+                                    }
+                                    
+                                    // Only show level tag for songs
+                                    Rectangle {
+                                        visible: !modelData.isCategory
+                                        width: 75 * mainWindow.uiScale
+                                        height: 22 * mainWindow.uiScale
+                                        radius: 4
+                                        color: root.getColorForGrade(modelData.level)
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: modelData.level || ""
+                                            color: "white"
+                                            font.pixelSize: 10 * mainWindow.uiScale
+                                            font.bold: true
+                                        }
+                                    }
+                                    
+                                    Text {
+                                        visible: !!modelData.isCategory
+                                        text: "→"
+                                        color: "#444444"
+                                        font.pixelSize: 18 * mainWindow.uiScale
+                                    }
+                                }
+
+                                Text {
+                                    visible: !modelData.isCategory
+                                    text: modelData.artist || ""
+                                    color: "#888888"
+                                    font.pixelSize: 12 * mainWindow.uiScale
+                                }
+                            }
+
+                            MouseArea {
+                                id: entryMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (!!modelData.isCategory) {
+                                        var p = songPicker.catalogPath;
+                                        songPicker.catalogPath = p.concat([modelData.id]); // Force fresh reference
+                                    } else {
+                                        console.log("Dashboard: Requesting song selection: " + modelData.id);
+                                        // Emit a global signal via appState to bypass all QML scoping issues
+                                        if (typeof appState !== "undefined" && appState && appState.music21Service) {
+                                            appState.music21Service.mark_song_played(modelData.id);
+                                            appState.music21Service.songRequested(modelData.id);
+                                        }
+                                        songPicker.close();
+                                        songPicker.catalogPath = []; // Reset for next time
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Bottom spacer
+                    Item { Layout.preferredHeight: 20 }
                 }
             }
         }

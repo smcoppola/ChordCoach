@@ -45,12 +45,15 @@ class ChordTrainerService(QObject):
     scrollBeatChanged = Signal(float)
     scrollingNotesChanged = Signal()
     scrollBpmChanged = Signal()
+    songTitleChanged = Signal()
+    songKeyChanged = Signal()
 
-    def __init__(self, db_manager, curriculum_service=None, settings_manager=None):
+    def __init__(self, db_manager, curriculum_service=None, settings_manager=None, music21_service=None):
         super().__init__()
         self.db = db_manager
         self.curriculum = curriculum_service
         self.settings = settings_manager
+        self.music21 = music21_service
 
         # State Machine
         self._state = LessonState.IDLE
@@ -83,6 +86,8 @@ class ChordTrainerService(QObject):
         self._scroll_beat: float = 0.0
         self._scrolling_notes: list = []
         self._scroll_bpm: int = 0
+        self._song_title: str = ""
+        self._song_key: str = ""
 
         # Dashboard and Performance Review
         self._struggled_items: List[Dict] = []
@@ -299,6 +304,14 @@ class ChordTrainerService(QObject):
     def scrollBpm(self) -> int:
         return self._scroll_bpm
 
+    @Property(str, notify=songTitleChanged)
+    def songTitle(self) -> str:
+        return self._song_title
+
+    @Property(str, notify=songKeyChanged)
+    def songKey(self) -> str:
+        return self._song_key
+
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:
         return self._pedal_type
@@ -342,6 +355,14 @@ class ChordTrainerService(QObject):
     @Property(bool, notify=lessonStateChanged)
     def isLessonMode(self) -> bool:
         return self._is_lesson_mode
+
+    @Property(str, notify=lessonStateChanged)
+    def exerciseType(self) -> str:
+        return self._exercise_type
+
+    @Property(float, notify=loadingStatusChanged)
+    def estimatedGenerationMs(self) -> float:
+        return self._estimated_gen_ms
 
     @Property(bool, notify=isCircleOfFifthsModeChanged)
     def isCircleOfFifthsMode(self) -> bool:
@@ -670,6 +691,41 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 "{step_scripts[step]}"
 </SYSTEM_DIRECTIVE_OVERRIDE>"""
         return voice_prompt
+
+    @Slot(str)
+    def start_song(self, piece_name: str):
+        """Starts a free-play song exercise, skipping the AI coach."""
+        from datetime import datetime
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: start_song('{piece_name}') invoked")
+        
+        # Avoid full stop_session() if possible to prevent False->True toggle on isActive
+        # instead just reset the song-specific state
+        if self.metronome:
+            self.metronome.stop()
+            
+        self._target_chord_name = ""
+        self._target_intervals.clear()
+        self._target_pitches.clear()
+        self._target_hands.clear()
+        self._pedal_type = ""
+        self._is_holding = False
+        self._pending_exercise = None
+        self._consecutive_successes = 0
+        
+        self._is_lesson_mode = False
+        self._is_lesson_complete = False
+        self._set_state(LessonState.LOADING)
+        
+        self._active_pitches.clear()
+        self._session_stats.clear()
+        
+        self._apply_step({
+            "exercise_type": "song_application",
+            "piece_name": piece_name
+        })
+        
+        self._set_state(LessonState.USER_PLAYING)
+        print(f"ChordTrainer: start_song('{piece_name}') successfully initialized.")
 
     @Slot(dict)
     def receive_exercise(self, exercise_data: dict):
@@ -1132,6 +1188,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._setup_sustain_target(chord_data)
         elif exercise_type == "steady_pulse":
             self._setup_steady_pulse_target(chord_data)
+        elif exercise_type == "song_application":
+            self._setup_song_target(chord_data)
         else:
             # Original chord behavior
             root_idx = chord_data.get("root_idx", 0)
@@ -1330,6 +1388,73 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         # Set up the first chord in the progression
         self._advance_progression_chord()
 
+    def _setup_song_target(self, chord_data):
+        """Sets up a Music21 song playback exercise."""
+        piece_name = chord_data.get("piece_name", "bach/bwv1.6.mxl")
+        
+        # Load from the new service
+        song_data = self.music21.load_song_as_steps(piece_name)
+        self._song_steps = song_data.get("steps", [])
+        
+        if not self._song_steps:
+            print(f"ChordTrainer: Failed to load {piece_name}, falling back to single chord")
+            self._exercise_type = "chord"
+            self._song_title = ""
+            self._song_key = ""
+            self.songTitleChanged.emit()
+            self.songKeyChanged.emit()
+            self._setup_target(0, "Major", {0, 4, 7}, 4)
+            return
+            
+        self._exercise_type = "song_application"
+        self._song_title = song_data.get("title", "Unknown Piece")
+        self._song_key = song_data.get("key", "Unknown Key")
+        self.songTitleChanged.emit()
+        self.songKeyChanged.emit()
+        
+        self._song_index = 0
+        self._target_hold_ms = 0
+        self._required_hold_ms = 0
+        self.lessonStateChanged.emit()
+
+        # Build scrolling notes for the whole song
+        sn = []
+        for step in self._song_steps:
+            offset = step['offset']
+            duration = step['duration']
+            pitches = step['pitches']
+            hands = step['hands']
+            fingers = step.get('fingers', [1] * len(pitches))
+            
+            for i, p in enumerate(pitches):
+                hand_tag = hands[i] if i < len(hands) else "right"
+                f_num = fingers[i] if i < len(fingers) else 1
+                
+                sn.append({
+                    "pitch": p,
+                    "hand": "R" if hand_tag == "right" else "L",
+                    "finger": f_num,
+                    "start_beat": float(offset),
+                    "duration_beats": float(duration)
+                })
+
+        self._scrolling_notes = sn
+        self.scrollingNotesChanged.emit()
+        
+        self._scroll_beat = 0.0
+        self.scrollBeatChanged.emit(self._scroll_beat)
+        
+        # User-driven pacing (no metronome)
+        self._scroll_bpm = 0
+        self.scrollBpmChanged.emit()
+
+        # Target chord name gives context
+        self._target_chord_name = f"Song: {self._song_title}"
+        self.targetChordChanged.emit(self._target_chord_name)
+
+        # Set up the first step
+        self._advance_song_chord()
+
     def _setup_listen_target(self, chord_data):
         """Sets up an ear training exercise: plays a chord, user identifies it."""
         root_idx = int(chord_data.get("root_idx", 0))
@@ -1477,13 +1602,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             # Optionally replay the sound as feedback
             self.replay_preview()
 
-    def _calculate_fingerings(self, pitches: List[int], hand: str, inversion: int = 0) -> List[int]:
+    def _calculate_fingerings(self, pitches: List[int], hand: str, inversion: int = 0, base_pitch: int = None) -> List[int]:
         """Use music21 to represent the chord/note and assign pedagogical fingerings."""
         if not pitches:
             return []
             
         # ALWAYS sort pitches low-to-high before analysis!
-        # This ensures the assigned fingerings match the canonical pianistic view.
         pitches = sorted(list(pitches))
         
         # Create a music21 Chord or Note
@@ -1508,8 +1632,41 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 else: # Root or 1st inversion (5-3-1)
                     assigned_fingers = [5, 3, 1]
         elif len(pitches) == 1:
-            # Single notes: usually thumb for RH, pinky for LH
-            assigned_fingers = [1 if hand == "right" else 5]
+            # Single notes: Use Adaptive Diatonic mapping
+            is_right = (hand == "right")
+            p = pitches[0]
+            
+            # If no base_pitch provided, default to Middle C or an octave below
+            if base_pitch is None:
+                base_pitch = 60 if is_right else 48
+            
+            # Simple diatonic mapping based on semitone offsets
+            # This handles both black and white keys by mapping chromatic neighbors to the same finger
+            offset = p - base_pitch
+            
+            if is_right:
+                # RH: Base(0)=1, Base+2(2)=2, Base+4(4)=3, Base+5(5)=4, Base+7(7)=5
+                mapping = {
+                    -2: 1, -1: 1, 0: 1, 
+                    1: 1, 2: 2, 3: 2, 
+                    4: 3, 5: 4, 6: 4, 
+                    7: 5, 8: 5
+                }
+                # Default case: if outside the 5-finger span, clamp to 1 or 5
+                f = mapping.get(offset, 1 if offset < 0 else 5)
+            else:
+                # LH: Base(0)=1, Base-2(-2)=2, Base-3(-4)=3, Base-5(-5)=4, Base-7(-7)=5
+                # Offset mapping for LH (relative to pinky usually, but here base is often the 'top' or 'thumb' note)
+                # Actually, in EvaluationService, LH Base 48 (C3) -> finger 1. Offset 0=1, Offset -1=2...
+                mapping = {
+                    0: 1, 1: 1,
+                    -1: 2, -2: 2,
+                    -3: 3, -4: 3,
+                    -5: 4, -6: 4,
+                    -7: 5, -8: 5
+                }
+                f = mapping.get(offset, 1 if offset > 0 else 5)
+            assigned_fingers = [int(f)]
         elif len(pitches) == 5:
             # Pentascales
             if hand == "right":
@@ -1523,19 +1680,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             else:
                 assigned_fingers = [max(1, 5 - (i % 5)) for i in range(len(pitches))]
 
-        # Attach fingerings to music21 object as articulations (as requested)
-        try:
-            if isinstance(m21_obj, music21.chord.Chord):
-                for i, f_num in enumerate(assigned_fingers):
-                    if i < len(m21_obj.notes):
-                        f = music21.articulations.Fingering(f_num)
-                        m21_obj.notes[i].articulations.append(f)
-            else:
-                f = music21.articulations.Fingering(assigned_fingers[0])
-                m21_obj.articulations.append(f)
-        except Exception as e:
-            print(f"ChordTrainer: music21 fingering attachment failed: {e}")
-            
         return assigned_fingers
 
     def _setup_target(self, root_idx, chord_type_name, intervals, octave, preview_chord=False, suppress_signal=False):
@@ -2007,6 +2151,43 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self.inputReady.emit()
         self._check_input()
 
+    def _advance_song_chord(self):
+        """Sets up the current grouping of notes for a song."""
+        if self._song_index >= len(self._song_steps):
+            # Song complete
+            return
+            
+        step = self._song_steps[self._song_index]
+        self._target_pitches = step['pitches']
+        self._target_hands = step['hands']
+        
+        # Pull fingers from the same source as scrolling notes to guarantee sync
+        self._target_fingers = step.get('fingers', [1] * len(self._target_pitches))
+        self.targetFingersChanged.emit()
+        
+        # Exact match required for songs, but intervals are meaningless here
+        self._target_intervals = set()
+        
+        # Advance the playhead in the UI
+        self._scroll_beat = float(step['offset'])
+        self.scrollBeatChanged.emit(self._scroll_beat)
+        
+        # Reset tracking state
+        self._hold_progress = 0.0
+        self._is_holding = False
+        self._waiting_for_release = False
+        self._required_hold_ms = 0
+        self._hold_tick_timer.stop()
+        self._prompt_time = time.time()
+        self._wrong_notes_count = 0
+        self._first_note_time = 0.0
+        self._is_simultaneous = False
+        
+        print(f"ChordTrainer: Song step {self._song_index + 1}/{len(self._song_steps)} at offset {self._scroll_beat}, pitches={self._target_pitches}")
+        self.targetChordChanged.emit(self._target_chord_name)
+        self.inputReady.emit()
+        self._check_input()
+
     @Slot(int, bool)
     def handle_midi_note(self, pitch: int, is_on: bool):
         """Called by AppState when a MIDI note event occurs."""
@@ -2077,6 +2258,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                         pass
                     else:
                         QTimer.singleShot(700, self._next_chord)
+                elif self._exercise_type == "song_application":
+                    self._advance_song_chord()
                 else:
                     QTimer.singleShot(700, self._next_chord)
             return
@@ -2085,9 +2268,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     def _check_input(self):
         """Routes input validation based on exercise type."""
-        if self._exercise_type == "progression":
-            print(f"[PROG DEBUG] _check_input called. exercise_type={self._exercise_type} "
-                  f"progression_index={self._progression_index}/{len(self._progression_steps) if self._progression_steps else 0} "
+        if self._exercise_type in ["progression", "song_application"]:
+            print(f"[_check_input] type={self._exercise_type} "
                   f"active_pitches={sorted(self._active_pitches)} target_pitches={sorted(self._target_pitches) if self._target_pitches else []}")
         if self._exercise_type == "listen":
             # Listen exercises are answered via QML UI buttons, not MIDI keyboard
@@ -2407,6 +2589,19 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 self._advance_progression_chord()
                 return
             # else: progression complete, fall through to _next_chord
+
+        if self._exercise_type == "song_application":
+            self._song_index += 1
+            if self._song_index < len(self._song_steps):
+                target_chord_str = f"{self._target_chord_name} (step {self._song_index}/{len(self._song_steps)})"
+                # Check for release requirement if coming from a chord
+                if len(self._active_pitches) > 0:
+                     self._waiting_for_release = True
+                else:
+                     self._advance_song_chord()
+                return
+            else:
+                self._ignore_midi_until = time.time() + 1.0 # 1s cooldown
 
         if self._exercise_type == "listen":
             # For listening quizzes, the user answers via UI, not keys. Pause briefly then move on.

@@ -137,10 +137,10 @@ Rectangle {
             }
             var sortedKeys = arr.sort((a, b) => a - b);
             
-            ctx.lineWidth = 2 * mainWindow.uiScale;
-            ctx.strokeStyle = "#4CAF50"; // Green for the arch
-            ctx.fillStyle = "#FFFFFF";
-            ctx.font = "bold " + Math.round(14 * mainWindow.uiScale) + "px sans-serif";
+            ctx.lineWidth = 1.5 * mainWindow.uiScale;
+            ctx.strokeStyle = "#4CAF5080"; // Semi-transparent green
+            ctx.fillStyle = "#A0A0A0"; // Subtle gray for math text
+            ctx.font = Math.round(12 * mainWindow.uiScale) + "px sans-serif";
             ctx.textAlign = "center";
             
             for (var i = 0; i < sortedKeys.length - 1; i++) {
