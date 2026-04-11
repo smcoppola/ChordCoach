@@ -21,8 +21,15 @@ from typing import cast
 import core.bootstrap as bootstrap
 project_root, hw_bin_path, user_data_path, is_frozen = bootstrap.setup_env()
 
+# --- Persistent Logging ---
+# Redirect stdout/stderr to a log file so frozen macOS builds produce
+# inspectable output even without a terminal attached.
+bootstrap.setup_logging(user_data_path)
+print(f"ChordCoach starting — root={project_root}, frozen={is_frozen}")
+
 try:
     import chordcoach_hw # type: ignore
+    print("chordcoach_hw C++ extension loaded successfully.")
 except ImportError as e:
     print(f"Warning: chordcoach_hw extension not found or failed to load: {e}")
     chordcoach_hw = None
@@ -124,10 +131,25 @@ class AppState(QObject):
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
         self.chord_trainer.midiOutRequested.connect(self.hw_service.play_chord_preview)
         
-        # Initialize the hardware layer
+        # NOTE: Hardware initialisation and AI connection are deliberately
+        # deferred until after the QML engine has loaded the UI.  On macOS,
+        # calling CoreMIDI / CoreAudio APIs before the run-loop is active can
+        # cause the application to hang on launch (the Dock icon bounces
+        # forever).  See deferred_start() below.
+        print("AppState.__init__ complete — hardware init deferred.")
+
+    @Slot()
+    def deferred_start(self):
+        """Called ~100 ms after the QML engine has loaded the UI.
+
+        This ensures the Qt event loop is running before we touch native
+        hardware APIs (CoreMIDI, CoreAudio, PortAudio) which on macOS
+        require an active run-loop to function correctly.
+        """
+        print("AppState.deferred_start: Initialising hardware…")
         self.hw_service.initialize()
-                
-        # Automatically connect to Gemini AI Coach on startup
+
+        print("AppState.deferred_start: Connecting to Gemini AI Coach…")
         context = self.curriculum.get_curriculum_context()
         self.coordinator._sync_coach_settings()
         self._gemini.connect_service(
@@ -136,6 +158,7 @@ class AppState(QObject):
             brevity=cast(str, self.settings.coachBrevity),
             personality=cast(str, self.settings.coachPersonality)
         )
+        print("AppState.deferred_start: Done.")
 
     @Slot(bool)
     def _on_sustain_pedal_changed_bridge(self, is_down: bool):
@@ -224,9 +247,11 @@ class AppState(QObject):
         self.crawler.search_and_download(query)
 
 def main():
+    print("main(): Initialising QtWebEngine…")
     QtWebEngineQuick.initialize()
     app = QGuiApplication(sys.argv)
-    
+    print("main(): QGuiApplication created.")
+
     # Register bundled fonts so QML can render them natively without warnings
     font_dir = project_root / ("src/resources/fonts" if not is_frozen else "resources/fonts")
     if font_dir.exists():
@@ -235,9 +260,10 @@ def main():
 
     engine = QQmlApplicationEngine()
 
+    print("main(): Creating AppState…")
     app_state = AppState()
     engine.rootContext().setContextProperty("appState", app_state)
-    
+
     # Add UI components path
     engine.addImportPath(str(project_root / "src" / "ui" if not is_frozen else project_root / "ui"))
 
@@ -245,11 +271,23 @@ def main():
         qml_file = project_root / "ui" / "main.qml"
     else:
         qml_file = project_root / "src" / "ui" / "main.qml"
+
+    print(f"main(): Loading QML from {qml_file}…")
     engine.load(os.fspath(qml_file))
 
     if not engine.rootObjects():
+        print("main(): FATAL — QML engine produced no root objects!")
         sys.exit(-1)
 
+    # ── Deferred hardware & AI initialisation ──
+    # Schedule the heavy hardware/network init to run AFTER the event loop
+    # has started and the UI window is on screen.  This prevents the macOS
+    # launch hang caused by CoreMIDI/CoreAudio calls before the run-loop
+    # is active.
+    print("main(): Scheduling deferred_start in 100 ms…")
+    QTimer.singleShot(100, app_state.deferred_start)
+
+    print("main(): Entering event loop.")
     sys.exit(app.exec())
 
 if __name__ == "__main__":

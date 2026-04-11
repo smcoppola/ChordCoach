@@ -5,7 +5,90 @@ before Qt and other heavy libraries are initialized.
 """
 import sys
 import os
+import io
 from pathlib import Path
+from datetime import datetime
+
+
+class _TeeStream:
+    """Writes to both a file and the original stream (e.g. console).
+    Ensures that all print() output is captured to a log file even when
+    the application is running as a frozen macOS .app bundle with no terminal.
+    """
+    def __init__(self, file_stream, original_stream):
+        self._file = file_stream
+        self._original = original_stream
+
+    def write(self, data):
+        try:
+            self._file.write(data)
+            self._file.flush()
+        except Exception:
+            pass
+        try:
+            if self._original and not self._original.closed:
+                self._original.write(data)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self._file.flush()
+        except Exception:
+            pass
+        try:
+            if self._original and not self._original.closed:
+                self._original.flush()
+        except Exception:
+            pass
+
+    # Some libraries check for encoding / fileno
+    @property
+    def encoding(self):
+        return getattr(self._original, 'encoding', 'utf-8')
+
+    def fileno(self):
+        return self._file.fileno()
+
+    def isatty(self):
+        return False
+
+
+def setup_logging(user_data_path: Path):
+    """Redirect stdout and stderr to a persistent log file.
+    
+    The log file is written to ``<user_data_path>/logs/chordcoach.log``.
+    Previous log contents are preserved with a session separator so
+    multiple launches can be reviewed in a single file.  The file is
+    capped at ~2 MB by truncating old content on startup.
+    """
+    log_dir = user_data_path / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "chordcoach.log"
+
+    # Cap the log file at ~2 MB to prevent unbounded growth
+    try:
+        if log_file.exists() and log_file.stat().st_size > 2 * 1024 * 1024:
+            # Keep only the last ~500 KB
+            content = log_file.read_text(encoding="utf-8", errors="replace")
+            log_file.write_text(content[-500_000:], encoding="utf-8")
+    except Exception:
+        pass
+
+    try:
+        fh = open(log_file, "a", encoding="utf-8", errors="replace")
+        fh.write(f"\n{'='*60}\n")
+        fh.write(f"  ChordCoach Session — {datetime.now().isoformat()}\n")
+        fh.write(f"  Platform: {sys.platform}  Frozen: {getattr(sys, 'frozen', False)}\n")
+        fh.write(f"  Python: {sys.version}\n")
+        fh.write(f"{'='*60}\n\n")
+
+        sys.stdout = _TeeStream(fh, sys.stdout)  # type: ignore[assignment]
+        sys.stderr = _TeeStream(fh, sys.stderr)  # type: ignore[assignment]
+        print(f"Logging initialised → {log_file}")
+    except Exception as e:
+        # If we can't open the log, at least don't crash
+        print(f"Warning: Could not set up file logging: {e}")
 
 def _native_lib_name(base: str) -> str:
     """Return the platform-specific shared library filename."""

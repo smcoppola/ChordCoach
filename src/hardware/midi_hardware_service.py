@@ -94,13 +94,17 @@ class MidiHardwareService(QObject):
         try:
             # We must instantiate a fresh MidiHandler on every poll to scan the system
             # for newly connected devices. If we reuse an old one, it might cache old ports.
+            print("MidiHardwareService: Creating MidiHandler probe…")
             probe_handler = None
             try:
                 probe_handler = self.hw_module.MidiHandler()
+                print("MidiHardwareService: MidiHandler probe created successfully.")
             except Exception as e:
                 print(f"MidiHardwareService: Failed to create primary MidiHandler probe: {e}")
             
+            print("MidiHardwareService: Querying port names…")
             ports = probe_handler.getPortNames() if probe_handler else []
+            print(f"MidiHardwareService: Found {len(ports)} input port(s): {ports}")
             
             # Fallback to low-level probe if primary fails
             if not ports and self._ll_midi_out:
@@ -110,7 +114,7 @@ class MidiHardwareService(QObject):
 
             if not ports:
                 if not self._polling_timer.isActive():
-                    print("MidiHardwareService: No MIDI ports found. Starting background polling...")
+                    print("MidiHardwareService: No MIDI ports found. Starting background polling…")
                     self._polling_timer.start(2000) # Poll every 2 seconds
                 
                 if self.is_connected:
@@ -127,10 +131,14 @@ class MidiHardwareService(QObject):
 
             # Re-instantiating for the actual listener
             try:
+                print("MidiHardwareService: Creating listener MidiHandler…")
                 m_handler = self.hw_module.MidiHandler()
+                print("MidiHardwareService: Opening MIDI input port 0…")
                 m_handler.openPort(0) # Default to first input port
+                print("MidiHardwareService: Setting Python callback…")
                 m_handler.setCallback(self._on_raw_midi_data)
                 self.hw_midi_in = m_handler
+                print("MidiHardwareService: MIDI input listener active.")
             except Exception as e:
                 print(f"MidiHardwareService: Failed to open MIDI port: {e}")
                 return False

@@ -32,6 +32,7 @@ class ChordTrainerService(QObject):
     metronomeTick = Signal()
     inputReady = Signal()                 # Emitted exactly when a drill is ready for user input
     waitingForUserContinueChanged = Signal(bool)
+    statusMessageRequested = Signal(str, str) # type, message (type: "info", "error", "success")
 
     # Single-model architecture signals
     requestLessonStart = Signal(str)    # Emitted with the full lesson prompt for the AI coach
@@ -1397,13 +1398,16 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._song_steps = song_data.get("steps", [])
         
         if not self._song_steps:
-            print(f"ChordTrainer: Failed to load {piece_name}, falling back to single chord")
+            print(f"ChordTrainer: Failed to load {piece_name}")
+            self.statusMessageRequested.emit("error", f"Failed to load piece: {piece_name}")
+            
+            # Reset to IDLE so the user can try another song
             self._exercise_type = "chord"
             self._song_title = ""
             self._song_key = ""
             self.songTitleChanged.emit()
             self.songKeyChanged.emit()
-            self._setup_target(0, "Major", {0, 4, 7}, 4)
+            self._set_state(LessonState.IDLE)
             return
             
         self._exercise_type = "song_application"

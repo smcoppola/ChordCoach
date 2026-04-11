@@ -154,7 +154,16 @@ def index_corpus():
         title = re.sub(r'Bwv(\d+)\.(\d+)', r'BWV \1 No. \2', title)
         title = re.sub(r'Op(\d+)\.(\d+)', r'Op. \1 No. \2', title)
         
-        id_str = f"{collection}/{os.path.basename(path_str)}"
+        # FIX: Preserve subfolder structure in the ID. 
+        # Previously we used os.path.basename, which broke pieces in subdirectories like corelli/opus3no1/1grave.xml
+        # We find the part of the path after the collection folder.
+        id_str = f"{collection}/{os.path.basename(path_str)}" # Fallback
+        
+        # Pattern looks for 'corpus/collection_name/path_to_file'
+        # Note: path_str has been standardized to use '/'
+        match = re.search(f"corpus/{collection}/(.*)", path_str)
+        if match:
+            id_str = f"{collection}/{match.group(1)}"
         
         # Construct the hierarchy: Grade X > Genre > Composer > Piece
         if genre not in catalog[difficulty_label]:

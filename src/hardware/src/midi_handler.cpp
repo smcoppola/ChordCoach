@@ -14,8 +14,11 @@ public:
       midiIn = new RtMidiIn();
       std::cout << "MidiHandler initialized with RtMidi" << std::endl;
 
-      // Register our static C++ wrapper callback unconditionally
-      midiIn->setCallback(&MidiHandler::midiInputCallback, this);
+      // NOTE: We deliberately do NOT register the callback here.
+      // RtMidi starts an internal input thread when setCallback() is called,
+      // and on macOS (CoreMIDI) this can deadlock if no run-loop is active
+      // or if the port hasn't been opened yet.  The callback is registered
+      // in openPort() after the port is successfully opened.
 
     } catch (RtMidiError &error) {
       error.printMessage();
@@ -29,6 +32,11 @@ public:
       midiIn->openPort(port);
       std::cout << "Opened MIDI Input port: " << midiIn->getPortName(port)
                 << std::endl;
+
+      // Register the C++ wrapper callback now that the port is open.
+      // This starts RtMidi's internal input thread.
+      midiIn->setCallback(&MidiHandler::midiInputCallback, this);
+      std::cout << "MIDI input callback registered." << std::endl;
     }
   }
 

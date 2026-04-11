@@ -10,19 +10,14 @@ namespace py = pybind11;
 
 class AudioHandler {
 public:
-  AudioHandler() {
-    PaError err = Pa_Initialize();
-    if (err != paNoError) {
-      std::cerr << "PortAudio initialization error: " << Pa_GetErrorText(err)
-                << std::endl;
-    } else {
-      std::cout << "AudioHandler initialized with PortAudio" << std::endl;
-    }
-  }
+  AudioHandler() : stream(nullptr), initialized(false) {}
 
   ~AudioHandler() {
     stopCapture();
-    Pa_Terminate();
+    if (initialized) {
+      Pa_Terminate();
+      std::cout << "PortAudio terminated" << std::endl;
+    }
   }
 
   void setCallback(std::function<void(std::vector<float>)> callback) {
@@ -33,6 +28,17 @@ public:
     if (stream) {
       std::cout << "Audio capture already running." << std::endl;
       return;
+    }
+
+    if (!initialized) {
+      PaError err = Pa_Initialize();
+      if (err != paNoError) {
+        std::cerr << "PortAudio initialization error: " << Pa_GetErrorText(err)
+                  << std::endl;
+        return;
+      }
+      initialized = true;
+      std::cout << "AudioHandler: PortAudio lazy-initialized." << std::endl;
     }
 
     PaStreamParameters inputParameters;
@@ -104,5 +110,6 @@ private:
   }
 
   PaStream *stream = nullptr;
+  bool initialized = false;
   std::function<void(std::vector<float>)> pyCallback;
 };

@@ -165,6 +165,13 @@ Rectangle {
             centralFeedbackText.text = feedbackText;
             centralFeedbackAnim.restart();
         }
+
+        function onStatusMessageRequested(type, message) {
+            if (type === "error") {
+                errorToastText.text = message;
+                errorToastAnim.restart();
+            }
+        }
     }
 
     function _syncVisualKeyboard(chordName) {
@@ -1011,6 +1018,62 @@ Rectangle {
             NumberAnimation { target: centralFeedbackText; property: "scale"; from: 1.5; to: 1.0; duration: 200; easing.type: Easing.OutBack }
             PauseAnimation { duration: 400 }
             NumberAnimation { target: centralFeedbackText; property: "opacity"; to: 0; duration: 300 }
+        }
+    }
+
+    // --- Error Toast Notification ---
+    Rectangle {
+        id: errorToast
+        anchors.top: parent.top
+        anchors.topMargin: 20 * mainWindow.uiScale
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(600 * mainWindow.uiScale, parent.width * 0.8)
+        height: 60 * mainWindow.uiScale
+        radius: 8 * mainWindow.uiScale
+        color: "#f44336"
+        opacity: 0.0
+        z: 999
+        
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 15 * mainWindow.uiScale
+            spacing: 12 * mainWindow.uiScale
+            
+            Text {
+                text: "⚠"
+                color: "white"
+                font.pixelSize: 24 * mainWindow.uiScale
+                font.bold: true
+            }
+            
+            Text {
+                id: errorToastText
+                Layout.fillWidth: true
+                text: ""
+                color: "white"
+                font.pixelSize: 16 * mainWindow.uiScale
+                font.bold: true
+                wrapMode: Text.WordWrap
+            }
+        }
+        
+        SequentialAnimation on opacity {
+            id: errorToastAnim
+            running: false
+            NumberAnimation { to: 1.0; duration: 200; easing.type: Easing.OutQuad }
+            PauseAnimation { duration: 4000 }
+            NumberAnimation { to: 0.0; duration: 500; easing.type: Easing.InQuad }
+        }
+        
+        // Shadow for depth
+        layer.enabled: true
+        layer.effect: DropShadow {
+            transparentBorder: true
+            horizontalOffset: 0
+            verticalOffset: 4 * mainWindow.uiScale
+            radius: 12 * mainWindow.uiScale
+            samples: 25
+            color: "#80000000"
         }
     }
 }
