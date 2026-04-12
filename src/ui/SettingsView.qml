@@ -191,10 +191,95 @@ Rectangle {
                 }
 
                 Text {
-                    text: "Changes take effect on next app restart."
+                    text: "Hardware changes take effect on next app restart."
                     color: "#666666"
                     font.pixelSize: 11 * mainWindow.uiScale
                     font.italic: true
+                }
+            }
+        }
+
+        // Notation & Visualization Section
+        GroupBox {
+            title: "Notation & Visualization"
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 15 * mainWindow.uiScale
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 15 * mainWindow.uiScale
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "Notation Style"
+                            color: "#cccccc"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            font.bold: true
+                        }
+                        Text {
+                            text: "Switch between modern 'Enhanced' blocks and 'Traditional' note heads."
+                            color: "#888888"
+                            font.pixelSize: 11 * mainWindow.uiScale
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    ComboBox {
+                        id: notationCombo
+                        Layout.preferredWidth: 150 * mainWindow.uiScale
+                        model: ["Enhanced", "Traditional"]
+                        currentIndex: {
+                            var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.notationStyle : "enhanced";
+                            return v === "traditional" ? 1 : 0;
+                        }
+                        onActivated: {
+                            if (typeof appState !== "undefined" && appState !== null && appState.settingsService) {
+                                appState.settingsService.notationStyle = (index === 1 ? "traditional" : "enhanced");
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 15 * mainWindow.uiScale
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "Notation Colors"
+                            color: "#cccccc"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            font.bold: true
+                        }
+                        Text {
+                            text: "Choose between pedagogical finger colors or Monochrome (Black & White)."
+                            color: "#888888"
+                            font.pixelSize: 11 * mainWindow.uiScale
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    ComboBox {
+                        id: colorCombo
+                        Layout.preferredWidth: 150 * mainWindow.uiScale
+                        model: ["Pedagogical", "Monochrome"]
+                        currentIndex: {
+                            var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.notationColorMode : "pedagogical";
+                            return v === "monochrome" ? 1 : 0;
+                        }
+                        onActivated: {
+                            if (typeof appState !== "undefined" && appState !== null && appState.settingsService) {
+                                appState.settingsService.notationColorMode = (index === 1 ? "monochrome" : "pedagogical");
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -255,8 +255,10 @@ def main():
     # Register bundled fonts so QML can render them natively without warnings
     font_dir = project_root / ("src/resources/fonts" if not is_frozen else "resources/fonts")
     if font_dir.exists():
-        for font_file in font_dir.glob("*.ttf"):
-            QFontDatabase.addApplicationFont(os.fspath(font_file))
+        for font_ext in ["*.ttf", "*.otf", "*.woff2"]:
+            for font_file in font_dir.glob(font_ext):
+                print(f"main(): Registering font {font_file.name}")
+                QFontDatabase.addApplicationFont(os.fspath(font_file))
 
     engine = QQmlApplicationEngine()
 

@@ -34,12 +34,17 @@ ApplicationWindow {
 
         // 1. DASHBOARD SIDEBAR
         LeftSidebar {
-            Layout.preferredWidth: 260 * mainWindow.uiScale
+            id: sidebar
+            Layout.preferredWidth: sidebar.collapsed ? 64 * mainWindow.uiScale : 260 * mainWindow.uiScale
             Layout.fillHeight: true
             onOpenSettings: mainWindow.showSettings = true
             onGoHome: centerWorkspace.goHome()
             onOpenOnboarding: {
                 onboardingOverlay.show();
+            }
+            
+            Behavior on Layout.preferredWidth {
+                NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
             }
         }
 

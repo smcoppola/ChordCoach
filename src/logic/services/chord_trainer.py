@@ -2153,7 +2153,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         print(f"ChordTrainer: Progression chord {self._progression_index + 1}/{len(self._progression_steps)}: {self._target_chord_name}")
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
         self.inputReady.emit()
-        self._check_input()
 
     def _advance_song_chord(self):
         """Sets up the current grouping of notes for a song."""
@@ -2190,7 +2189,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         print(f"ChordTrainer: Song step {self._song_index + 1}/{len(self._song_steps)} at offset {self._scroll_beat}, pitches={self._target_pitches}")
         self.targetChordChanged.emit(self._target_chord_name)
         self.inputReady.emit()
-        self._check_input()
 
     @Slot(int, bool)
     def handle_midi_note(self, pitch: int, is_on: bool):
@@ -2597,12 +2595,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         if self._exercise_type == "song_application":
             self._song_index += 1
             if self._song_index < len(self._song_steps):
-                target_chord_str = f"{self._target_chord_name} (step {self._song_index}/{len(self._song_steps)})"
-                # Check for release requirement if coming from a chord
-                if len(self._active_pitches) > 0:
-                     self._waiting_for_release = True
-                else:
-                     self._advance_song_chord()
+                print("ChordTrainer: Advancing song immediately (Legato-Friendly)")
+                self._advance_song_chord()
                 return
             else:
                 self._ignore_midi_until = time.time() + 1.0 # 1s cooldown
@@ -2611,13 +2605,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             # For listening quizzes, the user answers via UI, not keys. Pause briefly then move on.
             QTimer.singleShot(700, self._next_chord)
         else:
-            if len(self._active_pitches) == 0:
-                print("ChordTrainer: All keys already released. Advancing.")
-                self._waiting_for_release = False
-                QTimer.singleShot(700, self._next_chord)
-            else:
-                print("ChordTrainer: Waiting for user to release all keys...")
-                self._waiting_for_release = True
+            # Fluid advancement: don't wait for release, just short delay for the "SUCCESS" to register visually
+            self._waiting_for_release = False
+            QTimer.singleShot(300, self._next_chord)
 
     @Slot()
     def _on_metronome_tick_legacy(self):

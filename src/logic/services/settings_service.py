@@ -14,6 +14,8 @@ class SettingsService(QObject):
     coachSettingsChanged = Signal()
     invertPedalChanged = Signal()
     midiOutChanged = Signal()
+    notationStyleChanged = Signal()
+    notationColorModeChanged = Signal()
 
     def __init__(self, db_manager, user_data_path):
         super().__init__()
@@ -114,6 +116,30 @@ class SettingsService(QObject):
     def midiOutEnabled(self, val: bool):
         self._set_env("MIDI_OUT_ENABLED", "true" if val else "false")
         self.midiOutChanged.emit()
+
+    # ── Notation Style ───────────────────────────────────────────────
+
+    @Property(str, notify=notationStyleChanged)
+    def notationStyle(self) -> str: # type: ignore
+        return self._get_env("NOTATION_STYLE", "enhanced")
+
+    @notationStyle.setter # type: ignore
+    def notationStyle(self, val: str):
+        if val in ("enhanced", "traditional"):
+            self._set_env("NOTATION_STYLE", val)
+            self.notationStyleChanged.emit()
+
+    # ── Notation Color Mode ──────────────────────────────────────────
+
+    @Property(str, notify=notationColorModeChanged)
+    def notationColorMode(self) -> str: # type: ignore
+        return self._get_env("NOTATION_COLOR_MODE", "pedagogical")
+
+    @notationColorMode.setter # type: ignore
+    def notationColorMode(self, val: str):
+        if val in ("pedagogical", "monochrome"):
+            self._set_env("NOTATION_COLOR_MODE", val)
+            self.notationColorModeChanged.emit()
 
     # ── Skill Matrix & Stats ──────────────────────────────────────────
 
