@@ -14,7 +14,7 @@ Rectangle {
 
     // Vertical split line
     Rectangle {
-        width: 1
+        width: Math.max(1, 1 * mainWindow.uiScale)
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
@@ -78,9 +78,9 @@ Rectangle {
                 Layout.topMargin: -4 * mainWindow.uiScale
             }
             
-            Item { Layout.preferredHeight: 20 }
+            Item { Layout.preferredHeight: 20 * mainWindow.uiScale }
             
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
+            Rectangle { Layout.fillWidth: true; height: Math.max(1, 1 * mainWindow.uiScale); color: "#2a2a2a" }
             
             Item { Layout.preferredHeight: 16 * mainWindow.uiScale }
 
@@ -119,7 +119,7 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: root.isLessonMode && typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.lessonBlocks && appState.chordTrainer.lessonBlocks.length > 0
-                spacing: 12
+                spacing: 12 * mainWindow.uiScale
                 
                 Text {
                     text: "SESSION PLAYLIST"
@@ -131,17 +131,17 @@ Rectangle {
                 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: playlistCol.implicitHeight + 24
+                    Layout.preferredHeight: playlistCol.implicitHeight + (24 * mainWindow.uiScale)
                     color: "#222222"
-                    radius: 8
+                    radius: 8 * mainWindow.uiScale
                     border.color: "#333333"
-                    border.width: 1
+                    border.width: Math.max(1, 1 * mainWindow.uiScale)
                     
                     ColumnLayout {
                         id: playlistCol
                         anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 6
+                        anchors.margins: 12 * mainWindow.uiScale
+                        spacing: 6 * mainWindow.uiScale
                         
                         Repeater {
                             id: playlistRepeater
@@ -230,9 +230,9 @@ Rectangle {
             Item { Layout.preferredHeight: 20 }
 
             // ── Hardware Status ──
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
+            Rectangle { Layout.fillWidth: true; height: Math.max(1, 1 * mainWindow.uiScale); color: "#2a2a2a" }
             
-            Item { Layout.preferredHeight: 12 }
+            Item { Layout.preferredHeight: 12 * mainWindow.uiScale }
             
             Text {
                 text: "HARDWARE"
@@ -242,11 +242,11 @@ Rectangle {
                 font.letterSpacing: 2 * mainWindow.uiScale
             }
             
-            Item { Layout.preferredHeight: 6 }
+            Item { Layout.preferredHeight: 6 * mainWindow.uiScale }
             
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 8 * mainWindow.uiScale
                 
                 Rectangle {
                     width: 8 * mainWindow.uiScale; height: 8 * mainWindow.uiScale; radius: 4 * mainWindow.uiScale
@@ -262,19 +262,19 @@ Rectangle {
                 }
             }
             
-            Item { Layout.preferredHeight: 16 }
+            Item { Layout.preferredHeight: 16 * mainWindow.uiScale }
             
             // ── Bottom Actions ──
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
+            Rectangle { Layout.fillWidth: true; height: 1 * mainWindow.uiScale; color: "#2a2a2a" }
             
-            Item { Layout.preferredHeight: 12 }
+            Item { Layout.preferredHeight: 12 * mainWindow.uiScale }
             
             // Settings button
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 42
+                Layout.preferredHeight: 42 * mainWindow.uiScale
                 color: settingsMA.containsMouse ? "#2a2a2a" : "transparent"
-                radius: 8
+                radius: 8 * mainWindow.uiScale
                 
                 MouseArea {
                     id: settingsMA
@@ -286,9 +286,9 @@ Rectangle {
                 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 12
-                    anchors.rightMargin: 12
-                    spacing: 10
+                    anchors.leftMargin: 12 * mainWindow.uiScale
+                    anchors.rightMargin: 12 * mainWindow.uiScale
+                    spacing: 10 * mainWindow.uiScale
                     
                     Text {
                         text: "⚙"
@@ -308,10 +308,10 @@ Rectangle {
             // Home button
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 42
+                Layout.preferredHeight: 42 * mainWindow.uiScale
                 visible: root.isLessonActive
                 color: homeMA.containsMouse ? "#2a2a2a" : "transparent"
-                radius: 8
+                radius: 8 * mainWindow.uiScale
                 
                 MouseArea {
                     id: homeMA

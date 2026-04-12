@@ -15,7 +15,10 @@ ApplicationWindow {
     color: "#121212"
     
     // Global scaling factor based on reference resolution 1280x800
-    readonly property real uiScale: Math.min(width / 1280, height / 800)
+    readonly property real uiScale: {
+        var s = Math.min(width / 1280, height / 800)
+        return Math.max(0.7, s) // Scale floor: prevent elements from becoming unuseably small
+    }
     
     property bool showSettings: false
     property bool showOnboarding: {
@@ -99,7 +102,7 @@ ApplicationWindow {
                 Text {
                     text: "Settings"
                     color: "#ffffff"
-                    font.pixelSize: 18
+                    font.pixelSize: 18 * mainWindow.uiScale
                     font.bold: true
                     Layout.fillWidth: true
                 }
@@ -112,7 +115,7 @@ ApplicationWindow {
                         anchors.centerIn: parent
                         text: "✕"
                         color: "#888888"
-                        font.pixelSize: 16
+                        font.pixelSize: 16 * mainWindow.uiScale
                     }
                     MouseArea {
                         id: closeMA

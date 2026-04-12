@@ -48,6 +48,7 @@ class ChordTrainerService(QObject):
     scrollBpmChanged = Signal()
     songTitleChanged = Signal()
     songKeyChanged = Signal()
+    songComposerChanged = Signal()
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None, music21_service=None):
         super().__init__()
@@ -89,6 +90,7 @@ class ChordTrainerService(QObject):
         self._scroll_bpm: int = 0
         self._song_title: str = ""
         self._song_key: str = ""
+        self._song_composer: str = ""
 
         # Dashboard and Performance Review
         self._struggled_items: List[Dict] = []
@@ -312,6 +314,10 @@ class ChordTrainerService(QObject):
     @Property(str, notify=songKeyChanged)
     def songKey(self) -> str:
         return self._song_key
+
+    @Property(str, notify=songComposerChanged)
+    def songComposer(self) -> str:
+        return self._song_composer
 
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:
@@ -1085,6 +1091,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._target_pitches.clear()
             self._target_hands.clear()
             self._pedal_type = ""
+            self._song_title = ""
+            self._song_composer = ""
+            self._song_key = ""
+            self.songTitleChanged.emit()
+            self.songComposerChanged.emit()
+            self.songKeyChanged.emit()
             self.targetChordChanged.emit(self._target_chord_name)
             self._hold_tick_timer.stop()
             self._is_holding = False
@@ -1413,8 +1425,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._exercise_type = "song_application"
         self._song_title = song_data.get("title", "Unknown Piece")
         self._song_key = song_data.get("key", "Unknown Key")
+        self._song_composer = song_data.get("composer", "Unknown Composer")
         self.songTitleChanged.emit()
         self.songKeyChanged.emit()
+        self.songComposerChanged.emit()
         
         self._song_index = 0
         self._target_hold_ms = 0

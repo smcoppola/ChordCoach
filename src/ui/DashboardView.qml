@@ -47,7 +47,7 @@ Rectangle {
         // ── Header Section ──
         ColumnLayout {
             Layout.alignment: Qt.AlignHCenter
-            spacing: 8
+            spacing: 8 * mainWindow.uiScale
             
             Text {
                 text: "DASHBOARD"
@@ -98,8 +98,8 @@ Rectangle {
                     parent: parent
                     anchors.top: parent.top
                     anchors.right: parent.right
-                    anchors.margins: -8
-                    width: 24; height: 24; radius: 12
+                    anchors.margins: -8 * mainWindow.uiScale
+                    width: 24 * mainWindow.uiScale; height: 24 * mainWindow.uiScale; radius: 12 * mainWindow.uiScale
                     color: "#F44336"
                     visible: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
                     
@@ -108,7 +108,7 @@ Rectangle {
                         text: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length : 0
                         color: "#ffffff"
                         font.bold: true
-                        font.pixelSize: 12
+                        font.pixelSize: 12 * mainWindow.uiScale
                     }
                 }
             }
@@ -140,10 +140,10 @@ Rectangle {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignHCenter
             Layout.maximumWidth: 800 * mainWindow.uiScale
-            spacing: 16
+            spacing: 16 * mainWindow.uiScale
             visible: (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine) && appState.curriculumEngine.activeMilestones.length > 0
             
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
+            Rectangle { Layout.fillWidth: true; height: Math.max(1, 1 * mainWindow.uiScale); color: "#2a2a2a" }
             
             RowLayout {
                 Layout.fillWidth: true
@@ -188,14 +188,14 @@ Rectangle {
                         width: 250 * mainWindow.uiScale
                         height: 90 * mainWindow.uiScale
                         color: "#1c1c1e"
-                        radius: 12
+                        radius: 12 * mainWindow.uiScale
                         border.color: "#333333"
-                        border.width: 1
+                        border.width: Math.max(1, 1 * mainWindow.uiScale)
                         
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 16
-                            spacing: 8
+                            anchors.margins: 16 * mainWindow.uiScale
+                            spacing: 8 * mainWindow.uiScale
                             
                             RowLayout {
                                 Layout.fillWidth: true
@@ -224,14 +224,14 @@ Rectangle {
                             
                             Rectangle {
                                 Layout.fillWidth: true
-                                height: 4
-                                radius: 2
+                                height: 4 * mainWindow.uiScale
+                                radius: 2 * mainWindow.uiScale
                                 color: "#333333"
                                 
                                 Rectangle {
                                     width: parent.width * (modelData["progress"] || 0)
                                     height: parent.height
-                                    radius: 2
+                                    radius: 2 * mainWindow.uiScale
                                     color: "#42A5F5"
                                     Behavior on width { NumberAnimation { duration: 300 } }
                                 }
@@ -247,10 +247,10 @@ Rectangle {
             Layout.fillWidth: true
             Layout.maximumWidth: 800 * mainWindow.uiScale
             Layout.alignment: Qt.AlignHCenter
-            spacing: 16
+            spacing: 16 * mainWindow.uiScale
             visible: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
             
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#2a2a2a" }
+            Rectangle { Layout.fillWidth: true; height: Math.max(1, 1 * mainWindow.uiScale); color: "#2a2a2a" }
             
             Text {
                 text: "NEEDS ATTENTION"
@@ -262,14 +262,14 @@ Rectangle {
             
             Flow {
                 Layout.fillWidth: true
-                spacing: 10
+                spacing: 10 * mainWindow.uiScale
                 Repeater {
                     model: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems : []
                     delegate: Rectangle {
-                        width: tagText.implicitWidth + 24
-                        height: 32
+                        width: tagText.implicitWidth + (24 * mainWindow.uiScale)
+                        height: 32 * mainWindow.uiScale
                         color: "#1c1c1e"
-                        radius: 16
+                        radius: 16 * mainWindow.uiScale
                         border.color: "#333333"
                         
                         Text {
@@ -277,7 +277,7 @@ Rectangle {
                             anchors.centerIn: parent
                             text: modelData.name
                             color: "#cccccc"
-                            font.pixelSize: 12
+                            font.pixelSize: 12 * mainWindow.uiScale
                         }
                     }
                 }
@@ -296,16 +296,16 @@ Rectangle {
         Layout.preferredWidth: 220 * mainWindow.uiScale
         Layout.preferredHeight: 180 * mainWindow.uiScale
         color: "#1c1c1e"
-        radius: 16
+        radius: 16 * mainWindow.uiScale
         border.color: mouseArea.containsMouse ? accentColor : "#333333"
-        border.width: mouseArea.containsMouse ? 2 : 1
+        border.width: mouseArea.containsMouse ? (2 * mainWindow.uiScale) : Math.max(1, 1 * mainWindow.uiScale)
         
         Behavior on border.color { ColorAnimation { duration: 200 } }
         
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 24
-            spacing: 12
+            anchors.margins: 24 * mainWindow.uiScale
+            spacing: 12 * mainWindow.uiScale
             
             Text {
                 text: icon
@@ -354,17 +354,17 @@ Rectangle {
 
         background: Rectangle {
             color: "#1c1c1e"
-            radius: 16
+            radius: 16 * mainWindow.uiScale
             border.color: "#4CAF50"
-            border.width: 1
+            border.width: Math.max(1, 1 * mainWindow.uiScale)
 
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -1
-                radius: 16
+                anchors.margins: -1 * mainWindow.uiScale
+                radius: 16 * mainWindow.uiScale
                 color: "transparent"
                 border.color: "#4CAF50"
-                border.width: 2
+                border.width: 2 * mainWindow.uiScale
                 opacity: 0.3
             }
         }
@@ -398,10 +398,10 @@ Rectangle {
                     delegate: Rectangle {
                         Layout.preferredWidth: 110 * mainWindow.uiScale
                         Layout.preferredHeight: 64 * mainWindow.uiScale
-                        radius: 10
+                        radius: 10 * mainWindow.uiScale
                         color: durationMouse.containsMouse ? "#4CAF50" : "#2a2a2a"
                         border.color: durationMouse.containsMouse ? "#66BB6A" : "#444444"
-                        border.width: 1
+                        border.width: Math.max(1, 1 * mainWindow.uiScale)
 
                         Behavior on color { ColorAnimation { duration: 150 } }
 
@@ -440,17 +440,17 @@ Rectangle {
 
         background: Rectangle {
             color: "#1c1c1e"
-            radius: 16
+            radius: 16 * mainWindow.uiScale
             border.color: "#9C27B0"
-            border.width: 1
+            border.width: Math.max(1, 1 * mainWindow.uiScale)
 
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -1
-                radius: 16
+                anchors.margins: -1 * mainWindow.uiScale
+                radius: 16 * mainWindow.uiScale
                 color: "transparent"
                 border.color: "#9C27B0"
-                border.width: 2
+                border.width: 2 * mainWindow.uiScale
                 opacity: 0.3
             }
         }
@@ -513,10 +513,10 @@ Rectangle {
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 45 * mainWindow.uiScale
-                                    radius: 8
+                                    radius: 8 * mainWindow.uiScale
                                     color: itemMouse.containsMouse ? "#332244" : "#2a2a2a"
                                     border.color: itemMouse.containsMouse ? "#9C27B0" : "#444444"
-                                    border.width: 1
+                                    border.width: Math.max(1, 1 * mainWindow.uiScale)
 
                                     Text {
                                         anchors.centerIn: parent
@@ -538,7 +538,7 @@ Rectangle {
                                 }
                             }
                             
-                            Item { Layout.preferredHeight: 12 } // Section spacer
+                            Item { Layout.preferredHeight: 12 * mainWindow.uiScale } // Section spacer
                         }
                     }
                 }
@@ -559,17 +559,17 @@ Rectangle {
 
         background: Rectangle {
             color: "#1c1c1e"
-            radius: 16
+            radius: 16 * mainWindow.uiScale
             border.color: "#2196F3"
-            border.width: 1
+            border.width: Math.max(1, 1 * mainWindow.uiScale)
 
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -1
-                radius: 16
+                anchors.margins: -1 * mainWindow.uiScale
+                radius: 16 * mainWindow.uiScale
                 color: "transparent"
                 border.color: "#2196F3"
-                border.width: 2
+                border.width: 2 * mainWindow.uiScale
                 opacity: 0.3
             }
         }
@@ -614,7 +614,7 @@ Rectangle {
                 Rectangle {
                     width: 80 * mainWindow.uiScale
                     height: 30 * mainWindow.uiScale
-                    radius: 15
+                    radius: 15 * mainWindow.uiScale
                     color: backMouse.containsMouse ? "#333333" : "#2a2a2a"
                     border.color: "#444444"
                     
@@ -630,17 +630,18 @@ Rectangle {
                         id: backMouse
                         anchors.fill: parent
                         hoverEnabled: true
-                            onClicked: {
-                                var p = songPicker.catalogPath;
-                                songPicker.catalogPath = p.slice(0, -1); // Force fresh reference
-                            }
+                        onClicked: {
+                            var p = songPicker.catalogPath;
+                            songPicker.catalogPath = p.slice(0, -1); // Force fresh reference
                         }
                     }
+                }
                     
-                    Row {
-                        spacing: 8
-                        Layout.fillWidth: true
-                        // Recently Played Shelf (only at root level)
+                Row {
+                    spacing: 8
+                    Layout.fillWidth: true
+                    
+                    // Recently Played Shelf (only at root level)
                     ColumnLayout {
                         Layout.fillWidth: true
                         visible: songPicker.catalogPath.length === 0 && appState.music21Service.get_recent_songs().length > 0
@@ -661,7 +662,7 @@ Rectangle {
                                 delegate: Rectangle {
                                     width: 140 * mainWindow.uiScale
                                     height: 80 * mainWindow.uiScale
-                                    radius: 10
+                                    radius: 10 * mainWindow.uiScale
                                     color: recentMouse.containsMouse ? "#2196F315" : "#1a1a1a"
                                     border.color: recentMouse.containsMouse ? "#2196F3" : "#333333"
                                     
@@ -688,7 +689,7 @@ Rectangle {
                                         Rectangle {
                                             width: 50 * mainWindow.uiScale
                                             height: 14 * mainWindow.uiScale
-                                            radius: 3
+                                            radius: 3 * mainWindow.uiScale
                                             color: root.getColorForGrade(modelData.level)
                                             Text {
                                                 anchors.centerIn: parent
@@ -727,26 +728,26 @@ Rectangle {
                     }
 
                     Repeater {
-                            model: songPicker.catalogPath
-                            delegate: Text {
-                                text: modelData + (index < songPicker.catalogPath.length - 1 ? "  ›  " : "")
-                                color: breadMouse.containsMouse ? "#ffffff" : "#666666"
-                                font.pixelSize: 12 * mainWindow.uiScale
-                                font.bold: index === songPicker.catalogPath.length - 1
-                                
-                                MouseArea {
-                                    id: breadMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        songPicker.catalogPath = songPicker.catalogPath.slice(0, index + 1);
-                                    }
+                        model: songPicker.catalogPath
+                        delegate: Text {
+                            text: modelData + (index < songPicker.catalogPath.length - 1 ? "  ›  " : "")
+                            color: breadMouse.containsMouse ? "#ffffff" : "#666666"
+                            font.pixelSize: 12 * mainWindow.uiScale
+                            font.bold: index === songPicker.catalogPath.length - 1
+                            
+                            MouseArea {
+                                id: breadMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    songPicker.catalogPath = songPicker.catalogPath.slice(0, index + 1);
                                 }
                             }
                         }
                     }
                 }
+            }
 
             ScrollView {
                 Layout.fillWidth: true
@@ -763,7 +764,7 @@ Rectangle {
                             id: catalogEntry
                             Layout.fillWidth: true
                             Layout.preferredHeight: (modelData.isCategory ? 50 : 70) * mainWindow.uiScale
-                            radius: 8
+                            radius: 8 * mainWindow.uiScale
                             color: entryMouse.containsMouse ? "#1a2a3a" : "#2a2a2a"
                             border.color: entryMouse.containsMouse ? "#2196F3" : "#444444"
                             border.width: 1
@@ -778,17 +779,18 @@ Rectangle {
                                     Text {
                                         text: (!!modelData.isCategory ? "📁  " : "🎵  ") + (modelData.title || modelData.id || "")
                                         color: "#ffffff"
-                                        font.pixelSize: (!!modelData.isCategory ? 16 : 15) * mainWindow.uiScale
+                                        font.pixelSize: (!!modelData.isCategory ? 16 : 14) * mainWindow.uiScale
                                         font.bold: true
                                         Layout.fillWidth: true
+                                        elide: Text.ElideRight
                                     }
                                     
-                                    // Only show level tag for songs
+                                    // Item level tag for songs
                                     Rectangle {
                                         visible: !modelData.isCategory
                                         width: 75 * mainWindow.uiScale
                                         height: 22 * mainWindow.uiScale
-                                        radius: 4
+                                        radius: 4 * mainWindow.uiScale
                                         color: root.getColorForGrade(modelData.level)
                                         Text {
                                             anchors.centerIn: parent
@@ -809,9 +811,12 @@ Rectangle {
 
                                 Text {
                                     visible: !modelData.isCategory
-                                    text: modelData.artist || ""
+                                    text: modelData.artist || "Unknown Composer"
                                     color: "#888888"
-                                    font.pixelSize: 12 * mainWindow.uiScale
+                                    font.pixelSize: 11 * mainWindow.uiScale
+                                    Layout.leftMargin: 26 * mainWindow.uiScale
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
                                 }
                             }
 
@@ -823,24 +828,22 @@ Rectangle {
                                 onClicked: {
                                     if (!!modelData.isCategory) {
                                         var p = songPicker.catalogPath;
-                                        songPicker.catalogPath = p.concat([modelData.id]); // Force fresh reference
+                                        songPicker.catalogPath = p.concat([modelData.id]);
                                     } else {
                                         console.log("Dashboard: Requesting song selection: " + modelData.id);
-                                        // Emit a global signal via appState to bypass all QML scoping issues
                                         if (typeof appState !== "undefined" && appState && appState.music21Service) {
                                             appState.music21Service.mark_song_played(modelData.id);
                                             appState.music21Service.songRequested(modelData.id);
                                         }
                                         songPicker.close();
-                                        songPicker.catalogPath = []; // Reset for next time
+                                        songPicker.catalogPath = [];
                                     }
                                 }
                             }
                         }
                     }
                     
-                    // Bottom spacer
-                    Item { Layout.preferredHeight: 20 }
+                    Item { Layout.preferredHeight: 20 * mainWindow.uiScale }
                 }
             }
         }

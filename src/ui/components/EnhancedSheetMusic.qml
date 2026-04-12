@@ -273,7 +273,7 @@ Rectangle {
             font.pixelSize: (root.exerciseType === "song_application") ? (24 * mainWindow.uiScale) : (32 * mainWindow.uiScale)
             font.bold: true
             color: "#333333"
-            visible: text !== ""
+            visible: text !== "" && root.exerciseType !== "song_application"
             z: 20
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
@@ -339,8 +339,8 @@ Rectangle {
             x: root.displayMode === "evaluation" ? staffBackground.noteStartX :
                root.isScrollingMode ? staffBackground.noteStartX :
                root.exerciseType === "pentascale"
-                ? staffBackground.noteStartX + (root.currentNoteIndex * staffBackground.pentaNoteSpacing) - 6
-                : staffBackground.noteStartX - 100
+                ? staffBackground.noteStartX + (root.currentNoteIndex * staffBackground.pentaNoteSpacing) - (6 * mainWindow.uiScale)
+                : staffBackground.noteStartX - (100 * mainWindow.uiScale)
             y: staffBackground.trebleCenterY - (staffBackground.lineSpacing * 3.1)
             width: Math.max(1, 1.8 * mainWindow.uiScale) // Thinner playhead
             height: (staffBackground.bassCenterY + (staffBackground.lineSpacing * 3.1)) - y
@@ -545,7 +545,6 @@ Rectangle {
             }
         }
         
-        // 3. Draw pentascale guide notes — staggered horizontally by sequence index
         Repeater {
             model: (root.displayMode === "trainer" && root.exerciseType === "pentascale") ? root.allPentascaleNotes : []
             
@@ -559,8 +558,9 @@ Rectangle {
                 property int referencePitch: isTreble ? 71 : 50
                 property real referenceY: isTreble ? staffBackground.trebleCenterY : staffBackground.bassCenterY
                 property int steps: root.getDiatonicStepsDifference(referencePitch, pitch)
+                
+                // Position notes staggered horizontally in trainer mode (non-scrolling)
                 property int noteIdx: {
-                    // Find this pitch's index in the original (unsorted) pentascale sequence
                     if (typeof appState !== "undefined" && appState && appState.chordTrainer && appState.chordTrainer.pentascaleNotes) {
                         var seq = appState.chordTrainer.pentascaleNotes;
                         for (var i = 0; i < seq.length; i++) {
@@ -685,7 +685,7 @@ Rectangle {
                 anchors.left: pedText.right
                 anchors.leftMargin: 10 * mainWindow.uiScale
                 anchors.verticalCenter: parent.verticalCenter
-                width: 150 * mainWindow.uiScale
+                width: 156 * mainWindow.uiScale
                 height: 10 * mainWindow.uiScale
                 
                 Rectangle {

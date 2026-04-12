@@ -10,7 +10,7 @@ Rectangle {
     property var targetKeys: []
     property var targetHands: [] // Array of "left" or "right" mapping to targetKeys
     property var targetFingers: [] // Array of 1-5 mapping to targetKeys
-    property real keySpacing: 1
+    property real keySpacing: Math.max(1, 1 * mainWindow.uiScale)
     property real keyWidth: (width - (87 * keySpacing)) / 88
 
     function getColorForFinger(finger) {
@@ -60,7 +60,7 @@ Rectangle {
                 height: 120 * mainWindow.uiScale
                 color: isBlackKey(index) ? "black" : "white"
                 border.color: "#333"
-                border.width: 1
+                border.width: Math.max(1, 1 * mainWindow.uiScale)
 
                 function isBlackKey(idx) {
                     let pattern = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
@@ -164,7 +164,7 @@ Rectangle {
                 ctx.stroke();
                 
                 // Draw Math Text
-                ctx.fillText("+" + diff, midX, yStart - (archHeight/2) - 5);
+                ctx.fillText("+" + diff, midX, yStart - (archHeight/2) - (5 * mainWindow.uiScale));
             }
         }
         
@@ -183,7 +183,7 @@ Rectangle {
                 color: "#4CAF50"
                 radius: 4 * mainWindow.uiScale
                 border.color: "#388E3C"
-                border.width: 1
+                border.width: Math.max(1, 1 * mainWindow.uiScale)
             }
         }
 
@@ -200,7 +200,7 @@ Rectangle {
                 for (var i = 0; i < sorted.length - 1; i++) {
                     var x1 = ((sorted[i] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
                     var x2 = ((sorted[i+1] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
-                    if (mouseX > x1 + 5 && mouseX < x2 - 5 && mouseY > 0 && mouseY < 50 * mainWindow.uiScale) {
+                    if (mouseX > x1 + (5 * mainWindow.uiScale) && mouseX < x2 - (5 * mainWindow.uiScale) && mouseY > 0 && mouseY < 50 * mainWindow.uiScale) {
                         overArch = true;
                         break;
                     }
@@ -216,13 +216,13 @@ Rectangle {
                     var x2 = ((sorted[i+1] - 21) * (root.keyWidth + root.keySpacing)) + (root.keyWidth / 2);
                     
                     // Allow clicking in the upper area above the keys between x1 and x2
-                    if (mouseX > x1 + 5 && mouseX < x2 - 5 && mouseY > 0 && mouseY < 50 * mainWindow.uiScale) {
+                    if (mouseX > x1 + (5 * mainWindow.uiScale) && mouseX < x2 - (5 * mainWindow.uiScale) && mouseY > 0 && mouseY < 50 * mainWindow.uiScale) {
                         var diff = sorted[i+1] - sorted[i];
                         var ix = mouseX;
                         var iy = mouseY;
                         intervalToolTip.show(root.getIntervalName(diff));
                         intervalToolTip.x = ix - (intervalToolTip.width / 2);
-                        intervalToolTip.y = iy - intervalToolTip.height - 10;
+                        intervalToolTip.y = iy - intervalToolTip.height - (10 * mainWindow.uiScale);
                         root.archClicked();
                         break;
                     }

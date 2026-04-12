@@ -4,62 +4,38 @@ import json
 import os
 from pathlib import Path
 import time
+import re
 
-def calculate_complexity(score_path):
+def parse_metadata_only(score_path):
     """
-    Heuristically estimates complexity of a piece from music21 corpus.
-    Uses a partial parse to keep performance high.
+    Tries to get metadata without a full heavy parse.
     """
     try:
-        # We only parse the first part and flatten it to get a representative sample
-        # Using m21's partial loading if possible, or just a stream.Opus check
-        s = corpus.parse(score_path)
+        # Use str() to ensure music21 compatibility
+        s = corpus.parse(str(score_path))
         
-        # If it's a collection, take the first one
-        if isinstance(s, stream.Opus):
-            s = s.getScoreByNumber(1)
+        # Title and Composer
+        title = "Unknown Piece"
+        composer = "Unknown Composer"
         
-        # Flatten and keep only notes for a quick count
-        # Limit to the first 40 measures or 100 notes
-        p = s.parts[0] if s.parts else s
-        sample = p.flatten().notes.stream()
-        
-        note_count = len(sample)
-        if note_count == 0: return 0
-        
-        duration = sample.highestTime or 1
-        note_density = note_count / duration # 
-        
-        durations = set()
-        pitches = []
-        for n in sample:
-            durations.add(n.duration.quarterLength)
-            if isinstance(n, note.Note):
-                pitches.append(n.pitch.midi)
-            elif isinstance(n, chord.Chord):
-                pitches.extend([p.midi for p in n.pitches])
-        
-        rhythmic_variety = len(durations)
-        pitch_range = (max(pitches) - min(pitches)) if pitches else 0
-        
-        # Normalization (rough)
-        # 0.0 - 10.0 scale
-        nd_score = min(note_density * 2.0, 5.0) # 0-5
-        rv_score = min(rhythmic_variety * 0.5, 3.0) # 0-3
-        pr_score = min(pitch_range / 12.0, 2.0) # 0-2
-        
-        return nd_score + rv_score + pr_score # Max 10.0
-        
+        if s.metadata:
+            # Use getattr for robustness against different music21 versions/metadata schemas
+            title = getattr(s.metadata, 'title', None) or \
+                    getattr(s.metadata, 'movementName', None) or \
+                    getattr(s.metadata, 'workTitle', None) or "Unknown"
+            composer = getattr(s.metadata, 'composer', None) or "Unknown"
+            
+        return s, title, composer
     except Exception as e:
-        # print(f"Error analyzing {score_path}: {e}")
-        return 5.0 # Neutral fallback
+        # Silent failure for files that are too big or malformed during quick index
+        # print(f"  [ERROR] parse_metadata_only failed: {e}")
+        return None, "Unknown", "Unknown"
 
 def index_corpus():
-    print("Catalog Indexer: Starting crawl of music21 corpus...")
+    print("Catalog Indexer: Starting deep crawl of music21 corpus...")
     start_time = time.time()
     
     # Define our New Taxonomy (Grades 1-10)
-    # Mapping folders to specific levels and categories
     grade_map = {
         1: ["airdsAirs", "nottingham-dataset"],
         2: ["essenFolksong", "theoryExercises"],
@@ -88,7 +64,6 @@ def index_corpus():
     paths = list(corpus.corpora.CoreCorpus().getPaths())
     processed = 0
     
-    # Expand target collections
     target_collections = [
         "bach", "mozart", "beethoven", "haydn", "essenFolksong", 
         "airdsAirs", "czerny", "joplin", "schumann_robert", "schubert", 
@@ -98,7 +73,6 @@ def index_corpus():
     for score_path in paths:
         path_str = str(score_path).replace("\\", "/")
         
-        # Determine collection
         collection = "unknown"
         for coll in target_collections:
             if f"corpus/{coll}/" in path_str:
@@ -110,75 +84,104 @@ def index_corpus():
             
         processed += 1
         if processed % 100 == 0:
-            print(f"Catalog Indexer: Processed {processed} targets...")
+            print(f"Catalog Indexer: Processed {processed} files...")
 
-        # Find Grade (1-10)
-        grade_num = 5 # Default
+        # Determine Grade and Genre
+        grade_num = 5 
         for g, colls in grade_map.items():
             if collection in colls:
                 grade_num = g
                 break
         
-        # Fine-tune grade based on filename patterns
         filename = os.path.basename(path_str).lower()
         if "chorale" in filename or "bwv" in filename:
-            grade_num = max(4, min(grade_num, 6)) # Bach Chorales are Level 4-6
+            grade_num = max(4, min(grade_num, 6))
         if "sonatina" in filename:
             grade_num = max(3, min(grade_num, 5))
         if "sonata" in filename:
             grade_num = max(7, grade_num)
-        if "kind" in filename or "album" in filename: # Album for Young
-            grade_num = 3
-            
-        difficulty_label = f"Grade {grade_num}"
         
-        # Find Genre
+        difficulty_label = f"Grade {grade_num}"
         genre = "Classical"
         for g, colls in genre_map.items():
             if collection in colls:
                 genre = g
                 break
         
-        # Composer
-        composer = collection.capitalize()
-        if collection == "essenFolksong": composer = "German Folk"
-        if collection == "airdsAirs": composer = "Scottish Airs"
-        if collection == "schumann_robert": composer = "Schumann"
-        
-        # Refined titles
-        title = os.path.basename(path_str).replace(".mxl", "").replace(".xml", "").replace(".abc", "").replace(".krn", "")
-        title = title.replace("_", " ").title()
-        
-        # Clean up BWV numbering or Op numbers in title
-        import re
-        title = re.sub(r'Bwv(\d+)\.(\d+)', r'BWV \1 No. \2', title)
-        title = re.sub(r'Op(\d+)\.(\d+)', r'Op. \1 No. \2', title)
-        
-        # FIX: Preserve subfolder structure in the ID. 
-        # Previously we used os.path.basename, which broke pieces in subdirectories like corelli/opus3no1/1grave.xml
-        # We find the part of the path after the collection folder.
-        id_str = f"{collection}/{os.path.basename(path_str)}" # Fallback
-        
-        # Pattern looks for 'corpus/collection_name/path_to_file'
-        # Note: path_str has been standardized to use '/'
+        composer_default = collection.capitalize()
+        if collection == "essenFolksong": composer_default = "German Folk"
+        if collection == "airdsAirs": composer_default = "Scottish Airs"
+        if collection == "schumann_robert": composer_default = "Schumann"
+
+        # Match collection path relative to corpus/collection_name/
         match = re.search(f"corpus/{collection}/(.*)", path_str)
-        if match:
-            id_str = f"{collection}/{match.group(1)}"
-        
-        # Construct the hierarchy: Grade X > Genre > Composer > Piece
+        rel_path = match.group(1) if match else os.path.basename(path_str)
+        file_id = f"{collection}/{rel_path}"
+
+        # Initialize hierarchy if needed
         if genre not in catalog[difficulty_label]:
             catalog[difficulty_label][genre] = {}
-        
-        if composer not in catalog[difficulty_label][genre]:
-            catalog[difficulty_label][genre][composer] = []
+        if composer_default not in catalog[difficulty_label][genre]:
+            catalog[difficulty_label][genre][composer_default] = []
+
+        # Use filename cleanup for the fallback or base name
+        clean_name = os.path.basename(path_str).replace(".mxl", "").replace(".xml", "").replace(".abc", "").replace(".krn", "").replace("_", " ").title()
+        clean_name = re.sub(r'Bwv(\d+)\.(\d+)', r'BWV \1 No. \2', clean_name)
+        clean_name = re.sub(r'Op(\d+)\.(\d+)', r'Op. \1 No. \2', clean_name)
+
+        # Parse Metadata for the file
+        score, meta_title, meta_composer = parse_metadata_only(score_path)
+
+        if score is not None and isinstance(score, stream.Opus):
+            # It's a collection! Create a sub-dictionary for the book
+            print(f"  > Collection expanded: {clean_name} ({len(score)} tunes)")
             
-        catalog[difficulty_label][genre][composer].append({
-            "id": id_str,
-            "title": title,
-            "level": difficulty_label,
-            "artist": composer,
-            "genre": genre
-        })
+            book_item = {
+                "id": file_id,
+                "title": clean_name,
+                "isCategory": True,
+                "children": []
+            }
+            
+            # Extract tunes within the Opus
+            for i, tune in enumerate(score):
+                if not isinstance(tune, (stream.Score, stream.Stream)):
+                    continue
+                    
+                tune_title = "Unknown Tune"
+                if tune.metadata:
+                    tune_title = getattr(tune.metadata, 'title', None) or \
+                                 getattr(tune.metadata, 'movementName', None) or \
+                                 f"Tune {i+1}"
+                else:
+                    tune_title = f"Tune {i+1}"
+                
+                # Cleanup if title is just the filename or number
+                if "tune" in tune_title.lower() and len(tune_title) < 8:
+                    tune_title = f"Selection No. {i+1}"
+                
+                book_item["children"].append({
+                    "id": f"{file_id}::{i+1}",
+                    "title": tune_title.strip(),
+                    "level": difficulty_label,
+                    "artist": composer_default,
+                    "genre": genre
+                })
+            
+            catalog[difficulty_label][genre][composer_default].append(book_item)
+            
+        else:
+            # Single piece
+            final_title = meta_title if (meta_title and meta_title != "Unknown") else clean_name
+            final_composer = meta_composer if (meta_composer and meta_composer != "Unknown") else composer_default
+            
+            catalog[difficulty_label][genre][composer_default].append({
+                "id": file_id,
+                "title": final_title.strip(),
+                "level": difficulty_label,
+                "artist": final_composer.strip(),
+                "genre": genre
+            })
 
     # Save to database
     db_path = Path(__file__).parent.parent.parent.parent / "database" / "music21_catalog.json"
@@ -187,7 +190,7 @@ def index_corpus():
     with open(db_path, "w") as f:
         json.dump(catalog, f, indent=4)
         
-    print(f"Catalog Indexer: Finished! Indexed {processed} scores in {time.time() - start_time:.1f}s")
+    print(f"Catalog Indexer: Finished! Indexed {processed} files in {time.time() - start_time:.1f}s")
     return catalog
 
 if __name__ == "__main__":

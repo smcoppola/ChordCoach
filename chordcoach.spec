@@ -5,6 +5,7 @@ block_cipher = None
 import sys
 import os
 import glob
+from PyInstaller.utils.hooks import collect_all
 
 is_win = sys.platform.startswith('win')
 is_mac = sys.platform == 'darwin'
@@ -81,6 +82,13 @@ if os.path.exists(rtmidi_lib_path):
 if os.path.exists(portaudio_lib_path):
     binaries_list.append((portaudio_lib_path, '.'))
 
+# Collect music21 and pretty_midi assets
+m21_datas, m21_binaries, m21_hiddenimports = collect_all('music21')
+pm_datas, pm_binaries, pm_hiddenimports = collect_all('pretty_midi')
+
+datas_list += m21_datas + pm_datas
+binaries_list += m21_binaries + pm_binaries
+
 a = Analysis(
     ['src/app.py'],
     pathex=['src'],
@@ -115,7 +123,7 @@ a = Analysis(
         'logic.coordinators.app_coordinator',
         'hardware.midi_hardware_service',
         'core.bootstrap'
-    ],
+    ] + m21_hiddenimports + pm_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -141,7 +149,7 @@ exe = EXE(
     icon=app_icon,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch='arm64' if is_mac else None,
     codesign_identity=None,
     entitlements_file='entitlements.plist' if is_mac else None,
 )

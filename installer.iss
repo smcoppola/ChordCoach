@@ -2,7 +2,7 @@
 ; Packages the PyInstaller onedir output into a professional Windows installer
 
 #define MyAppName "ChordCoach Companion"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "0.1.0"
 #define MyAppPublisher "ChordCoach"
 #define MyAppExeName "ChordCoachCompanionPortable.exe"
 

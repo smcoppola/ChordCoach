@@ -26,6 +26,10 @@ Rectangle {
     property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
     property bool isWaitingForAi: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
     
+    // Song Metadata
+    property string songTitle: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songTitle : ""
+    property string songComposer: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songComposer : ""
+    
     // UI Modal States for Blurring
     property bool isReconnecting: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
     property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isLoading || isReconnecting
@@ -230,6 +234,11 @@ Rectangle {
             Layout.maximumWidth: parent.width * 0.9
             text: {
                 if (root.isLoading) return "INITIALIZING LESSON...";
+                if (root.exerciseType === "song_application" || root.songTitle !== "") {
+                    var titleStr = root.songTitle || "Unknown Piece";
+                    var compStr = root.songComposer && root.songComposer !== "Unknown Composer" ? root.songComposer + ": " : "";
+                    return (compStr + titleStr).toUpperCase();
+                }
                 if (!root.isActive) return "CHORD TRAINER";
                 if (root.isLessonMode) return "LESSON: " + root.exerciseName.toUpperCase() + " (EXERCISE " + root.lessonProgress + ")";
                 return "FREE PRACTICE";
@@ -265,7 +274,7 @@ Rectangle {
                     height: parent.height * 2
                     radius: width / 2
                     color: "transparent"
-                    border.width: root.isAiSpeaking ? 3 : 0
+                    border.width: root.isAiSpeaking ? (3 * mainWindow.uiScale) : 0
                     border.color: "#00BCD4"
                     opacity: 0.0
                     
@@ -307,9 +316,9 @@ Rectangle {
         // Hold Progress Bar (Only visible during Rhythmic Locking)
         Rectangle {
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 300
-            Layout.preferredHeight: 8
-            radius: 4
+            Layout.preferredWidth: 300 * mainWindow.uiScale
+            Layout.preferredHeight: 8 * mainWindow.uiScale
+            radius: 4 * mainWindow.uiScale
             color: "#333333"
             visible: root.isActive && !root.isLessonComplete && root.requiredHoldMs > 0
             
@@ -319,10 +328,7 @@ Rectangle {
                 anchors.bottom: parent.bottom
                 width: parent.width * root.holdProgress
                 color: "#4CAF50"
-                radius: 4
-                
-                // No Behavior animation — holdProgress updates at 30fps from Python,
-                // which is already smooth enough for a progress bar.
+                radius: 4 * mainWindow.uiScale
             }
         }
         
@@ -335,18 +341,18 @@ Rectangle {
             Repeater {
                 model: root.progressionNumerals
                 delegate: Rectangle {
-                    width: 60
-                    height: 40
-                    radius: 6
+                    width: 60 * mainWindow.uiScale
+                    height: 40 * mainWindow.uiScale
+                    radius: 6 * mainWindow.uiScale
                     color: index === root.currentProgressionIndex ? "#2196F3" : "#333333"
                     border.color: index === root.currentProgressionIndex ? "#64B5F6" : "#555555"
-                    border.width: index === root.currentProgressionIndex ? 2 : 1
+                    border.width: index === root.currentProgressionIndex ? (2 * mainWindow.uiScale) : Math.max(1, 1 * mainWindow.uiScale)
                     
                     Text {
                         anchors.centerIn: parent
                         text: modelData
                         color: index === root.currentProgressionIndex ? "#ffffff" : "#888888"
-                        font.pixelSize: 18
+                        font.pixelSize: 18 * mainWindow.uiScale
                         font.bold: index === root.currentProgressionIndex
                     }
                     
@@ -413,7 +419,7 @@ Rectangle {
                         
                         color: isCorrect ? "#4CAF50" : (isActive ? "#00E5FF" : "#2a2a2a")
                         border.color: isActive ? "#B2EBF2" : (isCorrect ? "#81C784" : "transparent")
-                        border.width: isActive ? 3 : (isCorrect ? 1 : 0)
+                        border.width: isActive ? Math.max(1, 3 * mainWindow.uiScale) : (isCorrect ? Math.max(1, 1 * mainWindow.uiScale) : 0)
                         
                         // Glow effect for active dot
                         Rectangle {
@@ -467,9 +473,6 @@ Rectangle {
                 color: "#00E5FF"
                 anchors.verticalCenter: parent.verticalCenter
                 
-                // Track the beat precisely. 
-                // beatCount goes -4..0 during lead-in, then 0..5 during play.
-                // We map count 0 to dot 0, count 4 to dot 4.
                 x: {
                     var dotWidth = 80 * mainWindow.uiScale;
                     var spacing = 32 * mainWindow.uiScale;
@@ -477,8 +480,7 @@ Rectangle {
                     var startX = (dotWidth / 2) - (width / 2);
                     
                     if (root.pentascaleBeatCount < 0) {
-                        // During lead-in, sit just before the start
-                        return startX - 20; 
+                        return startX - (20 * mainWindow.uiScale); 
                     }
                     return startX + (root.pentascaleBeatCount * step);
                 }
@@ -496,8 +498,8 @@ Rectangle {
                 // Pulsing glow for the cursor
                 Rectangle {
                     anchors.fill: parent
-                    anchors.margins: -6
-                    radius: parent.radius + 6
+                    anchors.margins: -6 * mainWindow.uiScale
+                    radius: parent.radius + (6 * mainWindow.uiScale)
                     color: parent.color
                     opacity: 0.3
                     visible: root.pentascaleBeatCount >= 0
@@ -511,60 +513,63 @@ Rectangle {
         }
         
         
-        // Target display area - Container for Sheet Music and Overlays
-        Item {
+        // Target display area - Dedicated Layout for Hands and Music
+        RowLayout {
+            id: displayAreaRow
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
-            Layout.maximumWidth: 1000 * mainWindow.uiScale
+            Layout.maximumWidth: 1600 * mainWindow.uiScale
             Layout.fillHeight: true
             Layout.minimumHeight: 450 * mainWindow.uiScale
+            spacing: 20 * mainWindow.uiScale
             visible: root.isActive && !root.isLessonComplete && root.exerciseType !== "listen"
-
-            Components.EnhancedSheetMusic {
-                id: sheetMusicPane
-                anchors.fill: parent
-                targetChordName: root.currentTarget
-            }
 
             // Professional Visual Hand Guides (Image-based)
             Components.HandGuide {
                 handType: "left"
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: -125 * mainWindow.uiScale
-                opacity: 1.0
+                Layout.alignment: Qt.AlignVCenter
+                opacity: 0.8
+            }
+
+            // Sheet Music Pane
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                
+                Components.EnhancedSheetMusic {
+                    id: sheetMusicPane
+                    anchors.fill: parent
+                    targetChordName: root.currentTarget
+                }
+                
+                // Overlay text for feedback
+                Text {
+                    id: latencyText
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 10 * mainWindow.uiScale
+                    text: ""
+                    color: "#4CAF50"
+                    font.pixelSize: 24 * mainWindow.uiScale
+                    font.bold: true
+                    opacity: 0.0
+                    
+                    SequentialAnimation on opacity {
+                        id: latencyAnim
+                        running: false
+                        NumberAnimation { to: 1.0; duration: 50 }
+                        PauseAnimation { duration: 1000 }
+                        NumberAnimation { to: 0.0; duration: 500 }
+                    }
+                }
             }
 
             Components.HandGuide {
                 handType: "right"
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.rightMargin: -125 * mainWindow.uiScale
-                opacity: 1.0
+                Layout.alignment: Qt.AlignVCenter
+                opacity: 0.8
             }
-            
-            Text {
-                id: latencyText
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 10
-                text: ""
-                color: "#4CAF50"
-                font.pixelSize: 24 * mainWindow.uiScale
-                font.bold: true
-                opacity: 0.0
-                
-                SequentialAnimation on opacity {
-                    id: latencyAnim
-                    running: false
-                    NumberAnimation { to: 1.0; duration: 50 }
-                    PauseAnimation { duration: 1000 }
-                    NumberAnimation { to: 0.0; duration: 500 }
-                }
-            }
-            
-            // (Phase Complete overlay moved to full-pane level)
-        } // End of Target display area container
+        } 
         
         // Ear Training Quiz View
         Rectangle {
@@ -575,9 +580,9 @@ Rectangle {
             Layout.fillHeight: true
             Layout.minimumHeight: 450 * mainWindow.uiScale
             color: "#1c1c1e"
-            radius: 12
+            radius: 12 * mainWindow.uiScale
             border.color: "#9C27B0" // Purple for ear training
-            border.width: 1
+            border.width: Math.max(1, 1 * mainWindow.uiScale)
             visible: root.isActive && !root.isLessonComplete && !root.isPausedForSpeech && root.exerciseType === "listen"
             onVisibleChanged: {
                 var d = new Date();
@@ -587,7 +592,7 @@ Rectangle {
             
             ColumnLayout {
                 anchors.centerIn: parent
-                spacing: 30
+                spacing: 30 * mainWindow.uiScale
                 
                 Text {
                     text: "EAR TRAINING"
@@ -607,7 +612,7 @@ Rectangle {
                 
                 RowLayout {
                     Layout.alignment: Qt.AlignHCenter
-                    spacing: 20
+                    spacing: 20 * mainWindow.uiScale
                     
                     Repeater {
                         model: ["Major", "Minor"]
@@ -624,7 +629,7 @@ Rectangle {
                                 implicitWidth: 160 * mainWindow.uiScale
                                 implicitHeight: 60 * mainWindow.uiScale
                                 color: quizBtn.down ? "#7B1FA2" : (quizBtn.hovered ? "#9C27B0" : "#4A148C")
-                                radius: 8
+                                radius: 8 * mainWindow.uiScale
                                 border.color: "#ffffff20"
                                 Behavior on color { ColorAnimation { duration: 150 } }
                             }
@@ -640,7 +645,11 @@ Rectangle {
                 Button {
                     text: "Replay Audio"
                     flat: true
-                    onClicked: appState.chordTrainer.replay_preview()
+                    onClicked: {
+                        if (appState && appState.chordTrainer) {
+                            appState.chordTrainer.replay_preview();
+                        }
+                    }
                     Layout.alignment: Qt.AlignHCenter
                 }
             }
@@ -720,7 +729,7 @@ Rectangle {
         height: Math.min(350 * mainWindow.uiScale, parent.height * 0.8)
         color: "#1c1c1e"
         border.color: "#00BCD4"
-        border.width: 1 * mainWindow.uiScale
+        border.width: Math.max(1, 1 * mainWindow.uiScale)
         radius: 12 * mainWindow.uiScale
         visible: root.isLessonComplete
         z: 110
@@ -728,17 +737,17 @@ Rectangle {
         // Subtle glow effect
         Rectangle {
             anchors.fill: parent
-            anchors.margins: -1
-            radius: 12
+            anchors.margins: -1 * mainWindow.uiScale
+            radius: 12 * mainWindow.uiScale
             color: "transparent"
             border.color: "#00BCD4"
-            border.width: 2
+            border.width: 2 * mainWindow.uiScale
             opacity: 0.3
         }
         
         ColumnLayout {
             anchors.centerIn: parent
-            spacing: 20
+            spacing: 20 * mainWindow.uiScale
             
             Text {
                 text: "LESSON COMPLETE"
@@ -756,7 +765,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignHCenter
             }
             
-            Item { Layout.preferredHeight: 10 }
+            Item { Layout.preferredHeight: 10 * mainWindow.uiScale }
             
             Button {
                 text: "RETURN TO DASHBOARD"
@@ -766,7 +775,7 @@ Rectangle {
                     implicitWidth: 220 * mainWindow.uiScale
                     implicitHeight: 50 * mainWindow.uiScale
                     color: parent.down ? "#333333" : (parent.hovered ? "#444444" : "#2a2a2a")
-                    radius: 8
+                    radius: 8 * mainWindow.uiScale
                     border.color: "#333333"
                 }
                 contentItem: Text {
@@ -789,6 +798,7 @@ Rectangle {
         color: "transparent"
         visible: !root.isActive && root.isLoading
         z: 110
+        
         onVisibleChanged: {
             var d = new Date();
             var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
@@ -797,7 +807,7 @@ Rectangle {
         
         ColumnLayout {
             anchors.centerIn: parent
-            spacing: 40
+            spacing: 40 * mainWindow.uiScale
             
             // Pulsing rings
             Rectangle {
@@ -926,7 +936,7 @@ Rectangle {
 
         ColumnLayout {
             anchors.centerIn: parent
-            spacing: 30
+            spacing: 30 * mainWindow.uiScale
 
             // Pulsing WiFi/connection indicator
             Rectangle {
@@ -998,7 +1008,7 @@ Rectangle {
         anchors.verticalCenterOffset: -50 * mainWindow.uiScale
         font.pixelSize: 64 * mainWindow.uiScale
         font.bold: true
-        font.letterSpacing: 4
+        font.letterSpacing: 4 * mainWindow.uiScale
         color: {
             if (text === "Perfect!") return "#4CAF50";
             if (text === "Fast") return "#FFC107";
