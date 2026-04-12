@@ -5,14 +5,15 @@ description = "AI-driven piano learning app"
 authors = [{ name = "Author Name", email = "author@example.com" }]
 dependencies = [
     "PySide6",
-    "google-genai",
-    "asyncio",
     "pybind11",
     "mido",
     "pretty-midi",
     "websockets",
     "certifi",
     "music21",
+    "numpy",
+    "requests",
+    "beautifulsoup4",
 ]
 
 [build-system]

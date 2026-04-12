@@ -101,6 +101,8 @@ a = Analysis(
         'pretty_midi',
         'websockets',
         'certifi',
+        'music21',
+        'numpy',
         'logic.services.gemini_service', 
         'logic.services.midi_ingestor', 
         'logic.services.repertoire_crawler', 
