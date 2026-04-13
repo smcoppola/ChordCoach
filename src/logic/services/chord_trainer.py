@@ -24,6 +24,7 @@ class ChordTrainerService(QObject):
     pentascaleNoteHit = Signal(int, str) # index, feedback (Fast, Slow, Perfect!)
     chordFailed = Signal()
     lessonStateChanged = Signal()
+    mistakeActiveChanged = Signal(bool)
     loadingStatusChanged = Signal()
     speakInstruction = Signal(str)
     speakBrief = Signal(str)              # Non-blocking brief coach commentary
@@ -141,6 +142,9 @@ class ChordTrainerService(QObject):
             {"v_key": "E", "i_key": "A", "v_root": 4,  "i_root": 9,  "shared": "E"},
             {"v_key": "B", "i_key": "E", "v_root": 11, "i_root": 4,  "shared": "B"},
         ]
+        
+        self._target_pitches: List[int] = []
+        self._prev_target_pitches: List[int] = []
         
         # Metronome Service (provided by AppState)
         self.metronome = None
@@ -432,6 +436,38 @@ class ChordTrainerService(QObject):
     @Property(str, notify=targetChordChanged)
     def scaleName(self) -> str:
         return self._scale_name
+
+    @Property(bool, notify=lessonStateChanged)
+    def mistakeActive(self) -> bool:
+        """Determines if the student is currently holding any notes that are NOT in the target set."""
+        if not self.isActive or self._is_lesson_complete or len(self._active_pitches) == 0:
+            return False
+            
+        # For evaluation/song mode, we check exact MIDI pitches
+        if self._exercise_type == "song_application":
+            target_set = set(self._target_pitches)
+            prev_set = set(self._prev_target_pitches)
+            for p in self._active_pitches:
+                # Correct if it's the current target OR the previous target (legato support)
+                if p not in target_set and p not in prev_set:
+                    return True
+        elif self._exercise_type == "pentascale":
+             # For pentascale, only the current pitch is 'correct'.
+             # However, we allow holding the PREVIOUS pitch (legato) if it's the right one.
+             if self._pentascale_sequence and self._pentascale_index < len(self._pentascale_sequence):
+                 target_pitch = self._pentascale_sequence[self._pentascale_index]
+                 # Correct if it's the target OR the previous note (to allow legato overlap)
+                 prev_pitch = self._pentascale_sequence[self._pentascale_index - 1] if self._pentascale_index > 0 else -1
+                 for p in self._active_pitches:
+                     if p != target_pitch and p != prev_pitch:
+                         return True
+        else:
+            # For general chords, we are octave-agnostic by default
+            target_intervals = self._target_intervals
+            for p in self._active_pitches:
+                if (p % 12) not in target_intervals:
+                    return True
+        return False
 
     @Slot()
     def start_session(self):
@@ -2174,6 +2210,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             # Song complete
             return
             
+        self._prev_target_pitches = self._target_pitches
         step = self._song_steps[self._song_index]
         self._target_pitches = step['pitches']
         self._target_hands = step['hands']
@@ -2281,6 +2318,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             return
 
         self._check_input()
+        self.lessonStateChanged.emit()
 
     def _check_input(self):
         """Routes input validation based on exercise type."""

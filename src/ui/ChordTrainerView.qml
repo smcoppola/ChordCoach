@@ -125,7 +125,10 @@ Rectangle {
         }
         
         function onChordSuccess(chordName, latencyMs) {
-            successFlash.start();
+            // Disable background flash for freeplay (song_application)
+            if (root.exerciseType !== "song_application") {
+                successFlash.start();
+            }
             
             // Qualitatively feedback for pentascales handled here...
             if (root.exerciseType === "pentascale") {
@@ -529,6 +532,10 @@ Rectangle {
                     id: sheetMusicPane
                     anchors.fill: parent
                     targetChordName: root.currentTarget
+                    
+                    // Subtle dimming if a mistake is currently being held
+                    opacity: (appState && appState.chordTrainer && appState.chordTrainer.mistakeActive) ? 0.85 : 1.0
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
                 }
                 
             }
