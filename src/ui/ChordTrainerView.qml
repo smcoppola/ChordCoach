@@ -127,26 +127,15 @@ Rectangle {
         function onChordSuccess(chordName, latencyMs) {
             successFlash.start();
             
-            // Show qualitative feedback for pentascales, or ms for chords
+            // Qualitatively feedback for pentascales handled here...
             if (root.exerciseType === "pentascale") {
-                latencyText.text = chordName; // e.g. "Excellent Timing!"
-                latencyText.color = "#4CAF50";
-            } else {
-                if (latencyMs < 1500) {
-                    latencyText.text = "⚡ " + Math.round(latencyMs) + "ms";
-                    latencyText.color = "#4CAF50";
-                } else if (latencyMs < 3000) {
-                    latencyText.text = Math.round(latencyMs) + "ms";
-                    latencyText.color = "#FFC107";
-                } else {
-                    latencyText.text = Math.round(latencyMs / 1000.0 * 10) / 10 + "s";
-                    latencyText.color = "#FF9800";
-                }
+                // Future: Add logic for qualitative timing feedback if requested, 
+                // but removing numeric ms indicators for now as per user request.
             }
+
             var d = new Date();
             var timeStr = d.getHours().toString().padStart(2,'0') + ":" + d.getMinutes().toString().padStart(2,'0') + ":" + d.getSeconds().toString().padStart(2,'0') + "." + d.getMilliseconds().toString().padStart(3,'0');
-            console.log("[TIMING " + timeStr + "] QML Visual successFlash and latency text triggered");
-            latencyAnim.restart();
+            console.log("[TIMING " + timeStr + "] QML Visual successFlash triggered");
         }
         
         function onTargetChordChanged(chordName) {
@@ -542,26 +531,6 @@ Rectangle {
                     targetChordName: root.currentTarget
                 }
                 
-                // Overlay text for feedback
-                Text {
-                    id: latencyText
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: 10 * mainWindow.uiScale
-                    text: ""
-                    color: "#4CAF50"
-                    font.pixelSize: 24 * mainWindow.uiScale
-                    font.bold: true
-                    opacity: 0.0
-                    
-                    SequentialAnimation on opacity {
-                        id: latencyAnim
-                        running: false
-                        NumberAnimation { to: 1.0; duration: 50 }
-                        PauseAnimation { duration: 1000 }
-                        NumberAnimation { to: 0.0; duration: 500 }
-                    }
-                }
             }
 
             Components.HandGuide {

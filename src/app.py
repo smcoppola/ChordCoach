@@ -48,6 +48,7 @@ from logic.services.metronome_service import MetronomeService # type: ignore
 from logic.services.circle_of_fifths_service import CircleOfFifthsService # type: ignore
 from logic.services.music21_service import Music21Service # type: ignore
 from logic.coordinators.app_coordinator import AppCoordinator # type: ignore
+from ui.notation_view import NotationView
 
 class AppState(QObject):
     midiNoteReceived = Signal(int, bool)
@@ -240,6 +241,10 @@ class AppState(QObject):
 def main():
     print("main(): Initialising QtWebEngine…")
     QtWebEngineQuick.initialize()
+    
+    from PySide6.QtQml import qmlRegisterType
+    qmlRegisterType(NotationView, "ChordCoach", 1, 0, "NotationView")
+    
     app = QGuiApplication(sys.argv)
     print("main(): QGuiApplication created.")
 
