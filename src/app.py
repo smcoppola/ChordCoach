@@ -42,7 +42,6 @@ from logic.services.repertoire_crawler import RepertoireCrawler # type: ignore
 from logic.services.database_manager import DatabaseManager # type: ignore
 from logic.services.chord_trainer import ChordTrainerService # type: ignore
 from logic.services.evaluation_service import EvaluationService # type: ignore
-from logic.services.adaptive_engine import AdaptiveEngineService # type: ignore
 from logic.services.settings_service import SettingsService # type: ignore
 from logic.services.curriculum_service import CurriculumService # type: ignore
 from logic.services.metronome_service import MetronomeService # type: ignore
@@ -72,7 +71,6 @@ class AppState(QObject):
         self._circle_of_fifths = CircleOfFifthsService()
         self._circle_of_fifths.setParent(self)
         
-        self.midi_ingestor = MidiIngestor()
         self.crawler = RepertoireCrawler()
         self.curriculum = CurriculumService(self.db, project_root / "src" / "resources")
         self.curriculum.setParent(self)
@@ -89,9 +87,6 @@ class AppState(QObject):
         
         self.evaluation_engine = EvaluationService(self.db, project_root)
         self.evaluation_engine.setParent(self)
-        
-        self.adaptive_engine = AdaptiveEngineService(self.db, self.settings)
-        self.adaptive_engine.setParent(self)
         
         # Initialize hardware service (handles C++ chordcoach_hw extension and ctypes rtmidi out)
         ll_lib_file = None
@@ -220,10 +215,6 @@ class AppState(QObject):
     @Property(QObject, constant=True)
     def evaluationEngine(self):
         return self.evaluation_engine
-
-    @Property(QObject, constant=True)
-    def adaptiveEngine(self):
-        return self.adaptive_engine
 
     @Property(QObject, constant=True)
     def curriculumEngine(self):

@@ -24,12 +24,4 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(rtmidi)
 
-# PortAudio
-FetchContent_Declare(
-    portaudio
-    GIT_REPOSITORY https://github.com/PortAudio/portaudio.git
-    GIT_TAG master
-)
-FetchContent_MakeAvailable(portaudio)
-
 add_subdirectory(src/hardware)

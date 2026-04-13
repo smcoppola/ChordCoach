@@ -1,11 +1,9 @@
 import os
-import sys
 import ssl
 import threading
 import asyncio
 import json
 import base64
-import struct
 import time
 from datetime import datetime
 import websockets  # type: ignore
@@ -727,36 +725,3 @@ class GeminiService(QObject):
         """Clear the exercise-pending flag. Call ONLY when the student has
         completed an exercise and performance data is about to be sent."""
         self._exercise_pending = False
-
-    def send_audio_chunk(self, pcm_data: list[float]):
-        """
-        Takes raw 16kHz Mono Float32 PCM arrays from the C++ AudioHandler.
-        (Needs to be converted to Base64 16kHz Mono int16 for the Gemini API)
-        """
-        if not self.connected or not self.ws:
-            return
-            
-        # Ducking: if the AI is currently talking (buffer has data, or we wrote to speakers recently),
-        # drop the microphone input so the AI doesn't hear itself and interrupt its own speech.
-        if len(self._audio_buffer) > 0 or (time.time() - self._last_audio_write_time < 0.8):
-            return
-            
-        # 1. Convert float32 [-1.0, 1.0] to int16 [-32768, 32767]
-        int16_data = [int(max(-1.0, min(1.0, s)) * 32767) for s in pcm_data]
-        byte_data = struct.pack(f"<{len(int16_data)}h", *int16_data)
-        
-        # 2. Encode to base64
-        b64_audio = base64.b64encode(byte_data).decode('utf-8')
-        
-        # 3. Format realtimeInput message
-        msg = {
-            "realtimeInput": {
-                "mediaChunks": [{
-                    "mimeType": "audio/pcm;rate=16000",
-                    "data": b64_audio
-                }]
-            }
-        }
-        
-        # 4. Fire and forget to the websocket thread
-        asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)

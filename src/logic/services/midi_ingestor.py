@@ -1,3 +1,8 @@
+"""
+MIDI Ingestor Service
+NOTE: This service is currently unused but kept for future functionality 
+(e.g., recording/exporting performance MIDI data).
+"""
 import mido  # type: ignore
 import pretty_midi  # type: ignore
 from PySide6.QtCore import QObject, Signal, Slot  # type: ignore
@@ -12,6 +17,11 @@ class VisualBlock:
     color: str
 
 class MidiIngestor(QObject):
+    """
+    MIDI Ingestor Service
+    NOTE: This service is currently unused but kept for future functionality 
+    (e.g., recording/exporting performance MIDI data).
+    """
     # Emit a list of dictionaries representing the 'VisualBlocks'
     midiParsed = Signal(list)
     

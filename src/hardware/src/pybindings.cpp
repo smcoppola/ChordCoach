@@ -5,7 +5,6 @@
  * - _deps/portaudio-src/include
  * - _deps/rtmidi-src
  */
-#include "audio_handler.cpp"
 #include "midi_handler.cpp"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -21,10 +20,4 @@ PYBIND11_MODULE(chordcoach_hw, m) {
       .def("getPortNames", &MidiHandler::getPortNames)
       .def("setCallback", &MidiHandler::setCallback)
       .def("setIgnoreTypes", &MidiHandler::setIgnoreTypes);
-
-  py::class_<AudioHandler>(m, "AudioHandler")
-      .def(py::init<>())
-      .def("startCapture", &AudioHandler::startCapture)
-      .def("stopCapture", &AudioHandler::stopCapture)
-      .def("setCallback", &AudioHandler::setCallback);
 }
