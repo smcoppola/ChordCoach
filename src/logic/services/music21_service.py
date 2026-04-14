@@ -1,22 +1,129 @@
-import music21
-from PySide6.QtCore import QObject, Signal, Slot # type: ignore
+from PySide6.QtCore import QObject, Signal, Slot, Property, QThread # type: ignore
 from music21 import corpus, note, chord, stream
 from logic.utils.fingering_optimizer import inject_fingering_to_stream, distribute_chord_fingers
+
+class CorpusDownloadWorker(QThread):
+    """Background worker to download the music21 corpus without locking the UI."""
+    progress = Signal(float)
+    finished = Signal(bool)
+    status = Signal(str)
+    
+    def __init__(self):
+        super().__init__()
+        self.auto_retry_done = False
+        
+    def run(self):
+        from logic.utils.corpus_manager import CorpusManager
+        try:
+            # First attempt
+            self.status.emit("Connecting to PyPI...")
+            if CorpusManager.download_and_extract(progress_callback=self.progress.emit):
+                self.finished.emit(True)
+                return
+        except Exception as e:
+            print(f"CorpusDownloadWorker: First attempt failed: {e}")
+            if not self.auto_retry_done:
+                self.auto_retry_done = True
+                self.status.emit("Connection lost. Retrying once...")
+                import time
+                time.sleep(2)
+                try:
+                    if CorpusManager.download_and_extract(progress_callback=self.progress.emit):
+                        self.finished.emit(True)
+                        return
+                except Exception as e2:
+                    print(f"CorpusDownloadWorker: Retry failed: {e2}")
+        
+        self.finished.emit(False)
 
 class Music21Service(QObject):
     """
     Handles accessing the music21 corpus and parsing scores into UI-friendly steps.
     """
     songRequested = Signal(str)
+    corpusProgressChanged = Signal(float)
+    corpusStatusChanged = Signal(str)
+    corpusReady = Signal()
+    corpusError = Signal()
     
     def __init__(self):
         super().__init__()
         self._catalog = {}
         self._recent_songs = [] # List of song IDs
         self._flat_catalog = [] # Cached flattened list for search
+        
+        # Corpus state
+        self._corpus_progress = 0.0
+        self._corpus_status = ""
+        self._corpus_ready = False
+        self._corpus_error = False
+        self._download_worker = None
+        
+        self._setup_local_corpus()
         self._load_catalog()
         self._load_recents()
 
+    @Property(float, notify=corpusProgressChanged)
+    def corpusProgress(self): return self._corpus_progress
+
+    @Property(str, notify=corpusStatusChanged)
+    def corpusStatus(self): return self._corpus_status
+
+    @Property(bool, notify=corpusReady)
+    def isCorpusReady(self): return self._corpus_ready
+
+    @Property(bool, notify=corpusError)
+    def hasCorpusError(self): return self._corpus_error
+
+    @Slot()
+    def trigger_corpus_download(self):
+        """Starts the corpus download if not already in progress."""
+        if self._download_worker and self._download_worker.isRunning():
+            return
+            
+        self._corpus_error = False
+        self.corpusError.emit()
+        
+        self._download_worker = CorpusDownloadWorker()
+        self._download_worker.progress.connect(self._on_download_progress)
+        self._download_worker.status.connect(self._on_download_status)
+        self._download_worker.finished.connect(self._on_download_finished)
+        self._download_worker.start()
+
+    def _on_download_progress(self, p):
+        self._corpus_progress = p
+        self.corpusProgressChanged.emit(p)
+
+    def _on_download_status(self, s):
+        self._corpus_status = s
+        self.corpusStatusChanged.emit(s)
+
+    def _on_download_finished(self, success):
+        if success:
+            from logic.utils.corpus_manager import CorpusManager
+            CorpusManager.configure_environment()
+            self._corpus_ready = True
+            self._corpus_status = "Corpus Ready"
+            self.corpusReady.emit()
+            # If the catalog was waiting for the corpus, we might want to re-load it or index it
+            if not self._catalog:
+                self._load_catalog()
+        else:
+            self._corpus_error = True
+            self._corpus_status = "Download Failed"
+            self.corpusError.emit()
+
+    def _setup_local_corpus(self):
+        """Checks if the corpus is present and configures the environment."""
+        from logic.utils.corpus_manager import CorpusManager
+        if CorpusManager.is_corpus_present():
+            CorpusManager.configure_environment()
+            self._corpus_ready = True
+            self._corpus_status = "Corpus Ready"
+        else:
+            self._corpus_ready = False
+            self._corpus_status = "Corpus Missing"
+            
     def _load_catalog(self):
         """Loads the hierarchical catalog from the local cache."""
         try:

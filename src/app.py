@@ -281,9 +281,10 @@ def main():
     # Schedule the heavy hardware/network init to run AFTER the event loop
     # has started and the UI window is on screen.  This prevents the macOS
     # launch hang caused by CoreMIDI/CoreAudio calls before the run-loop
-    # is active.
-    print("main(): Scheduling deferred_start in 100 ms…")
-    QTimer.singleShot(100, app_state.deferred_start)
+    # is active. On Windows, this also gives the OS a moment to release
+    # MIDI ports from any previous process.
+    print("main(): Scheduling deferred_start in 250 ms…")
+    QTimer.singleShot(250, app_state.deferred_start)
 
     print("main(): Entering event loop.")
     sys.exit(app.exec())

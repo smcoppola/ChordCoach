@@ -575,348 +575,484 @@ Rectangle {
             }
         }
 
-        contentItem: ColumnLayout {
-            spacing: 16
-            
-            // Bridge the dashboard ID directly into the popup's content scope
-            property var hostDashboard: root
-
-            // Search bar
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 45 * mainWindow.uiScale
-                Layout.margins: 10 * mainWindow.uiScale
-                color: "#2a2a2a"
-                radius: 8 * mainWindow.uiScale
-                border.color: searchInput.activeFocus ? "#2196F3" : "#444444"
+        contentItem: Item {
+            // Main Catalog UI
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 16
+                visible: !!appState && !!appState.music21Service && appState.music21Service.isCorpusReady
                 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 8 * mainWindow.uiScale
-                    spacing: 12
+                // Bridge the dashboard ID directly into the popup's content scope
+                property var hostDashboard: root
+
+                // Search bar
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 45 * mainWindow.uiScale
+                    Layout.margins: 10 * mainWindow.uiScale
+                    color: "#2a2a2a"
+                    radius: 8 * mainWindow.uiScale
+                    border.color: searchInput.activeFocus ? "#2196F3" : "#444444"
                     
-                    Text { 
-                        text: "🔍"
-                        font.pixelSize: 16 * mainWindow.uiScale
-                        opacity: 0.6
-                    }
-                    
-                    TextInput {
-                        id: searchInput
-                        Layout.fillWidth: true
-                        color: "white"
-                        font.pixelSize: 14 * mainWindow.uiScale
-                        selectByMouse: true
-                        text: songPicker.searchQuery
-                        onTextChanged: songPicker.searchQuery = text
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 8 * mainWindow.uiScale
+                        spacing: 12
+                        
+                        Text { 
+                            text: "🔍"
+                            font.pixelSize: 16 * mainWindow.uiScale
+                            opacity: 0.6
+                        }
+                        
+                        TextInput {
+                            id: searchInput
+                            Layout.fillWidth: true
+                            color: "white"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            selectByMouse: true
+                            text: songPicker.searchQuery
+                            onTextChanged: songPicker.searchQuery = text
+                            
+                            Text {
+                                text: "Search songs or composers..."
+                                color: "#666666"
+                                font.pixelSize: 14 * mainWindow.uiScale
+                                visible: parent.text.length === 0 && !parent.activeFocus
+                            }
+                        }
                         
                         Text {
-                            text: "Search songs or composers..."
-                            color: "#666666"
+                            text: "✕"
                             font.pixelSize: 14 * mainWindow.uiScale
-                            visible: parent.text.length === 0 && !parent.activeFocus
-                        }
-                    }
-                    
-                    Text {
-                        text: "✕"
-                        font.pixelSize: 14 * mainWindow.uiScale
-                        color: "#666666"
-                        visible: songPicker.searchQuery.length > 0
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                searchInput.text = "";
-                                searchInput.forceActiveFocus();
+                            color: "#666666"
+                            visible: songPicker.searchQuery.length > 0
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    searchInput.text = "";
+                                    searchInput.forceActiveFocus();
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Header Section
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                visible: songPicker.searchQuery.length === 0
+                // Header Section
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    visible: songPicker.searchQuery.length === 0
+                    
+                    Text {
+                        text: "REPERTOIRE CATALOG"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.bold: true
+                        font.letterSpacing: 4 * mainWindow.uiScale
+                        color: "#666666"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: songPicker.catalogPath.length === 0 ? "Choose Difficulty" : 
+                              songPicker.catalogPath.length === 1 ? "Select Style" :
+                              songPicker.catalogPath.length === 2 ? "Select Composer" : "Pick a Song"
+                        font.pixelSize: 22 * mainWindow.uiScale
+                        font.bold: true
+                        color: "#ffffff"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
                 
+                // Search Results Header
                 Text {
-                    text: "REPERTOIRE CATALOG"
+                    text: "SEARCH RESULTS"
                     font.pixelSize: 12 * mainWindow.uiScale
                     font.bold: true
                     font.letterSpacing: 4 * mainWindow.uiScale
-                    color: "#666666"
+                    color: "#2196F3"
                     Layout.alignment: Qt.AlignHCenter
+                    visible: songPicker.searchQuery.length > 0
                 }
 
-                Text {
-                    text: songPicker.catalogPath.length === 0 ? "Choose Difficulty" : 
-                          songPicker.catalogPath.length === 1 ? "Select Style" :
-                          songPicker.catalogPath.length === 2 ? "Select Composer" : "Pick a Song"
-                    font.pixelSize: 22 * mainWindow.uiScale
-                    font.bold: true
-                    color: "#ffffff"
-                    Layout.alignment: Qt.AlignHCenter
-                }
-            }
-            
-            // Search Results Header
-            Text {
-                text: "SEARCH RESULTS"
-                font.pixelSize: 12 * mainWindow.uiScale
-                font.bold: true
-                font.letterSpacing: 4 * mainWindow.uiScale
-                color: "#2196F3"
-                Layout.alignment: Qt.AlignHCenter
-                visible: songPicker.searchQuery.length > 0
-            }
-
-            // Navigation / Breadcrumbs
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40 * mainWindow.uiScale
-                visible: songPicker.catalogPath.length > 0 && songPicker.searchQuery.length === 0
-                
-                Rectangle {
-                    width: 80 * mainWindow.uiScale
-                    height: 30 * mainWindow.uiScale
-                    radius: 15 * mainWindow.uiScale
-                    color: backMouse.containsMouse ? "#333333" : "#2a2a2a"
-                    border.color: "#444444"
-                    
-                    Text {
-                        anchors.centerIn: parent
-                        text: "← BACK"
-                        color: "#2196F3"
-                        font.bold: true
-                        font.pixelSize: 11 * mainWindow.uiScale
-                    }
-                    
-                    MouseArea {
-                        id: backMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: {
-                            var p = songPicker.catalogPath;
-                            songPicker.catalogPath = p.slice(0, -1); // Force fresh reference
-                        }
-                    }
-                }
-                    
-                Row {
-                    spacing: 8
+                // Navigation / Breadcrumbs
+                RowLayout {
                     Layout.fillWidth: true
+                    Layout.preferredHeight: 40 * mainWindow.uiScale
+                    visible: songPicker.catalogPath.length > 0 && songPicker.searchQuery.length === 0
                     
-                    // Recently Played Shelf (only at root level)
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: songPicker.catalogPath.length === 0 && songPicker.searchQuery.length === 0 && appState.music21Service.get_recent_songs().length > 0
-                        spacing: 8
+                    Rectangle {
+                        width: 80 * mainWindow.uiScale
+                        height: 30 * mainWindow.uiScale
+                        radius: 15 * mainWindow.uiScale
+                        color: backMouse.containsMouse ? "#333333" : "#2a2a2a"
+                        border.color: "#444444"
                         
                         Text {
-                            text: "RECENTLY PLAYED"
-                            color: "#666666"
-                            font.pixelSize: 10 * mainWindow.uiScale
+                            anchors.centerIn: parent
+                            text: "← BACK"
+                            color: "#2196F3"
                             font.bold: true
-                            Layout.leftMargin: 4
+                            font.pixelSize: 11 * mainWindow.uiScale
                         }
                         
-                        RowLayout {
-                            spacing: 12
-                            Repeater {
-                                model: appState.music21Service.get_recent_songs()
-                                delegate: Rectangle {
-                                    width: 140 * mainWindow.uiScale
-                                    height: 80 * mainWindow.uiScale
-                                    radius: 10 * mainWindow.uiScale
-                                    color: recentMouse.containsMouse ? "#2196F315" : "#1a1a1a"
-                                    border.color: recentMouse.containsMouse ? "#2196F3" : "#333333"
-                                    
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 10
-                                        spacing: 2
-                                        Text {
-                                            text: modelData.title
-                                            color: "white"
-                                            font.pixelSize: 12 * mainWindow.uiScale
-                                            font.bold: true
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
-                                        Text {
-                                            text: modelData.artist
-                                            color: "#888888"
-                                            font.pixelSize: 10 * mainWindow.uiScale
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
-                                        Item { Layout.fillHeight: true }
-                                        Rectangle {
-                                            width: 50 * mainWindow.uiScale
-                                            height: 14 * mainWindow.uiScale
-                                            radius: 3 * mainWindow.uiScale
-                                            color: root.getColorForGrade(modelData.level)
+                        MouseArea {
+                            id: backMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                var p = songPicker.catalogPath;
+                                songPicker.catalogPath = p.slice(0, -1); // Force fresh reference
+                            }
+                        }
+                    }
+                        
+                    Row {
+                        spacing: 8
+                        Layout.fillWidth: true
+                        
+                        // Recently Played Shelf (only at root level)
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: !!songPicker && songPicker.catalogPath.length === 0 && songPicker.searchQuery.length === 0 && !!appState && !!appState.music21Service && appState.music21Service.get_recent_songs().length > 0
+                            spacing: 8
+                            
+                            Text {
+                                text: "RECENTLY PLAYED"
+                                color: "#666666"
+                                font.pixelSize: 10 * mainWindow.uiScale
+                                font.bold: true
+                                Layout.leftMargin: 4
+                            }
+                            
+                            RowLayout {
+                                spacing: 12
+                                Repeater {
+                                    model: (!!appState && !!appState.music21Service) ? appState.music21Service.get_recent_songs() : []
+                                    delegate: Rectangle {
+                                        width: 140 * mainWindow.uiScale
+                                        height: 80 * mainWindow.uiScale
+                                        radius: 10 * mainWindow.uiScale
+                                        color: recentMouse.containsMouse ? "#2196F315" : "#1a1a1a"
+                                        border.color: recentMouse.containsMouse ? "#2196F3" : "#333333"
+                                        
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: 10
+                                            spacing: 2
                                             Text {
-                                                anchors.centerIn: parent
-                                                text: modelData.level
-                                                font.pixelSize: 8 * mainWindow.uiScale
+                                                text: modelData.title
                                                 color: "white"
+                                                font.pixelSize: 12 * mainWindow.uiScale
                                                 font.bold: true
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                            Text {
+                                                text: modelData.artist
+                                                color: "#888888"
+                                                font.pixelSize: 10 * mainWindow.uiScale
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                            Item { Layout.fillHeight: true }
+                                            Rectangle {
+                                                width: 50 * mainWindow.uiScale
+                                                height: 14 * mainWindow.uiScale
+                                                radius: 3 * mainWindow.uiScale
+                                                color: root.getColorForGrade(modelData.level)
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: modelData.level
+                                                    font.pixelSize: 8 * mainWindow.uiScale
+                                                    color: "white"
+                                                    font.bold: true
+                                                }
+                                            }
+                                        }
+                                        
+                                        MouseArea {
+                                            id: recentMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                appState.music21Service.mark_song_played(modelData.id);
+                                                appState.music21Service.songRequested(modelData.id);
+                                                songPicker.close();
                                             }
                                         }
                                     }
-                                    
-                                    MouseArea {
-                                        id: recentMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            appState.music21Service.mark_song_played(modelData.id);
-                                            appState.music21Service.songRequested(modelData.id);
-                                            songPicker.close();
-                                        }
-                                    }
                                 }
                             }
-                        }
-                        
-                        Item { Layout.preferredHeight: 15 } // Spacer
-                        
-                        Rectangle {
-                            Layout.fillWidth: true
-                            height: 1
-                            color: "#333333"
-                        }
-                        
-                        Item { Layout.preferredHeight: 10 } // Spacer
-                    }
-
-                    Repeater {
-                        model: songPicker.catalogPath
-                        delegate: Text {
-                            text: modelData + (index < songPicker.catalogPath.length - 1 ? "  ›  " : "")
-                            color: breadMouse.containsMouse ? "#ffffff" : "#666666"
-                            font.pixelSize: 12 * mainWindow.uiScale
-                            font.bold: index === songPicker.catalogPath.length - 1
                             
-                            MouseArea {
-                                id: breadMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    songPicker.catalogPath = songPicker.catalogPath.slice(0, index + 1);
+                            Item { Layout.preferredHeight: 15 } // Spacer
+                            
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: "#333333"
+                            }
+                            
+                            Item { Layout.preferredHeight: 10 } // Spacer
+                        }
+
+                        Repeater {
+                            model: songPicker.catalogPath
+                            delegate: Text {
+                                text: modelData + (index < songPicker.catalogPath.length - 1 ? "  ›  " : "")
+                                color: breadMouse.containsMouse ? "#ffffff" : "#666666"
+                                font.pixelSize: 12 * mainWindow.uiScale
+                                font.bold: index === songPicker.catalogPath.length - 1
+                                
+                                MouseArea {
+                                    id: breadMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        songPicker.catalogPath = songPicker.catalogPath.slice(0, index + 1);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
 
-                ColumnLayout {
-                    width: songPicker.width - 48
-                    spacing: 10
-                    
-                    Repeater {
-                        model: {
-                            if (!appState || !appState.music21Service) return [];
-                            if (songPicker.searchQuery.length >= 2) {
-                                return appState.music21Service.search_catalog(songPicker.searchQuery);
+                    ColumnLayout {
+                        width: songPicker.width - 48
+                        spacing: 10
+                        
+                        Repeater {
+                            model: {
+                                if (!appState || !appState.music21Service) return [];
+                                if (songPicker.searchQuery.length >= 2) {
+                                    return appState.music21Service.search_catalog(songPicker.searchQuery);
+                                }
+                                return appState.music21Service.get_catalog_level(songPicker.catalogPath);
                             }
-                            return appState.music21Service.get_catalog_level(songPicker.catalogPath);
-                        }
-                        delegate: Rectangle {
-                            id: catalogEntry
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: (modelData.isCategory ? 50 : 70) * mainWindow.uiScale
-                            radius: 8 * mainWindow.uiScale
-                            color: entryMouse.containsMouse ? "#1a2a3a" : "#2a2a2a"
-                            border.color: entryMouse.containsMouse ? "#2196F3" : "#444444"
-                            border.width: 1
+                            delegate: Rectangle {
+                                id: catalogEntry
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: (modelData.isCategory ? 50 : 70) * mainWindow.uiScale
+                                radius: 8 * mainWindow.uiScale
+                                color: entryMouse.containsMouse ? "#1a2a3a" : "#2a2a2a"
+                                border.color: entryMouse.containsMouse ? "#2196F3" : "#444444"
+                                border.width: 1
 
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 12
-                                spacing: 2
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 2
 
-                                RowLayout {
-                                    Layout.fillWidth: true
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Text {
+                                            text: (!!modelData.isCategory ? "📁  " : "🎵  ") + (modelData.title || modelData.id || "")
+                                            color: "#ffffff"
+                                            font.pixelSize: (!!modelData.isCategory ? 16 : 14) * mainWindow.uiScale
+                                            font.bold: true
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                        
+                                        // Item level tag for songs
+                                        Rectangle {
+                                            visible: !modelData.isCategory
+                                            width: 75 * mainWindow.uiScale
+                                            height: 22 * mainWindow.uiScale
+                                            radius: 4 * mainWindow.uiScale
+                                            color: root.getColorForGrade(modelData.level)
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData.level || ""
+                                                color: "white"
+                                                font.pixelSize: 10 * mainWindow.uiScale
+                                                font.bold: true
+                                            }
+                                        }
+                                        
+                                        Text {
+                                            visible: !!modelData.isCategory
+                                            text: "→"
+                                            color: "#444444"
+                                            font.pixelSize: 18 * mainWindow.uiScale
+                                        }
+                                    }
+
                                     Text {
-                                        text: (!!modelData.isCategory ? "📁  " : "🎵  ") + (modelData.title || modelData.id || "")
-                                        color: "#ffffff"
-                                        font.pixelSize: (!!modelData.isCategory ? 16 : 14) * mainWindow.uiScale
-                                        font.bold: true
+                                        visible: !modelData.isCategory
+                                        text: modelData.artist || "Unknown Composer"
+                                        color: "#888888"
+                                        font.pixelSize: 11 * mainWindow.uiScale
+                                        Layout.leftMargin: 26 * mainWindow.uiScale
                                         Layout.fillWidth: true
                                         elide: Text.ElideRight
                                     }
-                                    
-                                    // Item level tag for songs
-                                    Rectangle {
-                                        visible: !modelData.isCategory
-                                        width: 75 * mainWindow.uiScale
-                                        height: 22 * mainWindow.uiScale
-                                        radius: 4 * mainWindow.uiScale
-                                        color: root.getColorForGrade(modelData.level)
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: modelData.level || ""
-                                            color: "white"
-                                            font.pixelSize: 10 * mainWindow.uiScale
-                                            font.bold: true
-                                        }
-                                    }
-                                    
-                                    Text {
-                                        visible: !!modelData.isCategory
-                                        text: "→"
-                                        color: "#444444"
-                                        font.pixelSize: 18 * mainWindow.uiScale
-                                    }
                                 }
 
-                                Text {
-                                    visible: !modelData.isCategory
-                                    text: modelData.artist || "Unknown Composer"
-                                    color: "#888888"
-                                    font.pixelSize: 11 * mainWindow.uiScale
-                                    Layout.leftMargin: 26 * mainWindow.uiScale
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            MouseArea {
-                                id: entryMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (!!modelData.isCategory) {
-                                        var p = songPicker.catalogPath;
-                                        songPicker.catalogPath = p.concat([modelData.id]);
-                                    } else {
-                                        console.log("Dashboard: Requesting song selection: " + modelData.id);
-                                        if (typeof appState !== "undefined" && appState && appState.music21Service) {
-                                            appState.music21Service.mark_song_played(modelData.id);
-                                            appState.music21Service.songRequested(modelData.id);
+                                MouseArea {
+                                    id: entryMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (!!modelData.isCategory) {
+                                            var p = songPicker.catalogPath;
+                                            songPicker.catalogPath = p.concat([modelData.id]);
+                                        } else {
+                                            console.log("Dashboard: Requesting song selection: " + modelData.id);
+                                            if (typeof appState !== "undefined" && appState && appState.music21Service) {
+                                                appState.music21Service.mark_song_played(modelData.id);
+                                                appState.music21Service.songRequested(modelData.id);
+                                            }
+                                            songPicker.close();
+                                            songPicker.catalogPath = [];
                                         }
-                                        songPicker.close();
-                                        songPicker.catalogPath = [];
                                     }
                                 }
                             }
                         }
+                        
+                        Item { Layout.preferredHeight: 20 * mainWindow.uiScale }
                     }
-                    
-                    Item { Layout.preferredHeight: 20 * mainWindow.uiScale }
+                }
+            }
+            
+            // ── Corpus Download Overlay ──
+            Rectangle {
+                anchors.fill: parent
+                color: "#1c1c1e"
+                visible: !!appState && !!appState.music21Service && !appState.music21Service.isCorpusReady
+                radius: 16 * mainWindow.uiScale
+                z: 100
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 24 * mainWindow.uiScale
+                    width: parent.width * 0.8
+
+                    Text {
+                        text: "📁 REPERTOIRE CORPUS"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.bold: true
+                        font.letterSpacing: 4 * mainWindow.uiScale
+                        color: "#2196F3"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "Core library assets missing"
+                        font.pixelSize: 22 * mainWindow.uiScale
+                        font.bold: true
+                        color: "#ffffff"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "To browse thousand of classical pieces and exercises, we need to download the music21 corpus (approx. 80MB)."
+                        color: "#888888"
+                        font.pixelSize: 14 * mainWindow.uiScale
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        visible: !!appState && !!appState.music21Service && appState.music21Service.corpusProgress === 0 && !appState.music21Service.hasCorpusError
+                    }
+
+                    // Progress Area
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 12 * mainWindow.uiScale
+                        visible: !!appState && !!appState.music21Service && appState.music21Service.corpusProgress > 0 && !appState.music21Service.hasCorpusError
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 8 * mainWindow.uiScale
+                            color: "#333333"
+                            radius: 4 * mainWindow.uiScale
+                            clip: true
+
+                            Rectangle {
+                                width: parent.width * (!!appState && !!appState.music21Service ? appState.music21Service.corpusProgress : 0)
+                                height: parent.height
+                                color: "#2196F3"
+                                radius: 4 * mainWindow.uiScale
+                                
+                                Behavior on width { NumberAnimation { duration: 200 } }
+                            }
+                        }
+
+                        Text {
+                            text: ((!!appState && !!appState.music21Service) ? Math.floor(appState.music21Service.corpusProgress * 100) : 0) + "% Complete"
+                            color: "#2196F3"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            font.bold: true
+                            font.family: "Monospace"
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+                    }
+
+                    // Status Text
+                    Text {
+                        text: (!!appState && !!appState.music21Service) ? appState.music21Service.corpusStatus : ""
+                        color: (!!appState && !!appState.music21Service && appState.music21Service.hasCorpusError) ? "#FF5252" : "#666666"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    // Action Buttons
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        spacing: 20 * mainWindow.uiScale
+
+                        Button {
+                            text: "Download Now"
+                            visible: !!appState && !!appState.music21Service && appState.music21Service.corpusProgress === 0 && !appState.music21Service.hasCorpusError
+                            onClicked: if (appState && appState.music21Service) appState.music21Service.trigger_corpus_download()
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                color: "white"
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            
+                            background: Rectangle {
+                                implicitWidth: 160 * mainWindow.uiScale
+                                implicitHeight: 45 * mainWindow.uiScale
+                                color: parent.pressed ? "#1976D2" : "#2196F3"
+                                radius: 8 * mainWindow.uiScale
+                            }
+                        }
+
+                        Button {
+                            text: "Retry Download"
+                            visible: !!appState && !!appState.music21Service && appState.music21Service.hasCorpusError
+                            onClicked: if (appState && appState.music21Service) appState.music21Service.trigger_corpus_download()
+                            
+                            contentItem: Text {
+                                text: parent.text
+                                color: "white"
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            
+                            background: Rectangle {
+                                implicitWidth: 160 * mainWindow.uiScale
+                                implicitHeight: 45 * mainWindow.uiScale
+                                color: parent.pressed ? "#D32F2F" : "#F44336"
+                                radius: 8 * mainWindow.uiScale
+                            }
+                        }
+                    }
                 }
             }
         }

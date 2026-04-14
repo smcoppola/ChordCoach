@@ -187,6 +187,11 @@ class MidiHardwareService(QObject):
             # 2. Retrieve port listing from the OS
             ports = probe_handler.getPortNames() if probe_handler else []
             
+            # CRITICAL: Explicitly release probe handler to avoid port locking on Windows WinMM
+            probe_handler = None
+            import gc
+            gc.collect()
+            
             # 3. Fallback: If C++ extension fails, verify if lower-level ctypes can see ports
             if not ports and self._ll_midi_out:
                 ports = self._ll_midi_out.get_port_names()
@@ -210,16 +215,30 @@ class MidiHardwareService(QObject):
                 print(f"MidiHardwareService: MIDI Device detected during polling: {ports[0]}")
 
             # 6. Instantiate permanent listener and bind to first available hardware port (Index 0)
-            try:
-                # Force garbage collection/release of old pointer if re-initializing
-                self.hw_midi_in = None 
-                
-                m_handler = self.hw_module.MidiHandler()
-                m_handler.openPort(0)
-                m_handler.setCallback(self._on_raw_midi_data)
-                self.hw_midi_in = m_handler
-            except Exception as e:
-                print(f"MidiHardwareService: Failed to bind MIDI port listener: {e}")
+            # We use a retry loop because on Windows, the OS may not release the port 
+            # instantaneously from a previous process or probe.
+            bind_success = False
+            last_err = ""
+            for attempt in range(3):
+                try:
+                    # Force garbage collection/release of any old pointer if re-initializing
+                    self.hw_midi_in = None 
+                    gc.collect()
+                    
+                    m_handler = self.hw_module.MidiHandler()
+                    m_handler.openPort(0)
+                    m_handler.setCallback(self._on_raw_midi_data)
+                    self.hw_midi_in = m_handler
+                    bind_success = True
+                    break
+                except Exception as e:
+                    last_err = str(e)
+                    print(f"MidiHardwareService: Retrying MIDI bind (Attempt {attempt+1}/3) due to: {e}")
+                    import time
+                    time.sleep(0.5)
+
+            if not bind_success:
+                print(f"MidiHardwareService: Failed to bind MIDI port listener after 3 attempts: {last_err}")
                 return False
 
             # 7. Update internal state and notify application

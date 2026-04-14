@@ -68,6 +68,10 @@ if os.path.isdir('src/resources'):
 if os.path.isdir('database'):
     datas_list.append(('database', 'database'))
 
+# User Scores folder (optional at build time)
+if os.path.isdir('music21'):
+    datas_list.append(('music21', 'music21'))
+
 # Configuration and Icon
 if os.path.exists('.env'):
     datas_list.append(('.env', '.'))
@@ -85,6 +89,13 @@ if os.path.exists(portaudio_lib_path):
 # Collect music21 and pretty_midi assets
 m21_datas, m21_binaries, m21_hiddenimports = collect_all('music21')
 pm_datas, pm_binaries, pm_hiddenimports = collect_all('pretty_midi')
+
+# Filter music21 data to exclude bulky assets (corpus, docs, tests)
+m21_excluded = ('music21/corpus/', 'music21/test/', 'music21/documentation/', 'music21/demos/')
+m21_datas = [
+    (src, dst) for src, dst in m21_datas
+    if not any(src.replace('\\','/').find(e) >= 0 for e in m21_excluded)
+]
 
 datas_list += m21_datas + pm_datas
 binaries_list += m21_binaries + pm_binaries
