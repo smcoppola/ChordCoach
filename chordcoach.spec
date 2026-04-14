@@ -17,24 +17,23 @@ def find_file(pattern, default):
 if is_win:
     hw_ext_path = find_file('build/src/hardware/Release/chordcoach_hw*.pyd', 'build/src/hardware/Release/chordcoach_hw.pyd')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/Release/rtmidi.dll'
-    portaudio_lib_path = 'build/_deps/portaudio-build/Release/portaudio.dll'
+    # portaudio_lib_path removed -- mic dependency cleanup
     app_icon = 'resources/icon.ico'
 elif is_mac:
     # Use wildcards or assume typical CMake output paths for macOS
     hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so') 
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.dylib'
-    portaudio_lib_path = 'build/_deps/portaudio-build/libportaudio.dylib'
+    # portaudio_lib_path removed -- mic dependency cleanup
     app_icon = 'resources/icon.png'
 else:
     hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.so'
-    portaudio_lib_path = 'build/_deps/portaudio-build/libportaudio.so'
+    # portaudio_lib_path removed -- mic dependency cleanup
     app_icon = 'resources/icon.png'
 
 # Paths to assets
 hw_extension = (hw_ext_path, '.')
 rtmidi_dll = (rtmidi_lib_path, '.')
-portaudio_dll = (portaudio_lib_path, '.')
 ui_files = (
     'src/ui',
     'ui'
@@ -68,9 +67,9 @@ if os.path.isdir('src/resources'):
 if os.path.isdir('database'):
     datas_list.append(('database', 'database'))
 
-# User Scores folder (optional at build time)
-if os.path.isdir('music21'):
-    datas_list.append(('music21', 'music21'))
+# User Scores folder (REMOVED - logic moved to on-demand download)
+# if os.path.isdir('music21'):
+#     datas_list.append(('music21', 'music21'))
 
 # Configuration and Icon
 if os.path.exists('.env'):
@@ -83,8 +82,6 @@ if os.path.exists(hw_ext_path):
     binaries_list.append((hw_ext_path, '.'))
 if os.path.exists(rtmidi_lib_path):
     binaries_list.append((rtmidi_lib_path, '.'))
-if os.path.exists(portaudio_lib_path):
-    binaries_list.append((portaudio_lib_path, '.'))
 
 # Collect music21 and pretty_midi assets
 m21_datas, m21_binaries, m21_hiddenimports = collect_all('music21')
@@ -186,8 +183,5 @@ if is_mac:
         name='ChordCoachCompanion.app',
         icon=app_icon,
         bundle_identifier='com.chordcoach.companion',
-        info_plist={
-            'NSMicrophoneUsageDescription': 'Required for AI voice interaction',
-            'NSCameraUsageDescription': 'Optional for future features',
-        },
+        info_plist={},
     )

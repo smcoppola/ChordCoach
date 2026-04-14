@@ -246,7 +246,9 @@ def main():
     qmlRegisterType(NotationView, "ChordCoach", 1, 0, "NotationView")
     
     app = QGuiApplication(sys.argv)
-    print("main(): QGuiApplication created.")
+    app.setApplicationName("ChordCoach")
+    app.setOrganizationName("ChordCoach")
+    print("main(): QGuiApplication created (Name: ChordCoach).")
 
     # Register bundled fonts so QML can render them natively without warnings
     font_dir = project_root / ("src/resources/fonts" if not is_frozen else "resources/fonts")
