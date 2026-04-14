@@ -8,13 +8,24 @@ Rectangle {
 
     signal recalibrateRequested()
 
+    function saveKeyLogic() {
+        if (typeof appState !== "undefined" && appState !== null && appState.settingsService) {
+            appState.settingsService.apiKey = apiKeyInput.text;
+            saveFeedback.start();
+        }
+    }
+
     Flickable {
         id: flickable
         anchors.fill: parent
         anchors.margins: 24 * mainWindow.uiScale
         contentHeight: settingsColumn.implicitHeight
         clip: true
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        
+        ScrollBar.vertical: ScrollBar { 
+            policy: ScrollBar.AsNeeded
+            width: Math.max(12, 10 * mainWindow.uiScale) 
+        }
 
         ColumnLayout {
             id: settingsColumn
@@ -42,16 +53,12 @@ Rectangle {
                         placeholderText: "Enter your Google Gemini API Key"
                         echoMode: TextInput.Password
                         text: (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.apiKey : ""
+                        onAccepted: root.saveKeyLogic()
                     }
 
                     Button {
                         text: "Save API Key"
-                        onClicked: {
-                            if (typeof appState !== "undefined" && appState !== null && appState.settingsService) {
-                                appState.settingsService.apiKey = apiKeyInput.text;
-                                saveFeedback.start();
-                            }
-                        }
+                        onClicked: root.saveKeyLogic()
                     }
                     
                     Text {
@@ -93,11 +100,12 @@ Rectangle {
                                 model: ["Puck", "Kore", "Charon", "Fenrir", "Aoede", "Leda"]
                                 currentIndex: {
                                     var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachVoice : "Kore";
-                                    return model.indexOf(v) >= 0 ? model.indexOf(v) : 2;
+                                    var idx = voiceCombo.find(v);
+                                    return idx >= 0 ? idx : 1;
                                 }
-                                onActivated: {
+                                onActivated: function(index) {
                                     if (typeof appState !== "undefined" && appState !== null && appState.settingsService)
-                                        appState.settingsService.coachVoice = model[currentIndex];
+                                        appState.settingsService.coachVoice = model[index];
                                 }
                             }
                         }
@@ -111,11 +119,12 @@ Rectangle {
                                 model: ["Detailed", "Normal", "Terse"]
                                 currentIndex: {
                                     var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachBrevity : "Normal";
-                                    return model.indexOf(v) >= 0 ? model.indexOf(v) : 1;
+                                    var idx = brevityCombo.find(v);
+                                    return idx >= 0 ? idx : 1;
                                 }
-                                onActivated: {
+                                onActivated: function(index) {
                                     if (typeof appState !== "undefined" && appState !== null && appState.settingsService)
-                                        appState.settingsService.coachBrevity = model[currentIndex];
+                                        appState.settingsService.coachBrevity = model[index];
                                 }
                             }
                         }
@@ -129,11 +138,12 @@ Rectangle {
                                 model: ["Balanced", "Encouraging", "Old-School"]
                                 currentIndex: {
                                     var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.coachPersonality : "Balanced";
-                                    return model.indexOf(v) >= 0 ? model.indexOf(v) : 0;
+                                    var idx = personalityCombo.find(v);
+                                    return idx >= 0 ? idx : 0;
                                 }
-                                onActivated: {
+                                onActivated: function(index) {
                                     if (typeof appState !== "undefined" && appState !== null && appState.settingsService)
-                                        appState.settingsService.coachPersonality = model[currentIndex];
+                                        appState.settingsService.coachPersonality = model[index];
                                 }
                             }
                         }
@@ -235,7 +245,7 @@ Rectangle {
                                 var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.notationStyle : "enhanced";
                                 return v === "traditional" ? 1 : 0;
                             }
-                            onActivated: {
+                            onActivated: function(index) {
                                 if (typeof appState !== "undefined" && appState !== null && appState.settingsService) {
                                     appState.settingsService.notationStyle = (index === 1 ? "traditional" : "enhanced");
                                 }
@@ -272,7 +282,7 @@ Rectangle {
                                 var v = (typeof appState !== "undefined" && appState !== null && appState.settingsService) ? appState.settingsService.notationColorMode : "pedagogical";
                                 return v === "monochrome" ? 1 : 0;
                             }
-                            onActivated: {
+                            onActivated: function(index) {
                                 if (typeof appState !== "undefined" && appState !== null && appState.settingsService) {
                                     appState.settingsService.notationColorMode = (index === 1 ? "monochrome" : "pedagogical");
                                 }

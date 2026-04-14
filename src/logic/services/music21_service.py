@@ -13,6 +13,7 @@ class Music21Service(QObject):
         super().__init__()
         self._catalog = {}
         self._recent_songs = [] # List of song IDs
+        self._flat_catalog = [] # Cached flattened list for search
         self._load_catalog()
         self._load_recents()
 
@@ -31,9 +32,27 @@ class Music21Service(QObject):
                 print("Music21Service: Catalog cache not found. Re-indexing...")
                 from logic.utils.corpus_indexer import index_corpus
                 self._catalog = index_corpus()
+            
+            # Populate search cache
+            self._flat_catalog = self._flatten_catalog(self._catalog)
         except Exception as e:
             print(f"Music21Service: Error loading catalog: {e}")
             self._catalog = {}
+
+    def _flatten_catalog(self, node):
+        """Recursively flattens the hierarchical catalog into a list of songs."""
+        songs = []
+        if isinstance(node, list):
+            for item in node:
+                if isinstance(item, dict):
+                    if item.get("isCategory") and "children" in item:
+                        songs.extend(self._flatten_catalog(item["children"]))
+                    else:
+                        songs.append(item)
+        elif isinstance(node, dict):
+            for v in node.values():
+                songs.extend(self._flatten_catalog(v))
+        return songs
 
     @Slot(list, result="QVariantList")
     def get_catalog_level(self, path):
@@ -104,26 +123,28 @@ class Music21Service(QObject):
     def get_recent_songs(self):
         """Returns the full metadata for the 5 most recent songs."""
         res = []
-        # Flattened lookup for speed
-        flat_all = []
-        def flatten(node):
-            if isinstance(node, list):
-                for item in node:
-                    if isinstance(item, dict):
-                        if item.get("isCategory") and "children" in item:
-                            flatten(item["children"])
-                        else:
-                            flat_all.append(item)
-            elif isinstance(node, dict):
-                for v in node.values():
-                    flatten(v)
-        flatten(self._catalog)
-        
-        lookup = {s['id']: s for s in flat_all}
+        lookup = {s['id']: s for s in self._flat_catalog}
         for sid in self._recent_songs:
             if sid in lookup:
                 res.append(lookup[sid])
         return res[:5]
+
+    @Slot(str, result="QVariantList")
+    def search_catalog(self, query):
+        """Performs a case-insensitive search across titles and artists."""
+        if not query or len(query) < 2:
+            return []
+            
+        q = query.lower()
+        matches = []
+        for song in self._flat_catalog:
+            title = song.get("title", "").lower()
+            artist = song.get("artist", "").lower()
+            if q in title or q in artist:
+                matches.append(song)
+            if len(matches) >= 50: # Cap for performance
+                break
+        return matches
 
     @Slot(str)
     def mark_song_played(self, song_id):

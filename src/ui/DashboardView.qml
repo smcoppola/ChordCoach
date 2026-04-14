@@ -556,6 +556,7 @@ Rectangle {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         
         property var catalogPath: []
+        property string searchQuery: ""
 
         background: Rectangle {
             color: "#1c1c1e"
@@ -580,10 +581,65 @@ Rectangle {
             // Bridge the dashboard ID directly into the popup's content scope
             property var hostDashboard: root
 
+            // Search bar
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 45 * mainWindow.uiScale
+                Layout.margins: 10 * mainWindow.uiScale
+                color: "#2a2a2a"
+                radius: 8 * mainWindow.uiScale
+                border.color: searchInput.activeFocus ? "#2196F3" : "#444444"
+                
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 8 * mainWindow.uiScale
+                    spacing: 12
+                    
+                    Text { 
+                        text: "🔍"
+                        font.pixelSize: 16 * mainWindow.uiScale
+                        opacity: 0.6
+                    }
+                    
+                    TextInput {
+                        id: searchInput
+                        Layout.fillWidth: true
+                        color: "white"
+                        font.pixelSize: 14 * mainWindow.uiScale
+                        selectByMouse: true
+                        text: songPicker.searchQuery
+                        onTextChanged: songPicker.searchQuery = text
+                        
+                        Text {
+                            text: "Search songs or composers..."
+                            color: "#666666"
+                            font.pixelSize: 14 * mainWindow.uiScale
+                            visible: parent.text.length === 0 && !parent.activeFocus
+                        }
+                    }
+                    
+                    Text {
+                        text: "✕"
+                        font.pixelSize: 14 * mainWindow.uiScale
+                        color: "#666666"
+                        visible: songPicker.searchQuery.length > 0
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                searchInput.text = "";
+                                searchInput.forceActiveFocus();
+                            }
+                        }
+                    }
+                }
+            }
+
             // Header Section
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 8
+                visible: songPicker.searchQuery.length === 0
                 
                 Text {
                     text: "REPERTOIRE CATALOG"
@@ -604,12 +660,23 @@ Rectangle {
                     Layout.alignment: Qt.AlignHCenter
                 }
             }
+            
+            // Search Results Header
+            Text {
+                text: "SEARCH RESULTS"
+                font.pixelSize: 12 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 4 * mainWindow.uiScale
+                color: "#2196F3"
+                Layout.alignment: Qt.AlignHCenter
+                visible: songPicker.searchQuery.length > 0
+            }
 
             // Navigation / Breadcrumbs
             RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 40 * mainWindow.uiScale
-                visible: songPicker.catalogPath.length > 0
+                visible: songPicker.catalogPath.length > 0 && songPicker.searchQuery.length === 0
                 
                 Rectangle {
                     width: 80 * mainWindow.uiScale
@@ -644,7 +711,7 @@ Rectangle {
                     // Recently Played Shelf (only at root level)
                     ColumnLayout {
                         Layout.fillWidth: true
-                        visible: songPicker.catalogPath.length === 0 && appState.music21Service.get_recent_songs().length > 0
+                        visible: songPicker.catalogPath.length === 0 && songPicker.searchQuery.length === 0 && appState.music21Service.get_recent_songs().length > 0
                         spacing: 8
                         
                         Text {
@@ -759,7 +826,13 @@ Rectangle {
                     spacing: 10
                     
                     Repeater {
-                        model: (typeof appState !== "undefined" && appState !== null && appState.music21Service) ? appState.music21Service.get_catalog_level(songPicker.catalogPath) : []
+                        model: {
+                            if (!appState || !appState.music21Service) return [];
+                            if (songPicker.searchQuery.length >= 2) {
+                                return appState.music21Service.search_catalog(songPicker.searchQuery);
+                            }
+                            return appState.music21Service.get_catalog_level(songPicker.catalogPath);
+                        }
                         delegate: Rectangle {
                             id: catalogEntry
                             Layout.fillWidth: true

@@ -26,26 +26,18 @@ Rectangle {
     property real pixelsPerBeat: width * 0.10
     
     // Geometry Constants for Grand Staff mapping (inherited by native engine)
-    // Professional S-System: s = 5% of height, Treble at 30%, Bass at 70%
-    property real lineSpacing: height * 0.05
-    property real trebleCenterY: height * 0.30
-    property real bassCenterY: height * 0.70
+    // Professional screen-reading proportion: s = 3.5% of height, Treble at 35%, Bass at 65%
+    property real lineSpacing: height * 0.035
+    property real trebleCenterY: height * 0.35
+    property real bassCenterY: height * 0.65
     // Note Start Position (Aligned with native NotationView)
     property real noteStartX: width * 0.28
 
-    property string notationStyle: {
-        if (typeof appState !== "undefined" && appState && appState.settingsService) {
-            return appState.settingsService.notationStyle || "enhanced";
-        }
-        return "enhanced";
-    }
+    // Replace the existing notationStyle property with this direct binding
+    property string notationStyle: appState ? appState.settingsService.notationStyle.toLowerCase() : "enhanced"
 
-    property string notationColorMode: {
-        if (typeof appState !== "undefined" && appState && appState.settingsService) {
-            return appState.settingsService.notationColorMode || "pedagogical";
-        }
-        return "pedagogical";
-    }
+    // Do the same for color mode
+    property string notationColorMode: appState ? appState.settingsService.notationColorMode.toLowerCase() : "pedagogical"
 
     property bool useMonochrome: notationColorMode === "monochrome"
     property string musicFont: "Bravura"
@@ -168,6 +160,10 @@ Rectangle {
         return "";
     }
 
+    // ADDED: Interpolators to catch backend property snaps and force smooth sliding
+    Behavior on scrollBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    Behavior on evalBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
     property bool isScrollingMode: {
         return (exerciseType === "pentascale" || exerciseType === "steady_pulse" || exerciseType === "progression" || exerciseType === "song_application");
     }
@@ -214,6 +210,7 @@ Rectangle {
         z: 0
 
         notationStyle: root.notationStyle
+        notationColorMode: root.notationColorMode
         displayMode: root.displayMode
         isScrollingMode: root.isScrollingMode
 

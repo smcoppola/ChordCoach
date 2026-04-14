@@ -132,7 +132,7 @@ class AppState(QObject):
         # calling CoreMIDI / CoreAudio APIs before the run-loop is active can
         # cause the application to hang on launch (the Dock icon bounces
         # forever).  See deferred_start() below.
-        print("AppState.__init__ complete — hardware init deferred.")
+        print("AppState.__init__ complete - hardware init deferred.")
 
     @Slot()
     def deferred_start(self):
@@ -142,8 +142,8 @@ class AppState(QObject):
         hardware APIs (CoreMIDI, CoreAudio, PortAudio) which on macOS
         require an active run-loop to function correctly.
         """
-        print("AppState.deferred_start: Initialising hardware…")
-        self.hw_service.initialize()
+        print("AppState.deferred_start: Initialising hardware (async)…")
+        self.hw_service.initialize_async()
 
         print("AppState.deferred_start: Connecting to Gemini AI Coach…")
         context = self.curriculum.get_curriculum_context()

@@ -120,6 +120,11 @@ a = Analysis(
         'logic.services.adaptive_engine', 
         'logic.services.settings_service',
         'logic.services.curriculum_service',
+        'logic.services.metronome_service',
+        'logic.services.circle_of_fifths_service',
+        'logic.services.music21_service',
+        'logic.utils.corpus_indexer',
+        'logic.utils.fingering_optimizer',
         'logic.coordinators.app_coordinator',
         'hardware.midi_hardware_service',
         'core.bootstrap'

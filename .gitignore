@@ -20,6 +20,7 @@ installer_output/
 # Database
 database/*.db
 database/*.sqlite
+database/recent_songs.json
 
 # Logs
 *.log

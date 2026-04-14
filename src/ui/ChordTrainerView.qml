@@ -642,7 +642,7 @@ Rectangle {
         }
     }
 
-    // ── Full-pane blur when AI is speaking ──
+    // --- Full-pane blur when AI is speaking ---
     FastBlur {
         anchors.fill: lessonContent
         source: lessonContent
