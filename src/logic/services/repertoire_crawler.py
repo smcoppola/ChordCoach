@@ -1,9 +1,7 @@
 import requests # type: ignore
 from bs4 import BeautifulSoup # type: ignore
 from PySide6.QtCore import QObject, Signal, Slot # type: ignore
-from pathlib import Path
-import urllib.parse
-import threading
+from core.bootstrap import get_user_data_dir
 
 class RepertoireCrawler(QObject):
     downloadComplete = Signal(str) # Emits the filepath of the downloaded midi
@@ -11,8 +9,8 @@ class RepertoireCrawler(QObject):
     
     def __init__(self):
         super().__init__()
-        # Use a local cache directory in the project for now
-        self.cache_dir = Path(__file__).parent.parent.parent.parent / "database" / "repertoire"
+        # Use a local cache directory in AppData
+        self.cache_dir = get_user_data_dir() / "repertoire"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.base_url = "https://bitmidi.com"
         

@@ -103,7 +103,7 @@ def _build_subdir() -> str:
     """CMake multi-config generators (MSVC) put binaries in Release/; single-config (Make/Ninja) don't."""
     return "Release" if sys.platform == "win32" else ""
 
-def _get_user_data_dir() -> Path:
+def get_user_data_dir() -> Path:
     """Return a platform-specific writable directory for application data."""
     if sys.platform == "win32":
         path = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "ChordCoach"
@@ -129,7 +129,7 @@ def setup_env() -> tuple[Path, Path, Path, bool]:
         project_root = bundle_dir
         hw_bin_path = bundle_dir
         native_lib_dir = bundle_dir
-        user_data_path = _get_user_data_dir()
+        user_data_path = get_user_data_dir()
         
         # Ensure SSL Certificates are loaded correctly for requests/websockets inside frozen bundle
         try:
@@ -141,6 +141,18 @@ def setup_env() -> tuple[Path, Path, Path, bool]:
         # Explicitly point to QtWebEngineProcess for some PySide6 environments
         if sys.platform == "win32":
             os.environ["QTWEBENGINEPROCESS_PATH"] = str(bundle_dir / "PySide6" / "QtWebEngineProcess.exe")
+            
+        # Monkey-patch music21 to find its internal paths correctly in frozen _internal structure
+        try:
+            import music21.common.pathTools
+            from pathlib import Path
+            def getSourceFilePath_fixed():
+                # sys._MEIPASS is the root or _internal dir in PyInstaller 6+ 
+                return Path(sys._MEIPASS) / "music21"
+            music21.common.pathTools.getSourceFilePath = getSourceFilePath_fixed
+            print(f"bootstrap: Applied music21.common.pathTools monkey-patch for {Path(sys._MEIPASS) / 'music21'}")
+        except Exception as e:
+            print(f"bootstrap: Failed to patch music21: {e}")
         elif sys.platform == "darwin":
             # PyInstaller heavily modifies the structure of a macOS .app BUNDLE
             meipass_path = Path(getattr(sys, '_MEIPASS', bundle_dir))

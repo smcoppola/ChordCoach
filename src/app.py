@@ -26,6 +26,7 @@ project_root, hw_bin_path, user_data_path, is_frozen = bootstrap.setup_env()
 # inspectable output even without a terminal attached.
 bootstrap.setup_logging(user_data_path)
 print(f"ChordCoach starting — root={project_root}, frozen={is_frozen}")
+print(f"sys.path[0]: {sys.path[0]}")
 
 try:
     import chordcoach_hw # type: ignore
@@ -79,7 +80,7 @@ class AppState(QObject):
         self._metronome = MetronomeService()
         self._metronome.setParent(self)
         
-        self.music21_service = Music21Service()
+        self.music21_service = Music21Service(project_root)
         self.music21_service.setParent(self)
         
         self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings, self.music21_service)
@@ -251,7 +252,7 @@ def main():
     print("main(): QGuiApplication created (Name: ChordCoach).")
 
     # Register bundled fonts so QML can render them natively without warnings
-    font_dir = project_root / ("src/resources/fonts" if not is_frozen else "resources/fonts")
+    font_dir = project_root / "src" / "resources" / "fonts"
     if font_dir.exists():
         for font_ext in ["*.ttf", "*.otf", "*.woff2"]:
             for font_file in font_dir.glob(font_ext):

@@ -88,11 +88,19 @@ m21_datas, m21_binaries, m21_hiddenimports = collect_all('music21')
 pm_datas, pm_binaries, pm_hiddenimports = collect_all('pretty_midi')
 
 # Filter music21 data to exclude bulky assets (corpus, docs, tests)
-m21_excluded = ('music21/corpus/', 'music21/test/', 'music21/documentation/', 'music21/demos/')
-m21_datas = [
-    (src, dst) for src, dst in m21_datas
-    if not any(src.replace('\\','/').find(e) >= 0 for e in m21_excluded)
-]
+m21_excluded_dirs = ['corpus', 'test', 'documentation', 'demos']
+filtered_m21_datas = []
+excluded_count = 0
+for src, dst in m21_datas:
+    # Normalize paths for comparison
+    src_norm = src.replace('\\', '/').lower()
+    if any(f"/music21/{d}/" in src_norm or f"\\music21\\{d}\\" in src.lower() for d in m21_excluded_dirs):
+        excluded_count += 1
+        continue
+    filtered_m21_datas.append((src, dst))
+
+print(f"PyInstaller Spec: Excluded {excluded_count} music21 assets (corpus, tests, docs).")
+m21_datas = filtered_m21_datas
 
 datas_list += m21_datas + pm_datas
 binaries_list += m21_binaries + pm_binaries

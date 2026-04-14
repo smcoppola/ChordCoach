@@ -32,10 +32,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 ; Include everything from the PyInstaller onedir output
-Source: "dist\ChordCoachCompanionPortable\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-[Dirs]
-Name: "{app}\music21"; Permissions: users-full
+Source: "dist\ChordCoachCompanionPortable\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "_internal\music21\corpus\*, _internal\music21\test\*, _internal\music21\documentation\*, _internal\music21\demos\*"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

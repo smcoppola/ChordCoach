@@ -1,10 +1,9 @@
-import sys
 import os
 import json
 import urllib.request
 import zipfile
 import shutil
-from PySide6.QtCore import QStandardPaths
+from core.bootstrap import get_user_data_dir
 
 class CorpusManager:
     """
@@ -14,13 +13,7 @@ class CorpusManager:
     @staticmethod
     def get_corpus_base_path():
         """Returns the platform-specific writable path for music21 assets."""
-        # QStandardPaths.AppDataLocation:
-        # Windows: C:/Users/<USER>/AppData/Local/<APPNAME>
-        # macOS: ~/Library/Application Support/<APPNAME>
-        base_path = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-        
-        # Ensure it exists
-        os.makedirs(base_path, exist_ok=True)
+        base_path = get_user_data_dir()
         return os.path.join(base_path, "music21_assets")
 
     @staticmethod

@@ -1,6 +1,7 @@
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread # type: ignore
 from music21 import corpus, note, chord, stream
 from logic.utils.fingering_optimizer import inject_fingering_to_stream, distribute_chord_fingers
+from core.bootstrap import get_user_data_dir
 
 class CorpusDownloadWorker(QThread):
     """Background worker to download the music21 corpus without locking the UI."""
@@ -46,8 +47,9 @@ class Music21Service(QObject):
     corpusReady = Signal()
     corpusError = Signal()
     
-    def __init__(self):
+    def __init__(self, project_root=None):
         super().__init__()
+        self._project_root = project_root
         self._catalog = {}
         self._recent_songs = [] # List of song IDs
         self._flat_catalog = [] # Cached flattened list for search
@@ -130,13 +132,18 @@ class Music21Service(QObject):
             import json
             import os
             from pathlib import Path
-            db_path = Path(__file__).parent.parent.parent.parent / "database" / "music21_catalog.json"
+            if self._project_root:
+                db_path = Path(self._project_root) / "database" / "music21_catalog.json"
+            else:
+                # Fallback for dev/standalone testing if root not provided
+                db_path = Path(__file__).parent.parent.parent.parent / "database" / "music21_catalog.json"
+                
             if os.path.exists(db_path):
                 with open(db_path, "r") as f:
                     self._catalog = json.load(f)
-                print(f"Music21Service: Loaded hierarchical catalog with {len(self._catalog)} levels.")
+                print(f"Music21Service: Loaded hierarchical catalog with {len(self._catalog)} levels from {db_path}")
             else:
-                print("Music21Service: Catalog cache not found. Re-indexing...")
+                print(f"Music21Service: Catalog cache not found at {db_path}. Re-indexing...")
                 from logic.utils.corpus_indexer import index_corpus
                 self._catalog = index_corpus()
             
@@ -205,10 +212,9 @@ class Music21Service(QObject):
         return []
 
     def _load_recents(self):
-        from pathlib import Path
         import json
         try:
-            p = Path("database/recent_songs.json")
+            p = get_user_data_dir() / "database" / "recent_songs.json"
             if p.exists():
                 with open(p, "r") as f:
                     self._recent_songs = json.load(f)
@@ -216,10 +222,9 @@ class Music21Service(QObject):
             self._recent_songs = []
 
     def _save_recents(self):
-        from pathlib import Path
         import json
         try:
-            p = Path("database/recent_songs.json")
+            p = get_user_data_dir() / "database" / "recent_songs.json"
             p.parent.mkdir(parents=True, exist_ok=True)
             with open(p, "w") as f:
                 json.dump(self._recent_songs, f)
