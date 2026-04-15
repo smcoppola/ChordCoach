@@ -105,7 +105,8 @@ class CorpusManager:
             corpus_dir = os.path.join(path, 'music21', 'corpus')
             
             us = environment.UserSettings()
-            us['localCorpusPath'] = corpus_dir
-            print(f"CorpusManager: Successfully pointed localCorpusPath to {corpus_dir}")
+            # In modern music21, we use localCorporaSettings which is a dict of nicknames to path lists
+            us['localCorporaSettings'] = {'local': [corpus_dir]}
+            print(f"CorpusManager: Successfully registered local corpus at {corpus_dir}")
         except Exception as e:
             print(f"CorpusManager Environment Error: {e}")

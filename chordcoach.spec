@@ -17,47 +17,18 @@ def find_file(pattern, default):
 if is_win:
     hw_ext_path = find_file('build/src/hardware/Release/chordcoach_hw*.pyd', 'build/src/hardware/Release/chordcoach_hw.pyd')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/Release/rtmidi.dll'
-    # portaudio_lib_path removed -- mic dependency cleanup
     app_icon = 'resources/icon.ico'
 elif is_mac:
-    # Use wildcards or assume typical CMake output paths for macOS
     hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so') 
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.dylib'
-    # portaudio_lib_path removed -- mic dependency cleanup
     app_icon = 'resources/icon.png'
 else:
     hw_ext_path = find_file('build/src/hardware/chordcoach_hw*.so', 'build/src/hardware/chordcoach_hw.so')
     rtmidi_lib_path = 'build/_deps/rtmidi-build/librtmidi.so'
-    # portaudio_lib_path removed -- mic dependency cleanup
     app_icon = 'resources/icon.png'
 
-# Paths to assets
-hw_extension = (hw_ext_path, '.')
-rtmidi_dll = (rtmidi_lib_path, '.')
-ui_files = (
-    'src/ui',
-    'ui'
-)
-database_folder = (
-    'database',
-    'database'
-)
-env_file = (
-    '.env',
-    '.'
-)
-icon_file = (
-    app_icon,
-    'resources'
-)
-resources_folder = (
-    'src/resources',
-    'src/resources'
-)
-
-datas_list = []
-
 # Essential UI and Resource files
+datas_list = []
 if os.path.isdir('src/ui'):
     datas_list.append(('src/ui', 'ui'))
 if os.path.isdir('src/resources'):
@@ -66,10 +37,6 @@ if os.path.isdir('src/resources'):
 # Database folder (optional at build time)
 if os.path.isdir('database'):
     datas_list.append(('database', 'database'))
-
-# User Scores folder (REMOVED - logic moved to on-demand download)
-# if os.path.isdir('music21'):
-#     datas_list.append(('music21', 'music21'))
 
 # Configuration and Icon
 if os.path.exists('.env'):
@@ -107,7 +74,7 @@ binaries_list += m21_binaries + pm_binaries
 
 a = Analysis(
     ['src/app.py'],
-    pathex=['src'],
+    pathex=[os.path.abspath(os.path.join(SPECPATH, 'src'))],
     binaries=binaries_list,
     datas=datas_list,
     hiddenimports=[
@@ -166,7 +133,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=not is_mac, # macOS BUNDLEs crash if console=True is used without a terminal
+    console=not is_mac,
     icon=app_icon,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -187,9 +154,16 @@ coll = COLLECT(
 
 if is_mac:
     app = BUNDLE(
-        coll, # In macOS BUNDLE on a dir, we pass coll or exe depending on PyInstaller version. Typically exe.
+        coll,
         name='ChordCoachCompanion.app',
         icon=app_icon,
         bundle_identifier='com.chordcoach.companion',
-        info_plist={},
+        info_plist={
+            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleVersion': '1.0.0',
+            'NSPrincipalClass': 'NSApplication',
+            'LSApplicationCategoryType': 'public.app-category.music-education',
+            'NSHumanReadableCopyright': 'Copyright \u00a9 2026 ChordCoach Team',
+            'NSHighResolutionCapable': True,
+        },
     )

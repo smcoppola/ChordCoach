@@ -138,14 +138,34 @@ def setup_env() -> tuple[Path, Path, Path, bool]:
             os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
         except ImportError:
             pass
+
         # Explicitly point to QtWebEngineProcess for some PySide6 environments
         if sys.platform == "win32":
             os.environ["QTWEBENGINEPROCESS_PATH"] = str(bundle_dir / "PySide6" / "QtWebEngineProcess.exe")
+        elif sys.platform == "darwin":
+            # PyInstaller 6+ on macOS puts things in Contents/Resources/_internal by default
+            meipass_path = Path(getattr(sys, '_MEIPASS', bundle_dir))
             
-        # Monkey-patch music21 to find its internal paths correctly in frozen _internal structure
+            # Find the Contents directory. 
+            # If meipass is _internal, its parent is Resources, and parent's parent is Contents.
+            # In some cases _MEIPASS might be the root Resources folder.
+            contents_dir = meipass_path.parent.parent if meipass_path.name == "_internal" else meipass_path.parent
+            
+            # Try typical PyInstaller fallback locations for macOS
+            possible_paths = [
+                meipass_path / "PySide6" / "Qt" / "lib" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess",
+                meipass_path / "PySide6" / "QtWebEngineProcess",
+                contents_dir / "Frameworks" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess"
+            ]
+            
+            webengine = next((p for p in possible_paths if p.exists()), possible_paths[0])
+            if webengine.exists():
+                os.environ["QTWEBENGINEPROCESS_PATH"] = str(webengine)
+                print(f"bootstrap: Set QTWEBENGINEPROCESS_PATH to {webengine}")
+            
+        # Monkey-patch music21 to find its internal paths correctly in frozen structure
         try:
             import music21.common.pathTools
-            from pathlib import Path
             def getSourceFilePath_fixed():
                 # sys._MEIPASS is the root or _internal dir in PyInstaller 6+ 
                 return Path(sys._MEIPASS) / "music21"
@@ -153,20 +173,6 @@ def setup_env() -> tuple[Path, Path, Path, bool]:
             print(f"bootstrap: Applied music21.common.pathTools monkey-patch for {Path(sys._MEIPASS) / 'music21'}")
         except Exception as e:
             print(f"bootstrap: Failed to patch music21: {e}")
-        elif sys.platform == "darwin":
-            # PyInstaller heavily modifies the structure of a macOS .app BUNDLE
-            meipass_path = Path(getattr(sys, '_MEIPASS', bundle_dir))
-            
-            # Try typical PyInstaller fallback locations for macOS
-            possible_paths = [
-                meipass_path / "PySide6" / "Qt" / "lib" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess",
-                meipass_path / "PySide6" / "QtWebEngineProcess",
-                meipass_path.parent / "Frameworks" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess"
-            ]
-            
-            webengine = next((p for p in possible_paths if p.exists()), possible_paths[0])
-            if webengine.exists():
-                os.environ["QTWEBENGINEPROCESS_PATH"] = str(webengine)
     else:
         # We are running from source (src/core/bootstrap.py -> parent -> parent)
         project_root = Path(__file__).parent.parent.parent

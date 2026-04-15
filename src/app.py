@@ -17,8 +17,34 @@ from pathlib import Path
 from typing import cast
 
 # --- Environment Bootstrap ---
+# Diagnostic path logging for frozen build troubleshooting
+if getattr(sys, 'frozen', False):
+    print(f"--- FROZEN DIAGNOSTICS ---")
+    meipass = getattr(sys, '_MEIPASS', '')
+    print(f"sys.executable: {sys.executable}")
+    print(f"sys._MEIPASS: {meipass}")
+    
+    # In PyInstaller 6+, _MEIPASS often points directly to the _internal folder
+    # We ensure either the root or the _internal folder (whichever contains our packages) is in path
+    if meipass:
+        # Standard approach: check if we are in the collection root or already inside _internal
+        if meipass.endswith('_internal') or os.path.exists(os.path.join(meipass, 'core')):
+            # We are already in the folder that contains our packages
+            if meipass not in sys.path:
+                sys.path.insert(0, meipass)
+        else:
+            # We are in the root, check if _internal exists
+            internal_dir = os.path.join(meipass, '_internal')
+            if os.path.exists(internal_dir) and internal_dir not in sys.path:
+                sys.path.insert(0, internal_dir)
+                print(f"Added to sys.path: {internal_dir}")
+                
+    print(f"sys.path: {sys.path}")
+    print(f"--------------------------")
+
 # This must happen before we try to import chordcoach_hw or load the UI
 import core.bootstrap as bootstrap
+
 project_root, hw_bin_path, user_data_path, is_frozen = bootstrap.setup_env()
 
 # --- Persistent Logging ---
@@ -249,7 +275,7 @@ def main():
     app = QGuiApplication(sys.argv)
     app.setApplicationName("ChordCoach")
     app.setOrganizationName("ChordCoach")
-    print("main(): QGuiApplication created (Name: ChordCoach).")
+    print("main(): QGuiApplication created (Name: CoachCoach).")
 
     # Register bundled fonts so QML can render them natively without warnings
     font_dir = project_root / "src" / "resources" / "fonts"

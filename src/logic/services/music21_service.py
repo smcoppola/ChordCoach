@@ -1,4 +1,5 @@
 from PySide6.QtCore import QObject, Signal, Slot, Property, QThread # type: ignore
+import music21
 from music21 import corpus, note, chord, stream
 from logic.utils.fingering_optimizer import inject_fingering_to_stream, distribute_chord_fingers
 from core.bootstrap import get_user_data_dir
