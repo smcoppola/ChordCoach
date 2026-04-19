@@ -82,6 +82,7 @@ class AppState(QObject):
     aiTranscriptReceived = Signal(str)
     aiConnectedChanged = Signal(bool)
     midiConnectedChanged = Signal(bool)
+    midiInitialSearchDoneChanged = Signal(bool)
     evalIntroPendingChanged = Signal(bool)
     archIntroPendingChanged = Signal(bool)
     isReconnectingChanged = Signal(bool)
@@ -152,6 +153,7 @@ class AppState(QObject):
         
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
+        self.hw_service.initialSearchComplete.connect(self._on_midi_initial_search_complete)
         self.chord_trainer.midiOutRequested.connect(self.hw_service.play_chord_preview)
         
         # NOTE: Hardware initialisation and AI connection are deliberately
@@ -183,6 +185,10 @@ class AppState(QObject):
         )
         print("AppState.deferred_start: Done.")
 
+    @Slot()
+    def _on_midi_initial_search_complete(self):
+        self.midiInitialSearchDoneChanged.emit(True)
+
     @Slot(bool)
     def _on_sustain_pedal_changed_bridge(self, is_down: bool):
         """Bridge hardware events to QML via Property signal."""
@@ -211,6 +217,10 @@ class AppState(QObject):
     @Property(bool, notify=midiConnectedChanged)
     def midiConnected(self):
         return self.hw_service.is_connected
+
+    @Property(bool, notify=midiInitialSearchDoneChanged)
+    def midiInitialSearchDone(self):
+        return self.hw_service._initial_search_done
 
     @Property(bool, notify=aiConnectedChanged)
     def aiConnected(self):

@@ -49,7 +49,9 @@ class ChordTrainerService(QObject):
     scrollBpmChanged = Signal()
     songTitleChanged = Signal()
     songKeyChanged = Signal()
+    songKeySharpsChanged = Signal()
     songComposerChanged = Signal()
+    songCompletedChanged = Signal()
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None, music21_service=None):
         super().__init__()
@@ -91,7 +93,10 @@ class ChordTrainerService(QObject):
         self._scroll_bpm: int = 0
         self._song_title: str = ""
         self._song_key: str = ""
+        self._song_key_sharps: int = 0
         self._song_composer: str = ""
+        self._song_completed: bool = False
+        self._song_end_beat: float = 0.0
 
         # Dashboard and Performance Review
         self._struggled_items: List[Dict] = []
@@ -249,6 +254,24 @@ class ChordTrainerService(QObject):
         self._scroll_beat = pos
         self.scrollBeatChanged.emit(pos)
 
+    def _on_song_finished(self):
+        """Called 1.5 s after the last song note is played."""
+        if not self._is_lesson_mode:
+            # Free-play song — just return to the home screen
+            print(f"ChordTrainer: Song '{self._song_title}' complete (free-play). Returning to home.")
+            self.stop_session()
+            return
+
+        # AI-lesson song — report completion and request the next exercise
+        title    = self._song_title or "the piece"
+        composer = self._song_composer or "Unknown Composer"
+        context  = (
+            f"The student just finished playing all the way through '{title}' by {composer}. "
+            "Acknowledge the achievement briefly, give a short piece of feedback on their performance, "
+            "and then set the next appropriate exercise."
+        )
+        self._request_next_exercise(context=context)
+
     def _set_state(self, new_state: LessonState):
         if hasattr(self, '_state') and self._state == new_state:
             return
@@ -319,9 +342,17 @@ class ChordTrainerService(QObject):
     def songKey(self) -> str:
         return self._song_key
 
+    @Property(int, notify=songKeySharpsChanged)
+    def songKeySharps(self) -> int:
+        return self._song_key_sharps
+
     @Property(str, notify=songComposerChanged)
     def songComposer(self) -> str:
         return self._song_composer
+
+    @Property(bool, notify=songCompletedChanged)
+    def isSongCompleted(self) -> bool:
+        return self._song_completed
 
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:
@@ -872,6 +903,11 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     def _apply_exercise(self, exercise_data: dict):
         """Apply a validated exercise: update progress, blocks, and set up the target."""
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Applying exercise to UI: {exercise_data.get('exercise_name', 'Unknown')}")
+        # Clear song-complete state so the overlay dismisses
+        if self._song_completed:
+            self._song_completed = False
+            self._ignore_midi_until = 0.0
+            self.songCompletedChanged.emit()
         # Record the exercise intro
         self.db.record_exercise_intro(exercise_data.get("exercise_type", "chord"))
 
@@ -991,6 +1027,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         report = f"<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>Student completed exercise #{self._lesson_progress}."
 
+        last_type = ""
         if self._current_step_data:
             last_name = self._current_step_data.get("exercise_name", "")
             last_type = self._current_step_data.get("exercise_type", "")
@@ -1130,9 +1167,11 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._song_title = ""
             self._song_composer = ""
             self._song_key = ""
+            self._song_completed = False
             self.songTitleChanged.emit()
             self.songComposerChanged.emit()
             self.songKeyChanged.emit()
+            self.songCompletedChanged.emit()
             self.targetChordChanged.emit(self._target_chord_name)
             self._hold_tick_timer.stop()
             self._is_holding = False
@@ -1204,6 +1243,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._apply_random_step()
 
     def _apply_step(self, chord_data):
+        self._song_completed = False
+        self.songCompletedChanged.emit()
         self._required_hold_ms = int(chord_data.get("hold_ms", 0)) # type: ignore
         exercise_type = str(chord_data.get("exercise_type", "chord")) # type: ignore
         self._exercise_type = exercise_type
@@ -1453,17 +1494,21 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._exercise_type = "chord"
             self._song_title = ""
             self._song_key = ""
+            self._song_key_sharps = 0
             self.songTitleChanged.emit()
             self.songKeyChanged.emit()
+            self.songKeySharpsChanged.emit()
             self._set_state(LessonState.IDLE)
             return
             
         self._exercise_type = "song_application"
         self._song_title = song_data.get("title", "Unknown Piece")
         self._song_key = song_data.get("key", "Unknown Key")
+        self._song_key_sharps = song_data.get("key_sharps", 0)
         self._song_composer = song_data.get("composer", "Unknown Composer")
         self.songTitleChanged.emit()
         self.songKeyChanged.emit()
+        self.songKeySharpsChanged.emit()
         self.songComposerChanged.emit()
         
         self._song_index = 0
@@ -1476,28 +1521,72 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         for step in self._song_steps:
             offset = step['offset']
             duration = step['duration']
-            pitches = step['pitches']
-            hands = step['hands']
-            fingers = step.get('fingers', [1] * len(pitches))
             
-            for i, p in enumerate(pitches):
-                hand_tag = hands[i] if i < len(hands) else "right"
-                f_num = fingers[i] if i < len(fingers) else 1
+            # 1. Rests
+            if 'rests' in step:
+                for r in step['rests']:
+                    sn.append({
+                        "is_rest": True,
+                        "duration_beats": float(r['duration']),
+                        "start_beat": float(offset),
+                        "hand": "R" if r['hand'] == "right" else "L"
+                    })
+            
+            # 2. Notes
+            if 'pitches' in step:
+                pitches = step['pitches']
+                hands = step['hands']
+                fingers = step.get('fingers', [1] * len(pitches))
+                ties = step.get('ties', [None] * len(pitches))
+                beams = step.get('beams', [None] * len(pitches))
+                spellings = step.get('spellings', [None] * len(pitches))
                 
-                sn.append({
-                    "pitch": p,
-                    "hand": "R" if hand_tag == "right" else "L",
-                    "finger": f_num,
-                    "start_beat": float(offset),
-                    "duration_beats": float(duration)
-                })
+                for i, p in enumerate(pitches):
+                    hand_tag = hands[i] if i < len(hands) else "right"
+                    f_num = fingers[i] if i < len(fingers) else 1
+                    t_val = ties[i] if i < len(ties) else None
+                    b_val = beams[i] if i < len(beams) else None
+                    s_val = spellings[i] if i < len(spellings) else None
+                    
+                    sn.append({
+                        "pitch": p,
+                        "spelling": s_val,
+                        "hand": "R" if hand_tag == "right" else "L",
+                        "finger": f_num,
+                        "tie": t_val,
+                        "beam": b_val,
+                        "start_beat": float(offset),
+                        "duration_beats": float(duration)
+                    })
+
+        # 3. Barlines
+        barlines = song_data.get("barlines", [])
+        for b in barlines:
+            sn.append({
+                "is_barline": True,
+                "start_beat": float(b),
+                "duration_beats": 0.0
+            })
+
+        # Ensure purely deterministic timeline ordering
+        sn.sort(key=lambda x: (x.get("start_beat", 0.0), bool(x.get("is_barline", False))))
 
         self._scrolling_notes = sn
         self.scrollingNotesChanged.emit()
-        
+
+        # Compute the beat position at which all notation has finished
+        if self._song_steps:
+            last = max(self._song_steps, key=lambda s: float(s['offset']) + float(s['duration']))
+            self._song_end_beat = float(last['offset']) + float(last['duration'])
+        else:
+            self._song_end_beat = 0.0
+
+        self._song_completed = False
+        self.songCompletedChanged.emit()
+
         self._scroll_beat = 0.0
         self.scrollBeatChanged.emit(self._scroll_beat)
-        
+
         # User-driven pacing (no metronome)
         self._scroll_bpm = 0
         self.scrollBpmChanged.emit()
@@ -2651,7 +2740,15 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 self._advance_song_chord()
                 return
             else:
-                self._ignore_midi_until = time.time() + 1.0 # 1s cooldown
+                # Last note played — advance beat past song end so all notes render gray
+                self._scroll_beat = self._song_end_beat + 0.5
+                self.scrollBeatChanged.emit(self._scroll_beat)
+                self._song_completed = True
+                self.songCompletedChanged.emit()
+                self._ignore_midi_until = time.time() + 99.0  # block input until AI responds
+                print(f"ChordTrainer: Song complete — '{self._song_title}'")
+                QTimer.singleShot(1500, self._on_song_finished)
+                return
 
         if self._exercise_type == "listen":
             # For listening quizzes, the user answers via UI, not keys. Pause briefly then move on.

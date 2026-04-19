@@ -10,8 +10,8 @@
 
 import os
 from pathlib import Path
-from PySide6.QtCore import Qt, Property, Signal, QRectF
-from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontDatabase, QBrush
+from PySide6.QtCore import Qt, Property, Signal, QRectF, QPointF
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontDatabase, QBrush, QPolygonF
 from PySide6.QtQuick import QQuickPaintedItem
 
 class NotationView(QQuickPaintedItem):
@@ -32,6 +32,7 @@ class NotationView(QQuickPaintedItem):
     evalNoteStatesChanged = Signal()
     pedagogicalColorsChanged = Signal()
     notationColorModeChanged = Signal()
+    songKeySharpsChanged = Signal()
 
     def __init__(self, parent=None):
         """
@@ -43,6 +44,7 @@ class NotationView(QQuickPaintedItem):
         self._notation_color_mode = "pedagogical" 
         self._display_mode = "trainer" 
         self._is_scrolling_mode = False
+        self._song_key_sharps = 0
         
         self._scroll_beat = 0.0
         self._eval_beat = 0.0
@@ -67,13 +69,23 @@ class NotationView(QQuickPaintedItem):
         self.GLYPH_NOTEHEAD_BLACK = "\uE0A4"
         self.GLYPH_SHARP = "\uE262"
         self.GLYPH_FLAT = "\uE260"
+        self.GLYPH_NATURAL = "\uE261"
+        self.GLYPH_REST_WHOLE = "\uE4E3"
+        self.GLYPH_REST_HALF = "\uE4E4"
+        self.GLYPH_REST_QUARTER = "\uE4E5"
+        self.GLYPH_REST_8TH = "\uE4E6"
+        self.GLYPH_REST_16TH = "\uE4E7"
+        self.GLYPH_FLAG_8TH_UP = "\uE240"
+        self.GLYPH_FLAG_8TH_DOWN = "\uE241"
+        self.GLYPH_FLAG_16TH_UP = "\uE242"
+        self.GLYPH_FLAG_16TH_DOWN = "\uE243"
         
         # Map 12 MIDI notes to 0-6 diatonic steps
         self._diatonic_map = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6]
         self._pitch_names = [
-            "C", f"C{self.GLYPH_SHARP}", "D", f"E{self.GLYPH_FLAT}", 
-            "E", "F", f"F{self.GLYPH_SHARP}", "G", f"A{self.GLYPH_FLAT}", 
-            "A", f"B{self.GLYPH_FLAT}", "B"
+            "C", "C♯", "D", "E♭", 
+            "E", "F", "F♯", "G", "A♭", 
+            "A", "B♭", "B"
         ]
         self._smufl_family_cached = None
 
@@ -137,6 +149,16 @@ class NotationView(QQuickPaintedItem):
         if self._eval_beat != value:
             self._eval_beat = value
             self.evalBeatChanged.emit()
+            self.update()
+
+    @Property(int, notify=songKeySharpsChanged)
+    def songKeySharps(self): return self._song_key_sharps
+
+    @songKeySharps.setter
+    def songKeySharps(self, value):
+        if self._song_key_sharps != value:
+            self._song_key_sharps = value
+            self.songKeySharpsChanged.emit()
             self.update()
 
     @Property(str, notify=displayModeChanged)
@@ -207,21 +229,92 @@ class NotationView(QQuickPaintedItem):
         note = pitch % 12
         return (octave * 7) + self._diatonic_map[note]
 
+    # Step letters A-G map to diatonic offsets within an octave (C=0)
+    _STEP_TO_DIA = {'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6}
+
+    def _get_diatonic_abs_spelled(self, pitch: int, spelling) -> int:
+        """Like _get_diatonic_abs but uses music21 spelling (step, alter) for the diatonic
+        step so that enharmonics like F♭ (MIDI 64) resolve to the F diatonic line rather
+        than the E line.  Falls back to MIDI mapping when spelling is None."""
+        if spelling is None:
+            return self._get_diatonic_abs(pitch)
+        step_letter, _alter = spelling
+        octave = pitch // 12
+        # Adjust octave boundary: C starts each MIDI octave, but e.g. B♭ in octave 4
+        # has MIDI 70 which is octave 5 in integer division — compensate.
+        dia_in_oct = self._STEP_TO_DIA.get(step_letter, self._diatonic_map[pitch % 12])
+        # Re-derive the correct octave from MIDI and the diatonic letter
+        # MIDI octave and diatonic letter occasionally disagree for cross-boundary sharps/flats
+        midi_dia = self._diatonic_map[pitch % 12]
+        if dia_in_oct == 0 and midi_dia == 6:  # C spelled, MIDI is B-ish region
+            octave += 1
+        elif dia_in_oct == 6 and midi_dia == 0:  # B spelled, MIDI is C-ish region
+            octave -= 1
+        return (octave * 7) + dia_in_oct
+
+    def _get_accidental_from_spelling(self, pitch: int, spelling) -> tuple[bool, str]:
+        """Returns (needs_accidental, glyph_type) using the note's own alter value.
+        alter: 0 = natural (only needs natural sign if the key sig would force accidental),
+               1/-1 = sharp/flat, 2/-2 = double sharp/flat.
+        Falls back to key-based logic when spelling is None."""
+        if spelling is None:
+            return self._requires_accidental_for_key(pitch)
+        step_letter, alter = spelling
+        note_norm = pitch % 12
+        white_keys = {0, 2, 4, 5, 7, 9, 11}
+        sharps_order = [5, 0, 7, 2, 9, 4, 11]
+        flats_order  = [11, 4, 9, 2, 7, 0, 5]
+        s = self._song_key_sharps
+        active_sharps = set(sharps_order[:s]) if s > 0 else set()
+        active_flats  = set(flats_order[:-s]) if s < 0 else set()
+        if alter == 0:
+            # Natural — only needs a natural sign if the key would otherwise alter this note
+            if note_norm in white_keys:
+                if note_norm in active_sharps or note_norm in active_flats:
+                    return (True, "natural")
+            return (False, "")
+        elif alter > 0:
+            # Sharp/double-sharp — hide if already in key sig
+            if note_norm in active_sharps:
+                return (False, "")
+            glyph = "sharp"
+            return (True, glyph)
+        else:
+            # Flat/double-flat — hide if already in key sig
+            if note_norm in active_flats:
+                return (False, "")
+            return (True, "flat")
+
     def _get_note_name(self, pitch: int) -> str:
         """Returns the formatted pitch name string."""
         return self._pitch_names[pitch % 12]
 
-    def _is_accidental(self, pitch: int) -> bool:
-        """Evaluates if the MIDI pitch requires an accidental."""
-        note = pitch % 12
-        return note in [1, 3, 6, 8, 10]
-
-    def _get_accidental_type(self, pitch: int) -> str:
-        """Resolves sharp vs flat orientation for the given pitch."""
-        note = pitch % 12
-        if note in [1, 6]: return "sharp"
-        if note in [3, 8, 10]: return "flat"
-        return ""
+    def _requires_accidental_for_key(self, pitch: int) -> tuple[bool, str]:
+        note_norm = pitch % 12
+        white_keys = [0, 2, 4, 5, 7, 9, 11]
+        sharps_order = [5, 0, 7, 2, 9, 4, 11]
+        flats_order = [11, 4, 9, 2, 7, 0, 5]
+        
+        s = self._song_key_sharps
+        active_sharps = set(sharps_order[:s]) if s > 0 else set()
+        active_flats = set(flats_order[:-s]) if s < 0 else set()
+        
+        if note_norm in white_keys:
+            if note_norm in active_sharps or note_norm in active_flats:
+                return (True, "natural")
+            return (False, "")
+            
+        black_key_map = {1: (0, 2), 3: (2, 4), 6: (5, 7), 8: (7, 9), 10: (9, 11)}
+        sharp_base, flat_base = black_key_map[note_norm]
+        
+        if sharp_base in active_sharps: return (False, "")
+        if flat_base in active_flats: return (False, "")
+            
+        if s > 0: return (True, "sharp")
+        elif s < 0: return (True, "flat")
+        else:
+            if note_norm in [1, 6]: return (True, "sharp")
+            return (True, "flat")
 
     def _get_finger_color(self, finger: int) -> QColor:
         if self._notation_color_mode == "monochrome":
@@ -268,6 +361,29 @@ class NotationView(QQuickPaintedItem):
             notehead_offsets = {} 
 
             for index_in_group, (original_index, note) in enumerate(group):
+                base_x = start_x + ((start_beat - current_beat) * ppb)
+
+                if note.get("is_barline") or note.get("is_rest"):
+                    hand = note.get('hand', 'R')
+                    is_treble = (hand in ["R", "right"])
+                    ref_y = treble_y if is_treble else bass_y
+                    y = ref_y
+                    if note.get("is_rest") and note.get("duration_beats", 1) >= 4.0:
+                        y = ref_y - (s / 2.0)
+
+                    bar_offset = -s * 1.5 if note.get('is_barline') else 0.0
+
+                    layout_results[original_index] = {
+                        'note': note,
+                        'x': base_x + bar_offset,
+                        'y': y,
+                        'notehead_offset_x': 0.0,
+                        'accidental_offset_x': 0.0,
+                        'steps_from_ref': 0,
+                        'ref_y': ref_y
+                    }
+                    continue
+
                 pitch = note.get('pitch', 60)
                 hand = note.get('hand', 'R')
 
@@ -276,7 +392,8 @@ class NotationView(QQuickPaintedItem):
                 ref_pitch = 71 if is_treble else 50
                 ref_y = treble_y if is_treble else bass_y
 
-                steps_from_ref = self._get_diatonic_abs(pitch) - self._get_diatonic_abs(ref_pitch)
+                spelling = note.get('spelling')  # (step_letter, alter) from music21, or None
+                steps_from_ref = self._get_diatonic_abs_spelled(pitch, spelling) - self._get_diatonic_abs(ref_pitch)
                 y = ref_y - (steps_from_ref * (s / 2))
 
                 notehead_offset_x = 0.0
@@ -291,7 +408,8 @@ class NotationView(QQuickPaintedItem):
                 notehead_offsets[index_in_group] = notehead_offset_x
 
                 # Step 6: Grid-based Accidental collision resolution
-                if self._is_accidental(pitch):
+                is_acc, acc_type = self._get_accidental_from_spelling(pitch, note.get('spelling'))
+                if is_acc:
                     column = 0
                     while True:
                         collision = False
@@ -349,7 +467,7 @@ class NotationView(QQuickPaintedItem):
         # Step 3: Instantiate Clefs using strictly scaled QFont metrics
         clef_font = QFont(self._get_smufl_family())
         clef_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        clef_font.setPixelSize(int(s * 3.6))
+        clef_font.setPixelSize(int(s * 4.0))  # SMuFL: 1 em = 4 staff spaces
         painter.setFont(clef_font)
         painter.setPen(QPen(QColor("#222222")))
         g4_y = treble_cy + s 
@@ -368,58 +486,203 @@ class NotationView(QQuickPaintedItem):
                 note_start_x, ppb, treble_cy, bass_cy, s
             )
         elif self._is_scrolling_mode:
+            self._draw_key_signature(painter, note_start_x - (s*5), treble_cy, bass_cy, s)
             self._render_scrolling_array(
                 painter, self._scrolling_notes, self._scroll_beat, 
                 note_start_x, ppb, treble_cy, bass_cy, s
             )
         else:
+            self._draw_key_signature(painter, note_start_x - (s*5), treble_cy, bass_cy, s)
             self._render_static_targets(
                 painter, note_start_x, treble_cy, bass_cy, s
             )
         
         painter.restore()
 
-    def _render_stems(self, painter: QPainter, clusters: dict, s: float):
+    def _render_stems(self, painter: QPainter, clusters: dict, s: float, current_beat: float = 0.0):
         """
-        Calculates and draws unified chord stems spanning temporal note clusters.
-        
+        Three-pass beam-aware stem renderer.
+
+        Pass 1 — collect unclamped stem geometry for every non-whole cluster.
+        Pass 2 — for each beam group: anchor the beam at the most-extreme natural
+                  stem tip, apply a slope clamped to ±0.5 staff spaces, then assign
+                  each beamed stem a tip_y on that line so every stem reaches the beam.
+        Pass 3 — draw stems (to tip_y), flags for isolated notes, then filled
+                  QPolygonF beam rectangles.
+
         Args:
             painter (QPainter): The PySide6 drawing context.
-            clusters (dict): Layout elements grouped by temporal location and staff.
-            s (float): Fundamental staff space unit.
+            clusters (dict): Layout elements grouped by (start_beat, is_treble).
+            s (float): Fundamental staff space unit (pixels).
         """
-        stem_weight = max(1.0, s * 0.08)
-        painter.setPen(QPen(QColor("#111111"), stem_weight, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
-        
-        # Step 1: Iterate unified geometric groups
-        for key, cluster in clusters.items():
+        stem_weight  = max(1.0, s * 0.08)
+        beam_thick   = max(2.0, s * 0.35)
+        beam_gap     = s * 0.45
+        half         = beam_thick / 2.0
+
+        # ── PASS 1: collect geometry ──────────────────────────────────────────
+        all_stems = []
+        for key, cluster in sorted(clusters.items(), key=lambda kv: kv[0][0]):
             start_beat, is_treble = key
-            duration = cluster[0]['note'].get('duration_beats', cluster[0]['note'].get('durationBeats', 1))
-            
-            # Step 2: Cull stemming for whole notes
-            if duration >= 4.0:
-                continue 
-                
-            # Step 3: Determine aggregate stem direction based on extreme cluster bounds
-            min_pitch = min(l['note'].get('pitch', 60) for l in cluster)
-            max_pitch = max(l['note'].get('pitch', 60) for l in cluster)
-            ref_mid = 71 if is_treble else 50
-            stem_up = ((min_pitch + max_pitch) / 2.0) < ref_mid
-            
-            # Step 4: Extract physical constraints
-            min_y = min(l['y'] for l in cluster)
-            max_y = max(l['y'] for l in cluster)
+            dur = cluster[0]['note'].get('duration_beats', cluster[0]['note'].get('durationBeats', 1))
+            if dur >= 4.0:
+                continue
+
+            min_pitch   = min(l['note'].get('pitch', 60) for l in cluster)
+            max_pitch   = max(l['note'].get('pitch', 60) for l in cluster)
+            ref_mid     = 71 if is_treble else 50
+            mid_dia     = self._get_diatonic_abs(ref_mid)
+            stem_up     = (mid_dia - self._get_diatonic_abs(min_pitch)) > \
+                          (self._get_diatonic_abs(max_pitch) - mid_dia)
+
+            ref_y  = cluster[0]['ref_y']
+            min_y  = min(l['y'] for l in cluster)
+            max_y  = max(l['y'] for l in cluster)
             base_x = cluster[0]['x']
-            
-            # Step 5: Render vector based on phase alignment rules
+
             if stem_up:
-                max_offset = max(l['notehead_offset_x'] for l in cluster)
-                stem_x = base_x + max_offset + s * 0.6 + s * 1.12
-                painter.drawLine(int(stem_x), int(max_y), int(stem_x), int(min_y - s * 3.5))
+                max_off      = max(l['notehead_offset_x'] for l in cluster)
+                stem_x       = base_x + max_off + s * 0.6 + s * 1.18
+                notehead_y   = max_y
+                unclamped    = min_y - s * 3.5          # natural tip, no ref_y clamp
             else:
-                min_offset = min(l['notehead_offset_x'] for l in cluster)
-                stem_x = base_x + min_offset + s * 0.6
-                painter.drawLine(int(stem_x), int(min_y), int(stem_x), int(max_y + s * 3.5))
+                min_off      = min(l['notehead_offset_x'] for l in cluster)
+                stem_x       = base_x + min_off + s * 0.6
+                notehead_y   = min_y
+                unclamped    = max_y + s * 3.5
+
+            beam_state = cluster[0]['note'].get('beam') if dur < 1.0 else None
+
+            all_stems.append({
+                'beat':        start_beat,
+                'is_treble':   is_treble,
+                'stem_up':     stem_up,
+                'stem_x':      stem_x,
+                'notehead_y':  notehead_y,
+                'unclamped':   unclamped,
+                'ref_y':       ref_y,
+                'dur':         dur,
+                'beam':        beam_state,
+                'tip_y':       None,    # filled in pass 2
+            })
+
+        # ── PASS 2: compute beam lines; assign tip_y to beamed stems ─────────
+        beam_groups = []
+        for is_treble in (True, False):
+            staff = [r for r in all_stems if r['is_treble'] == is_treble]
+
+            i = 0
+            while i < len(staff):
+                if staff[i]['beam'] != 'start':
+                    i += 1
+                    continue
+
+                grp = [staff[i]]
+                j   = i + 1
+                while j < len(staff) and staff[j]['beam'] in ('continue', 'stop'):
+                    grp.append(staff[j])
+                    if staff[j]['beam'] == 'stop':
+                        j += 1
+                        break
+                    j += 1
+
+                if len(grp) >= 2:
+                    stem_up = grp[0]['stem_up']
+                    bx0 = grp[0]['stem_x']
+                    bx1 = grp[-1]['stem_x']
+
+                    # Anchor: beam passes through the most-extreme natural stem tip
+                    tips  = [r['unclamped'] for r in grp]
+                    ext_y = min(tips) if stem_up else max(tips)
+                    ext_x = grp[tips.index(ext_y)]['stem_x']
+
+                    # Slope from first→last unclamped tips, clamped to ±0.5 staff spaces
+                    raw_slope = grp[-1]['unclamped'] - grp[0]['unclamped']
+                    clamped   = max(-s * 0.5, min(s * 0.5, raw_slope))
+
+                    if bx1 != bx0:
+                        slope_pp = clamped / (bx1 - bx0)      # pixels per pixel
+                        by0 = ext_y - slope_pp * (ext_x - bx0)
+                        by1 = ext_y + slope_pp * (bx1 - ext_x)
+                    else:
+                        by0 = by1 = ext_y
+
+                    # Pin each beamed stem's tip to the interpolated beam line
+                    for r in grp:
+                        t = (r['stem_x'] - bx0) / (bx1 - bx0) if bx1 != bx0 else 0.0
+                        r['tip_y'] = by0 + t * (by1 - by0)
+
+                    beam_groups.append({
+                        'grp': grp, 'x0': bx0, 'y0': by0,
+                        'x1': bx1, 'y1': by1, 'up': stem_up,
+                    })
+
+                i = j
+
+        # Unbeamed stems: clamp natural tip at middle line (standard rule)
+        for r in all_stems:
+            if r['tip_y'] is None:
+                r['tip_y'] = min(r['unclamped'], r['ref_y']) if r['stem_up'] \
+                             else max(r['unclamped'], r['ref_y'])
+
+        def _stem_done(beat: float, dur: float) -> bool:
+            return current_beat >= beat + dur
+
+        # ── PASS 3: draw stems and flags ──────────────────────────────────────
+        for r in all_stems:
+            stem_color = QColor("#888888") if _stem_done(r['beat'], r['dur']) else QColor("#111111")
+            painter.setPen(QPen(stem_color, stem_weight,
+                                Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            painter.drawLine(int(r['stem_x']), int(r['notehead_y']),
+                             int(r['stem_x']), int(r['tip_y']))
+
+            if r['dur'] < 1.0 and r['beam'] is None:
+                if r['stem_up']:
+                    fg = self.GLYPH_FLAG_16TH_UP if r['dur'] <= 0.25 else self.GLYPH_FLAG_8TH_UP
+                else:
+                    fg = self.GLYPH_FLAG_16TH_DOWN if r['dur'] <= 0.25 else self.GLYPH_FLAG_8TH_DOWN
+                sf = QFont(self._get_smufl_family())
+                sf.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
+                sf.setPixelSize(int(s * 4.0))
+                painter.setFont(sf)
+                painter.drawText(int(r['stem_x']), int(r['tip_y']), fg)
+
+        # ── PASS 4: draw beam polygons ────────────────────────────────────────
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        for info in beam_groups:
+            grp, bx0, by0, bx1, by1 = \
+                info['grp'], info['x0'], info['y0'], info['x1'], info['y1']
+            direction = 1.0 if info['up'] else -1.0
+
+            beam_color = QColor("#888888") if _stem_done(grp[-1]['beat'], grp[-1]['dur']) else QColor("#111111")
+            painter.setBrush(QBrush(beam_color))
+
+            def _by(x, lvl, _y0=by0, _y1=by1, _x0=bx0, _x1=bx1, _d=direction):
+                base = _y0 + (_y1 - _y0) * (x - _x0) / (_x1 - _x0) \
+                       if _x1 != _x0 else _y0
+                return base + lvl * (beam_thick + beam_gap) * _d
+
+            painter.drawPolygon(QPolygonF([
+                QPointF(bx0, _by(bx0, 0) - half), QPointF(bx1, _by(bx1, 0) - half),
+                QPointF(bx1, _by(bx1, 0) + half), QPointF(bx0, _by(bx0, 0) + half),
+            ]))
+
+            k = 0
+            while k < len(grp) - 1:
+                if grp[k]['dur'] <= 0.25 and grp[k + 1]['dur'] <= 0.25:
+                    run_start = k
+                    while k + 1 < len(grp) and grp[k + 1]['dur'] <= 0.25:
+                        k += 1
+                    sx0, sx1 = grp[run_start]['stem_x'], grp[k]['stem_x']
+                    painter.drawPolygon(QPolygonF([
+                        QPointF(sx0, _by(sx0, 1) - half), QPointF(sx1, _by(sx1, 1) - half),
+                        QPointF(sx1, _by(sx1, 1) + half), QPointF(sx0, _by(sx0, 1) + half),
+                    ]))
+                k += 1
+
+        painter.setOpacity(1.0)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
 
     def _render_ledgers(self, painter: QPainter, clusters: dict, s: float):
         """
@@ -439,7 +702,11 @@ class NotationView(QQuickPaintedItem):
             ref_y = cluster[0]['ref_y']
             
             # Step 2: Establish the opposite-staff clipping frustum
-            forbidden = {-12, -14, -16, -18, -20} if is_treble else {12, 14, 16, 18, 20}
+            # Dynamically compute step positions of the opposite staff's 5 lines
+            other_ref = 50 if is_treble else 71  # center pitch of opposite staff
+            this_ref = 71 if is_treble else 50    # center pitch of this staff
+            delta = self._get_diatonic_abs(other_ref) - self._get_diatonic_abs(this_ref)
+            forbidden = {delta + (i * 2) for i in range(-2, 3)}
             ledger_steps = set()
             
             # Step 3: Accumulate unique ledger levels mandated by the chord
@@ -524,7 +791,7 @@ class NotationView(QQuickPaintedItem):
 
         # Step 3: Execute Background Render Passes
         if self._notation_style == "traditional":
-            self._render_stems(painter, clusters, s)
+            self._render_stems(painter, clusters, s, current_beat)
 
         # Step 4: Execute Foreground Node/Accidental Render Pass
         for i, layout in enumerate(layout_data):
@@ -561,48 +828,43 @@ class NotationView(QQuickPaintedItem):
                         color = self._blend_to_black(color, dist, threshold=2.0)
                         
             else:
-                if self._notation_style == "traditional":
-                    played_dist = current_beat - start_beat
-                    if played_dist >= 0:
-                        # Lock to black in monochrome mode so it doesn't snap back to gray
-                        if self._notation_color_mode == "monochrome":
-                            color = QColor("#111111")
-                        else:
-                            color = QColor("#888888")
-                            
-                        opacity = max(0.0, 1.0 - (played_dist / 1.0)) 
-                    else:
-                        dist = abs(played_dist)
-                        # Lock future notes to 100% opacity to maintain pedagogical color saturation
-                        opacity = 1.0 
-                        
-                        if self._notation_color_mode == "monochrome":
-                            color = self._blend_to_black(color, dist, threshold=2.0)
+                is_completed = current_beat >= (start_beat + duration)
+                is_active    = start_beat <= current_beat < (start_beat + duration)
+
+                if is_completed:
+                    color = QColor("#888888")
+                elif is_active:
+                    if self._notation_color_mode == "monochrome":
+                        color = QColor("#111111")
                 else:
-                    is_completed = current_beat >= (start_beat + duration)
-                    is_active = current_beat >= start_beat and current_beat < (start_beat + duration)
-                    
-                    if is_completed: 
-                        color = QColor("#888888")
-                        finish_dist = current_beat - (start_beat + duration)
-                        opacity = max(0.0, 0.35 - (finish_dist / 0.5))
-                    elif is_active:
-                        if self._notation_color_mode == "monochrome":
-                            color = QColor("#111111")
-                    else:
-                        dist = abs(start_beat - current_beat)
-                        # Lock future notes to 100% opacity to maintain pedagogical color saturation
-                        opacity = 1.0 
-                        
-                        if self._notation_color_mode == "monochrome":
-                            color = self._blend_to_black(color, dist, threshold=2.0)
+                    if self._notation_color_mode == "monochrome":
+                        dist = start_beat - current_beat
+                        color = self._blend_to_black(color, dist, threshold=2.0)
 
             painter.setOpacity(opacity)
             
             if self._notation_style == "traditional":
-                self._draw_traditional_note(painter, layout['x'], layout['y'], note_data.get('pitch', 60), s, color, duration, layout['notehead_offset_x'], layout['accidental_offset_x'])
+                if note_data.get("is_barline"):
+                    painter.setPen(QPen(QColor("#888888"), max(1.0, s * 0.1), Qt.PenStyle.SolidLine))
+                    painter.drawLine(int(layout['x']), int(treble_y - s*2), int(layout['x']), int(bass_y + s*2))
+                elif note_data.get("is_rest"):
+                    if duration >= 4.0: r_glyph = self.GLYPH_REST_WHOLE
+                    elif duration >= 2.0: r_glyph = self.GLYPH_REST_HALF
+                    elif duration >= 1.0: r_glyph = self.GLYPH_REST_QUARTER
+                    elif duration >= 0.5: r_glyph = self.GLYPH_REST_8TH
+                    else: r_glyph = self.GLYPH_REST_16TH
+                    
+                    smufl_font = QFont(self._get_smufl_family())
+                    smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
+                    smufl_font.setPixelSize(int(s * 4.0))
+                    painter.setFont(smufl_font)
+                    painter.setPen(QPen(color))
+                    painter.drawText(int(layout['x']), int(layout['y']), r_glyph)
+                else:
+                    self._draw_traditional_note(painter, layout['x'], layout['y'], note_data.get('pitch', 60), s, color, duration, layout['notehead_offset_x'], layout['accidental_offset_x'], note_data.get('tie'), note_data.get('beam'), ppb)
             else:
-                self._draw_enhanced_note(painter, layout['x'] + layout['notehead_offset_x'], layout['y'], note_data.get('pitch', 60), cap_w, s, color)
+                if not note_data.get("is_barline") and not note_data.get("is_rest"):
+                    self._draw_enhanced_note(painter, layout['x'] + layout['notehead_offset_x'], layout['y'], note_data.get('pitch', 60), cap_w, s, color)
             
         # Step 5: Render deduplicated ledgers
         painter.setOpacity(1.0)
@@ -661,7 +923,8 @@ class NotationView(QQuickPaintedItem):
             notehead_offsets[i] = notehead_offset_x
 
             # Resolve Accidental Constraints
-            if self._is_accidental(pitch) and not is_pentascale:
+            is_acc, _ = self._requires_accidental_for_key(pitch)
+            if is_acc and not is_pentascale:
                 column = 0
                 while True:
                     collision = False
@@ -719,17 +982,51 @@ class NotationView(QQuickPaintedItem):
             y = center_y + (i * spacing)
             painter.drawLine(0, int(y), int(width), int(y))
 
-    def _draw_traditional_note(self, painter: QPainter, x: float, y: float, pitch: int, spacing: float, color: QColor, duration: float = 1.0, notehead_offset_x: float = 0.0, accidental_offset_x: float = 0.0):
-        if duration >= 4.0:
+    def _draw_key_signature(self, painter: QPainter, start_x: float, treble_cy: float, bass_cy: float, s: float):
+        if self._song_key_sharps == 0 or self._notation_style != "traditional":
+            return
+            
+        smufl_font = QFont(self._get_smufl_family())
+        smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
+        smufl_font.setPixelSize(int(s * 4.0))  
+        painter.setFont(smufl_font)
+        painter.setPen(QPen(QColor("#222222")))
+        
+        treble_sharps = [77, 72, 79, 74, 69, 76, 71]
+        treble_flats = [71, 76, 69, 74, 67, 72, 65]
+        bass_sharps = [53, 48, 55, 50, 45, 52, 47]
+        bass_flats = [47, 52, 45, 50, 43, 48, 41]
+        
+        count = abs(self._song_key_sharps)
+        is_sharp = self._song_key_sharps > 0
+        glyph = self.GLYPH_SHARP if is_sharp else self.GLYPH_FLAT
+        
+        t_pitches = treble_sharps if is_sharp else treble_flats
+        b_pitches = bass_sharps if is_sharp else bass_flats
+        
+        for i in range(count):
+            if i >= len(t_pitches): break
+            x_pos = start_x + (i * s * 0.8)
+            
+            steps_t = self._get_diatonic_abs(t_pitches[i]) - self._get_diatonic_abs(71)
+            ty = treble_cy - (steps_t * (s / 2))
+            painter.drawText(int(x_pos), int(ty), glyph)
+            
+            steps_b = self._get_diatonic_abs(b_pitches[i]) - self._get_diatonic_abs(50)
+            by = bass_cy - (steps_b * (s / 2))
+            painter.drawText(int(x_pos), int(by), glyph)
+
+    def _draw_traditional_note(self, painter: QPainter, x: float, y: float, pitch: int, spacing: float, color: QColor, text_duration: float = 1.0, notehead_offset_x: float = 0.0, accidental_offset_x: float = 0.0, tie_state: str = None, beam_state: str = None, ppb: float = 50.0):
+        if text_duration >= 4.0:
             glyph = self.GLYPH_NOTEHEAD_WHOLE
-        elif duration >= 2.0:
+        elif text_duration >= 2.0:
             glyph = self.GLYPH_NOTEHEAD_HALF
         else:
             glyph = self.GLYPH_NOTEHEAD_BLACK
 
         smufl_font = QFont(self._get_smufl_family())
         smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        smufl_font.setPixelSize(int(spacing * 3.6))
+        smufl_font.setPixelSize(int(spacing * 4.0))
         
         painter.setFont(smufl_font)
         painter.setPen(QPen(color))
@@ -737,19 +1034,28 @@ class NotationView(QQuickPaintedItem):
         notehead_x = x + notehead_offset_x + spacing * 0.6
         painter.drawText(int(notehead_x), int(y), glyph)
             
-        if self._is_accidental(pitch):
-            acc_type = self._get_accidental_type(pitch)
-            smufl_sharp = "\uE262"
-            smufl_flat = "\uE260"
-            acc_glyph = smufl_sharp if acc_type == "sharp" else smufl_flat
-            
+        is_acc, acc_type = self._get_accidental_from_spelling(pitch, None)  # static targets have no spelling
+        if is_acc:
+            acc_glyph = self.GLYPH_SHARP if acc_type == "sharp" else (self.GLYPH_FLAT if acc_type == "flat" else self.GLYPH_NATURAL)
             painter.setFont(smufl_font)
             painter.setPen(QPen(QColor("#111111")))
-            
-            # Revert vertical hack: SMuFL guarantees perfectly shared baselines. 
-            # Tighten horizontal clearance to -0.25s to kiss the notehead.
-            acc_x = x + accidental_offset_x - spacing * 0.25
+            acc_x = notehead_x + accidental_offset_x - spacing * 1.5
             painter.drawText(int(acc_x), int(y), acc_glyph)
+
+        if tie_state in ["start", "continue"]:
+            tie_dir = 1.0 if pitch < 60 else -1.0 
+            tie_x = notehead_x + spacing * 0.5
+            tie_y = y + (tie_dir * spacing * 0.8)
+            tie_w = (text_duration * ppb) - (spacing * 1.5)
+            if tie_w > 0:
+                from PySide6.QtGui import QPainterPath
+                path = QPainterPath()
+                path.moveTo(tie_x, tie_y)
+                path.quadTo(tie_x + tie_w/2, tie_y + (tie_dir * spacing * 0.8), tie_x + tie_w, tie_y)
+                painter.setPen(QPen(color, max(1.0, spacing * 0.15), Qt.PenStyle.SolidLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(path)
+
 
     def _draw_enhanced_note(self, painter: QPainter, x: float, y: float, pitch: int, width: float, spacing: float, color: QColor):
         """

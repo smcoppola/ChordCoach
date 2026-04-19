@@ -100,13 +100,14 @@ class CorpusManager:
     def configure_environment():
         """Points music21 to the locally downloaded corpus."""
         try:
-            from music21 import environment
+            from music21 import corpus as m21corpus
             path = CorpusManager.get_corpus_base_path()
             corpus_dir = os.path.join(path, 'music21', 'corpus')
-            
-            us = environment.UserSettings()
-            # In modern music21, we use localCorporaSettings which is a dict of nicknames to path lists
-            us['localCorporaSettings'] = {'local': [corpus_dir]}
+
+            lc = m21corpus.corpora.LocalCorpus('local')
+            if corpus_dir not in lc.directoryPaths:
+                lc.addPath(corpus_dir)
+            lc.save()
             print(f"CorpusManager: Successfully registered local corpus at {corpus_dir}")
         except Exception as e:
             print(f"CorpusManager Environment Error: {e}")

@@ -349,11 +349,20 @@ class Music21Service(QObject):
             try:
                 analyzed_key = score.analyze('key')
                 key_name = f"{analyzed_key.tonic.name} {analyzed_key.mode.capitalize()}"
+                key_sharps = analyzed_key.sharps
             except:
                 key_name = "Unknown Key"
+                key_sharps = 0
+                
+            all_parts = score.parts if score.parts else [score]
+            
+            barlines = set()
+            for part in all_parts:
+                for m in part.getElementsByClass(music21.stream.Measure):
+                    if float(m.offset) > 0:
+                        barlines.add(float(m.offset))
             
             offset_map = {}
-            all_parts = score.parts if score.parts else [score]
             
             # Inject fingerings
             for i, part in enumerate(all_parts):
@@ -369,30 +378,48 @@ class Music21Service(QObject):
                 clefs = flattened.getElementsByClass(music21.clef.Clef)
                 hand_tag = "left" if (clefs and isinstance(clefs[0], music21.clef.BassClef)) else ("left" if part_index > 0 else "right")
                 
-                flat_part = part.flatten()
-                for el in flat_part.notes:
+                for el in flattened.notesAndRests:
+                    dur = float(el.duration.quarterLength)
+                    off = float(el.offset)
+                    
+                    if off not in offset_map:
+                        offset_map[off] = {'pitches': [], 'spellings': [], 'hands': [], 'fingers': [], 'duration': dur, 'ties': [], 'beams': [], 'rests': []}
+                        
+                    if isinstance(el, music21.note.Rest):
+                        offset_map[off]['rests'].append({'duration': dur, 'hand': hand_tag})
+                        continue
+
                     pitches = []
-                    if isinstance(el, note.Note): pitches.append(el.pitch.midi)
-                    elif isinstance(el, chord.Chord): pitches.extend([p.midi for p in el.pitches])
+                    spellings = []  # (step_letter, alter) tuples e.g. ('F', -1) for F-flat
+                    if isinstance(el, note.Note):
+                        pitches.append(el.pitch.midi)
+                        spellings.append((el.pitch.step, el.pitch.alter))
+                    elif isinstance(el, chord.Chord):
+                        pitches.extend([p.midi for p in el.pitches])
+                        spellings.extend([(p.step, p.alter) for p in el.pitches])
                     else: continue
                         
+                    beam_type = None
+                    if hasattr(el, 'beams') and el.beams and len(el.beams.beamsList) > 0:
+                        b1 = el.beams.getByNumber(1)
+                        if b1 is not None:
+                            beam_type = b1.type
+
                     fingerings = []
+                    ties = []
                     if isinstance(el, music21.chord.Chord):
                         internal_notes = sorted(el.notes, key=lambda n: n.pitch.midi)
                         for n in internal_notes:
+                            ties.append(n.tie.type if hasattr(n, 'tie') and n.tie else None)
                             f_val = 1
                             for a in n.articulations:
                                 if isinstance(a, music21.articulations.Fingering):
                                     f_val = a.fingerNumber; break
                             fingerings.append(f_val)
                     else:
+                        ties.append(el.tie.type if hasattr(el, 'tie') and el.tie else None)
                         fingerings = [a.fingerNumber for a in el.articulations if isinstance(a, music21.articulations.Fingering)]
                     
-                    dur = float(el.duration.quarterLength)
-                    off = float(el.offset)
-                    if off not in offset_map:
-                        offset_map[off] = {'pitches': [], 'hands': [], 'fingers': [], 'duration': dur}
-                        
                     for i, pitch_val in enumerate(pitches):
                         found = False
                         for existing_pitch in offset_map[off]['pitches']:
@@ -400,9 +427,14 @@ class Music21Service(QObject):
                                 found = True; break
                         if not found:
                             f_val = fingerings[i] if i < len(fingerings) else (fingerings[0] if fingerings else 1)
+                            t_val = ties[i] if i < len(ties) else None
+                            s_val = spellings[i] if i < len(spellings) else None
                             offset_map[off]['pitches'].append(pitch_val)
+                            offset_map[off]['spellings'].append(s_val)
                             offset_map[off]['hands'].append(hand_tag)
                             offset_map[off]['fingers'].append(f_val)
+                            offset_map[off]['ties'].append(t_val)
+                            offset_map[off]['beams'].append(beam_type)
                 part_index += 1
             
             # Process steps and re-balance (snip for brevity, but I'll keeping it robust)
@@ -424,17 +456,36 @@ class Music21Service(QObject):
             steps = []
             for off in sorted_offsets:
                 step_data = offset_map[off]
-                paired = sorted(list(zip(step_data['pitches'], step_data['hands'], step_data['fingers'])), key=lambda x: x[0])
+                paired = sorted(list(zip(
+                    step_data['pitches'],
+                    step_data['spellings'],
+                    step_data['hands'], 
+                    step_data['fingers'],
+                    step_data['ties'],
+                    step_data['beams']
+                )), key=lambda x: x[0])
+                
                 steps.append({
                     'offset': off,
                     'pitches': [p[0] for p in paired],
-                    'hands': [p[1] for p in paired],
-                    'fingers': [p[2] for p in paired],
-                    'duration': step_data['duration']
+                    'spellings': [p[1] for p in paired],
+                    'hands': [p[2] for p in paired],
+                    'fingers': [p[3] for p in paired],
+                    'ties': [p[4] for p in paired],
+                    'beams': [p[5] for p in paired],
+                    'duration': step_data['duration'],
+                    'rests': step_data['rests']
                 })
                 
             print(f"Music21Service: Loaded {len(steps)} steps for '{title}' in {key_name}.")
-            return {"steps": steps, "title": title, "composer": composer, "key": key_name}
+            return {
+                "steps": steps, 
+                "title": title, 
+                "composer": composer, 
+                "key": key_name,
+                "key_sharps": key_sharps,
+                "barlines": sorted(list(barlines))
+            }
             
         except Exception as e:
             print(f"Music21Service: Error loading {piece_name}: {e}")

@@ -18,6 +18,7 @@ Rectangle {
     property int lessonProgress: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.lessonProgress : 0
     property int lessonTotal: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.lessonTotal : 0
     property bool isLessonComplete: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLessonComplete : false
+    property bool isSongCompleted: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isSongCompleted : false
     property bool isLessonMode: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLessonMode : false
     property real holdProgress: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.holdProgress : 0.0
     property int requiredHoldMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.requiredHoldMs : 0
@@ -32,7 +33,7 @@ Rectangle {
     
     // UI Modal States for Blurring
     property bool isReconnecting: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
-    property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isLoading || isReconnecting
+    property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isSongCompleted || isLoading || isReconnecting
 
     
     onIsPausedForSpeechChanged: {
@@ -763,6 +764,60 @@ Rectangle {
                     verticalAlignment: Text.AlignVCenter
                 }
                 onClicked: root.returnToDashboard()
+            }
+        }
+    }
+
+    // Song Complete overlay — shown for ~1.5 s while waiting for AI feedback
+    Rectangle {
+        id: songCompleteOverlay
+        anchors.centerIn: parent
+        width: Math.min(700 * mainWindow.uiScale, parent.width * 0.9)
+        height: Math.min(300 * mainWindow.uiScale, parent.height * 0.7)
+        color: "#1c1c1e"
+        border.color: "#4CAF50"
+        border.width: Math.max(1, 1 * mainWindow.uiScale)
+        radius: 12 * mainWindow.uiScale
+        visible: root.isSongCompleted
+        z: 110
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -1 * mainWindow.uiScale
+            radius: 12 * mainWindow.uiScale
+            color: "transparent"
+            border.color: "#4CAF50"
+            border.width: 2 * mainWindow.uiScale
+            opacity: 0.3
+        }
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 16 * mainWindow.uiScale
+
+            Text {
+                text: "SONG COMPLETE"
+                font.pixelSize: 32 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+                color: "#ffffff"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Text {
+                text: root.songTitle + (root.songComposer !== "" ? "  ·  " + root.songComposer : "")
+                font.pixelSize: 16 * mainWindow.uiScale
+                color: "#aaaaaa"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Item { Layout.preferredHeight: 8 * mainWindow.uiScale }
+
+            Text {
+                text: "Great work! Getting your feedback…"
+                font.pixelSize: 14 * mainWindow.uiScale
+                color: "#666666"
+                Layout.alignment: Qt.AlignHCenter
             }
         }
     }

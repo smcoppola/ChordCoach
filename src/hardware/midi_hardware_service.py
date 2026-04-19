@@ -104,12 +104,15 @@ class MidiHardwareService(QObject):
     midiNoteReceived = Signal(int, bool)
     sustainPedalChanged = Signal(bool)
     connectionStatusChanged = Signal(bool)
+    initialSearchComplete = Signal()
     
     # Internal signals for thread-safe main-loop delegation
     _cmdStartPolling = Signal()
     _cmdStopPolling = Signal()
+    _cmdBindPort = Signal(list)  # Carries the list of port names discovered by the probe thread
     _cmdBulkSend = Signal(list)
     _cmdPlayStartupRiff = Signal()
+    _cmdInitialSearchComplete = Signal()
 
     def __init__(self, chordcoach_hw, ll_lib_path: Path, midi_out_enabled: bool = True):
         """
@@ -126,6 +129,7 @@ class MidiHardwareService(QObject):
         self._is_sustain_pedal_down = False
         self.is_connected = False
         self.device_name = "Not Connected"
+        self._initial_search_done = False
         
         self._ll_lib_path = ll_lib_path
         self._ll_midi_out: Optional[LowLevelMidiOutput] = None
@@ -138,9 +142,17 @@ class MidiHardwareService(QObject):
         self._polling_timer.timeout.connect(self.initialize_async)
         self._cmdStartPolling.connect(self._start_polling_safe)
         self._cmdStopPolling.connect(self._stop_polling_safe)
+        self._cmdBindPort.connect(self._bind_port_on_main_thread)
         self._cmdBulkSend.connect(self._do_safe_bulk_send)
         self._cmdPlayStartupRiff.connect(self.play_startup_riff)
+        self._cmdInitialSearchComplete.connect(self._on_initial_search_complete)
         
+    @Slot()
+    def _on_initial_search_complete(self):
+        if not self._initial_search_done:
+            self._initial_search_done = True
+            self.initialSearchComplete.emit()
+
     @Slot()
     def _start_polling_safe(self):
         """Thread-safe timer activation."""
@@ -162,19 +174,24 @@ class MidiHardwareService(QObject):
         t = threading.Thread(target=self._execute_initialization, daemon=True)
         t.start()
             
-    def _execute_initialization(self) -> bool:
+    def _execute_initialization(self):
         """
-        Threaded payload: Probes for MIDI hardware, binds input listeners, and attempts to map
-        a corresponding output port. Mutates internal connection state.
+        Threaded payload: Probes for MIDI hardware on a background thread to avoid
+        blocking the UI, then delegates the actual port binding back to the main
+        thread via _cmdBindPort signal.
         
-        Returns:
-            bool: True if initialization fully succeeded, False if ports missing or failed.
+        IMPORTANT — macOS / CoreMIDI constraint:
+        CoreMIDI requires an active CFRunLoop on the thread that opens a MIDI port.
+        If the port is opened on a short-lived daemon thread, the run-loop source
+        is destroyed when the thread exits, and macOS silently stops delivering
+        MIDI messages.  By emitting _cmdBindPort we ensure openPort()/setCallback()
+        execute on the main thread (which owns the Qt event-loop / CFRunLoop).
         """
         if self.is_connected:
-            return True
+            return
         if not self.hw_module:
             print("MidiHardwareService: chordcoach_hw extension not available.")
-            return False
+            return
             
         try:
             # 1. Instantiate temporary probe to check for input ports
@@ -207,55 +224,74 @@ class MidiHardwareService(QObject):
                     self.is_connected = False
                     self.device_name = "Not Connected"
                     self.connectionStatusChanged.emit(False)
-                return False
+                self._cmdInitialSearchComplete.emit()
+                return
                 
             # 5. Handle Connected State (Transition from polling)
             if self._is_polling:
                 self._cmdStopPolling.emit()
                 print(f"MidiHardwareService: MIDI Device detected during polling: {ports[0]}")
 
-            # 6. Instantiate permanent listener and bind to first available hardware port (Index 0)
-            # We use a retry loop because on Windows, the OS may not release the port 
-            # instantaneously from a previous process or probe.
-            bind_success = False
-            last_err = ""
-            for attempt in range(3):
-                try:
-                    # Force garbage collection/release of any old pointer if re-initializing
-                    self.hw_midi_in = None 
-                    gc.collect()
-                    
-                    m_handler = self.hw_module.MidiHandler()
-                    m_handler.openPort(0)
-                    m_handler.setCallback(self._on_raw_midi_data)
-                    self.hw_midi_in = m_handler
-                    bind_success = True
-                    break
-                except Exception as e:
-                    last_err = str(e)
-                    print(f"MidiHardwareService: Retrying MIDI bind (Attempt {attempt+1}/3) due to: {e}")
-                    import time
-                    time.sleep(0.5)
-
-            if not bind_success:
-                print(f"MidiHardwareService: Failed to bind MIDI port listener after 3 attempts: {last_err}")
-                return False
-
-            # 7. Update internal state and notify application
-            self.is_connected = True
-            self.device_name = ports[0]
-            self.connectionStatusChanged.emit(True)
-            print(f"MidiHardwareService: MIDI Input Hardware initialized: {ports[0]}")
+            # 6. Delegate port binding to the main thread (required for macOS CoreMIDI)
+            self._cmdBindPort.emit(list(ports))
             
-            # 8. Defer output initialization/matching to sub-routine
-            self._initialize_output_hardware(target_name=ports[0])
-            
-            return True
         except Exception as e:
             print(f"MidiHardwareService: MIDI Hardware Init Error: {e}")
             self.is_connected = False
             self.connectionStatusChanged.emit(False)
-            return False
+            self._cmdInitialSearchComplete.emit()
+
+    @Slot(list)
+    def _bind_port_on_main_thread(self, ports: list):
+        """
+        Executes on the main thread (via signal).  Opens the MIDI input port and
+        registers the Python callback.  On macOS this guarantees the CFRunLoop is
+        active so CoreMIDI can deliver messages.
+        """
+        if self.is_connected or not ports:
+            return
+            
+        import gc
+        
+        # Retry loop — on Windows the OS may not release the port instantly
+        bind_success = False
+        last_err = ""
+        for attempt in range(3):
+            try:
+                # Force garbage collection/release of any old pointer if re-initializing
+                self.hw_midi_in = None 
+                gc.collect()
+                
+                m_handler = self.hw_module.MidiHandler()
+                m_handler.openPort(0)
+                m_handler.setCallback(self._on_raw_midi_data)
+                self.hw_midi_in = m_handler
+                bind_success = True
+                break
+            except Exception as e:
+                last_err = str(e)
+                print(f"MidiHardwareService: Retrying MIDI bind (Attempt {attempt+1}/3) due to: {e}")
+                # Use a non-blocking single-shot timer for retries instead of
+                # time.sleep() to keep the main thread responsive.  However for
+                # simplicity and because 0.5 s is brief, a blocking sleep is
+                # acceptable during startup.
+                import time
+                time.sleep(0.5)
+
+        if not bind_success:
+            print(f"MidiHardwareService: Failed to bind MIDI port listener after 3 attempts: {last_err}")
+            self._cmdInitialSearchComplete.emit()
+            return
+
+        # Update internal state and notify application
+        self.is_connected = True
+        self.device_name = ports[0]
+        self.connectionStatusChanged.emit(True)
+        print(f"MidiHardwareService: MIDI Input Hardware initialized: {ports[0]}")
+        
+        # Defer output initialization/matching to sub-routine
+        self._initialize_output_hardware(target_name=ports[0])
+        self._cmdInitialSearchComplete.emit()
 
     def _initialize_output_hardware(self, target_name: str):
         """

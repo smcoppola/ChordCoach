@@ -172,10 +172,10 @@ ApplicationWindow {
     Rectangle {
         id: midiWarningBanner
         width: parent.width
-        height: 60 * mainWindow.uiScale
+        height: 48 * mainWindow.uiScale
+        color: "#F44336" // Red
         anchors.bottom: parent.bottom
-        color: "#f44336"
-        visible: (typeof appState !== "undefined" && appState) ? !appState.midiConnected : false
+        visible: (typeof appState !== "undefined" && appState) ? (!appState.midiConnected && appState.midiInitialSearchDone) : false
         z: 999 // Ensure it's above most content
 
         RowLayout {

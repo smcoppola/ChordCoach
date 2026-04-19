@@ -557,6 +557,23 @@ Rectangle {
         
         property var catalogPath: []
         property string searchQuery: ""
+        property bool isLoadingSong: false
+
+        onClosed: {
+            isLoadingSong = false;
+            catalogPath = [];
+            searchQuery = "";
+        }
+
+        // Auto-close once Python finishes parsing the score
+        Connections {
+            target: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer : null
+            function onLessonStateChanged() {
+                if (songPicker.isLoadingSong && !appState.chordTrainer.isLoading) {
+                    songPicker.close();
+                }
+            }
+        }
 
         background: Rectangle {
             color: "#1c1c1e"
@@ -779,8 +796,9 @@ Rectangle {
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
                                                 appState.music21Service.mark_song_played(modelData.id);
+                                                songPicker.isLoadingSong = true;
                                                 appState.music21Service.songRequested(modelData.id);
-                                                songPicker.close();
+                                                // Popup stays open — Connections block closes it when loading finishes
                                             }
                                         }
                                     }
@@ -910,10 +928,10 @@ Rectangle {
                                             console.log("Dashboard: Requesting song selection: " + modelData.id);
                                             if (typeof appState !== "undefined" && appState && appState.music21Service) {
                                                 appState.music21Service.mark_song_played(modelData.id);
+                                                songPicker.isLoadingSong = true;
                                                 appState.music21Service.songRequested(modelData.id);
+                                                // Popup stays open — Connections block closes it when loading finishes
                                             }
-                                            songPicker.close();
-                                            songPicker.catalogPath = [];
                                         }
                                     }
                                 }
@@ -925,6 +943,76 @@ Rectangle {
                 }
             }
             
+            // ── Song Loading Overlay ──
+            Rectangle {
+                anchors.fill: parent
+                color: "#1c1c1e"
+                radius: 16 * mainWindow.uiScale
+                visible: songPicker.isLoadingSong
+                z: 200
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 28 * mainWindow.uiScale
+                    width: parent.width * 0.75
+
+                    // Spinning ring
+                    Item {
+                        Layout.alignment: Qt.AlignHCenter
+                        width: 56 * mainWindow.uiScale
+                        height: 56 * mainWindow.uiScale
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: parent.width
+                            height: parent.height
+                            radius: width / 2
+                            color: "transparent"
+                            border.color: "#333333"
+                            border.width: 4 * mainWindow.uiScale
+                        }
+
+                        Rectangle {
+                            id: spinnerArc
+                            anchors.centerIn: parent
+                            width: parent.width
+                            height: parent.height
+                            radius: width / 2
+                            color: "transparent"
+                            border.color: "#2196F3"
+                            border.width: 4 * mainWindow.uiScale
+                            // Clip to quarter-circle to fake an arc
+                            clip: true
+
+                            RotationAnimator on rotation {
+                                from: 0; to: 360
+                                duration: 900
+                                loops: Animation.Infinite
+                                running: songPicker.isLoadingSong
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Loading Song..."
+                        color: "#ffffff"
+                        font.pixelSize: 20 * mainWindow.uiScale
+                        font.bold: true
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    Text {
+                        text: "Parsing score — this takes a moment"
+                        color: "#666666"
+                        font.pixelSize: 13 * mainWindow.uiScale
+                        Layout.alignment: Qt.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+
             // ── Corpus Download Overlay ──
             Rectangle {
                 anchors.fill: parent

@@ -160,6 +160,13 @@ Rectangle {
         return "";
     }
 
+    property int songKeySharps: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.songKeySharps || 0;
+        }
+        return 0;
+    }
+
     // ADDED: Interpolators to catch backend property snaps and force smooth sliding
     Behavior on scrollBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     Behavior on evalBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
@@ -219,6 +226,7 @@ Rectangle {
         evalNotes: root.evalNotes
         scrollingNotes: root.scrollingNotes
         evalNoteStates: root.evalNoteStates
+        songKeySharps: root.songKeySharps
         
         // Synchronization
         scrollBeat: root.scrollBeat
