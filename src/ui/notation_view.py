@@ -8,10 +8,8 @@
 #              ledger line rendering.
 # =============================================================================
 
-import os
-from pathlib import Path
 from PySide6.QtCore import Qt, Property, Signal, QRectF, QPointF
-from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontDatabase, QBrush, QPolygonF
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontDatabase, QBrush, QPolygonF, QPainterPath
 from PySide6.QtQuick import QQuickPaintedItem
 
 class NotationView(QQuickPaintedItem):
@@ -30,7 +28,6 @@ class NotationView(QQuickPaintedItem):
     evalNotesChanged = Signal()
     scrollingNotesChanged = Signal()
     evalNoteStatesChanged = Signal()
-    pedagogicalColorsChanged = Signal()
     notationColorModeChanged = Signal()
     songKeySharpsChanged = Signal()
 
@@ -111,20 +108,22 @@ class NotationView(QQuickPaintedItem):
 
     # --- QML Properties ---
     @Property(list, notify=targetPitchesChanged)
-    def targetPitches(self): return self._target_pitches
+    def targetPitches(self):  # type: ignore[reportRedeclaration]
+        return self._target_pitches
 
     @targetPitches.setter
-    def targetPitches(self, value):
+    def targetPitches(self, value):  # type: ignore[reportRedeclaration]
         if self._target_pitches != value:
             self._target_pitches = value
             self.targetPitchesChanged.emit()
             self.update()
 
     @Property(str, notify=notationStyleChanged)
-    def notationStyle(self): return self._notation_style
+    def notationStyle(self):  # type: ignore[reportRedeclaration]
+        return self._notation_style
 
     @notationStyle.setter
-    def notationStyle(self, value):
+    def notationStyle(self, value):  # type: ignore[reportRedeclaration]
         safe_val = str(value).lower()
         if self._notation_style != safe_val:
             self._notation_style = safe_val
@@ -132,90 +131,99 @@ class NotationView(QQuickPaintedItem):
             self.update()
             
     @Property(float, notify=scrollBeatChanged)
-    def scrollBeat(self): return self._scroll_beat
+    def scrollBeat(self):  # type: ignore[reportRedeclaration]
+        return self._scroll_beat
 
     @scrollBeat.setter
-    def scrollBeat(self, value):
+    def scrollBeat(self, value):  # type: ignore[reportRedeclaration]
         if self._scroll_beat != value:
             self._scroll_beat = value
             self.scrollBeatChanged.emit()
             self.update()
 
     @Property(float, notify=evalBeatChanged)
-    def evalBeat(self): return self._eval_beat
+    def evalBeat(self):  # type: ignore[reportRedeclaration]
+        return self._eval_beat
 
     @evalBeat.setter
-    def evalBeat(self, value):
+    def evalBeat(self, value):  # type: ignore[reportRedeclaration]
         if self._eval_beat != value:
             self._eval_beat = value
             self.evalBeatChanged.emit()
             self.update()
 
     @Property(int, notify=songKeySharpsChanged)
-    def songKeySharps(self): return self._song_key_sharps
+    def songKeySharps(self):  # type: ignore[reportRedeclaration]
+        return self._song_key_sharps
 
     @songKeySharps.setter
-    def songKeySharps(self, value):
+    def songKeySharps(self, value):  # type: ignore[reportRedeclaration]
         if self._song_key_sharps != value:
             self._song_key_sharps = value
             self.songKeySharpsChanged.emit()
             self.update()
 
     @Property(str, notify=displayModeChanged)
-    def displayMode(self): return self._display_mode
+    def displayMode(self):  # type: ignore[reportRedeclaration]
+        return self._display_mode
 
     @displayMode.setter
-    def displayMode(self, value):
+    def displayMode(self, value):  # type: ignore[reportRedeclaration]
         if self._display_mode != value:
             self._display_mode = value
             self.displayModeChanged.emit()
             self.update()
 
     @Property(bool, notify=isScrollingModeChanged)
-    def isScrollingMode(self): return self._is_scrolling_mode
+    def isScrollingMode(self):  # type: ignore[reportRedeclaration]
+        return self._is_scrolling_mode
 
     @isScrollingMode.setter
-    def isScrollingMode(self, value):
+    def isScrollingMode(self, value):  # type: ignore[reportRedeclaration]
         if self._is_scrolling_mode != value:
             self._is_scrolling_mode = value
             self.isScrollingModeChanged.emit()
             self.update()
 
     @Property(list, notify=evalNotesChanged)
-    def evalNotes(self): return self._eval_notes
+    def evalNotes(self):  # type: ignore[reportRedeclaration]
+        return self._eval_notes
 
     @evalNotes.setter
-    def evalNotes(self, value):
+    def evalNotes(self, value):  # type: ignore[reportRedeclaration]
         if self._eval_notes != value:
             self._eval_notes = value
             self.evalNotesChanged.emit()
             self.update()
 
     @Property(list, notify=scrollingNotesChanged)
-    def scrollingNotes(self): return self._scrolling_notes
+    def scrollingNotes(self):  # type: ignore[reportRedeclaration]
+        return self._scrolling_notes
 
     @scrollingNotes.setter
-    def scrollingNotes(self, value):
+    def scrollingNotes(self, value):  # type: ignore[reportRedeclaration]
         if self._scrolling_notes != value:
             self._scrolling_notes = value
             self.scrollingNotesChanged.emit()
             self.update()
 
     @Property(list, notify=evalNoteStatesChanged)
-    def evalNoteStates(self): return self._eval_note_states
+    def evalNoteStates(self):  # type: ignore[reportRedeclaration]
+        return self._eval_note_states
 
     @evalNoteStates.setter
-    def evalNoteStates(self, value):
+    def evalNoteStates(self, value):  # type: ignore[reportRedeclaration]
         if self._eval_note_states != value:
             self._eval_note_states = value
             self.evalNoteStatesChanged.emit()
             self.update()
 
     @Property(str, notify=notationColorModeChanged)
-    def notationColorMode(self): return self._notation_color_mode
+    def notationColorMode(self):  # type: ignore[reportRedeclaration]
+        return self._notation_color_mode
 
     @notationColorMode.setter
-    def notationColorMode(self, value):
+    def notationColorMode(self, value):  # type: ignore[reportRedeclaration]
         if self._notation_color_mode != value:
             self._notation_color_mode = value
             self.notationColorModeChanged.emit()
@@ -349,7 +357,7 @@ class NotationView(QQuickPaintedItem):
                 groups[start_beat] = []
             groups[start_beat].append((i, note))
 
-        layout_results = [None] * len(note_array)
+        layout_results: list[dict | None] = [None] * len(note_array)
 
         # Step 2: Resolve spatial metrics per temporal cluster
         for start_beat, group in groups.items():
@@ -793,6 +801,10 @@ class NotationView(QQuickPaintedItem):
         if self._notation_style == "traditional":
             self._render_stems(painter, clusters, s, current_beat)
 
+        # Background ledgers apply to all styles and belong behind notes
+        painter.setOpacity(1.0)
+        self._render_ledgers(painter, clusters, s)
+
         # Step 4: Execute Foreground Node/Accidental Render Pass
         for i, layout in enumerate(layout_data):
             if layout is None: continue
@@ -801,7 +813,7 @@ class NotationView(QQuickPaintedItem):
             duration = note_data.get('duration_beats', note_data.get('durationBeats', 1))
             start_beat = note_data.get('start_beat', note_data.get('startBeat', 0))
             
-            cap_w = min(max(duration * ppb - 4, 12), s * 3.5) if self._notation_style == "enhanced" else s * 1.1
+            cap_w = max(duration * ppb - 4, 12) if self._notation_style == "enhanced" else s * 1.1
             if layout['x'] + cap_w < -100 or layout['x'] > self.width() + 100:
                 continue
 
@@ -861,14 +873,15 @@ class NotationView(QQuickPaintedItem):
                     painter.setPen(QPen(color))
                     painter.drawText(int(layout['x']), int(layout['y']), r_glyph)
                 else:
-                    self._draw_traditional_note(painter, layout['x'], layout['y'], note_data.get('pitch', 60), s, color, duration, layout['notehead_offset_x'], layout['accidental_offset_x'], note_data.get('tie'), note_data.get('beam'), ppb)
+                    self._draw_traditional_note(painter, layout['x'], layout['y'], note_data.get('pitch', 60), s, color, duration, layout['notehead_offset_x'], layout['accidental_offset_x'], note_data.get('tie'), ppb)
             else:
-                if not note_data.get("is_barline") and not note_data.get("is_rest"):
-                    self._draw_enhanced_note(painter, layout['x'] + layout['notehead_offset_x'], layout['y'], note_data.get('pitch', 60), cap_w, s, color)
+                if not note_data.get("is_barline"):
+                    if note_data.get("is_rest"):
+                        self._draw_enhanced_rest(painter, layout['x'] + layout['notehead_offset_x'], layout['y'], cap_w, s)
+                    else:
+                        self._draw_enhanced_note(painter, layout['x'] + layout['notehead_offset_x'], layout['y'], note_data.get('pitch', 60), cap_w, s, color)
             
-        # Step 5: Render deduplicated ledgers
-        painter.setOpacity(1.0)
-        self._render_ledgers(painter, clusters, s)
+        # Render pipeline complete
 
     def _render_static_targets(self, painter: QPainter, note_start_x: float, treble_cy: float, bass_cy: float, s: float):
         """
@@ -961,6 +974,10 @@ class NotationView(QQuickPaintedItem):
         if self._notation_style == "traditional" and not is_pentascale:
             self._render_stems(painter, clusters, s)
             
+        # Background ledgers apply to all styles and belong behind notes
+        painter.setOpacity(1.0)
+        self._render_ledgers(painter, clusters, s)
+            
         # Step 5: Render Foreground Nodes
         for layout in layout_data:
             painter.setOpacity(layout['opacity'])
@@ -970,10 +987,7 @@ class NotationView(QQuickPaintedItem):
                 cap_w = s * 3.0 if is_pentascale else (s * 2.5)
                 self._draw_enhanced_note(painter, layout['x'] + layout['notehead_offset_x'], layout['y'], layout['note']['pitch'], cap_w, s, layout['color'])
                 
-        # Step 6: Render Background Ledgers
-        painter.setOpacity(1.0)
-        self._render_ledgers(painter, clusters, s)
-
+        # Render pipeline complete
     def _draw_staff_lines(self, painter: QPainter, width: float, center_y: float, spacing: float):
         """Renders the core 5 horizontal paths for the target staff block."""
         weight = max(1.0, spacing * 0.10)
@@ -1016,7 +1030,7 @@ class NotationView(QQuickPaintedItem):
             by = bass_cy - (steps_b * (s / 2))
             painter.drawText(int(x_pos), int(by), glyph)
 
-    def _draw_traditional_note(self, painter: QPainter, x: float, y: float, pitch: int, spacing: float, color: QColor, text_duration: float = 1.0, notehead_offset_x: float = 0.0, accidental_offset_x: float = 0.0, tie_state: str = None, beam_state: str = None, ppb: float = 50.0):
+    def _draw_traditional_note(self, painter: QPainter, x: float, y: float, pitch: int, spacing: float, color: QColor, text_duration: float = 1.0, notehead_offset_x: float = 0.0, accidental_offset_x: float = 0.0, tie_state: str | None = None, ppb: float = 50.0):
         if text_duration >= 4.0:
             glyph = self.GLYPH_NOTEHEAD_WHOLE
         elif text_duration >= 2.0:
@@ -1048,7 +1062,6 @@ class NotationView(QQuickPaintedItem):
             tie_y = y + (tie_dir * spacing * 0.8)
             tie_w = (text_duration * ppb) - (spacing * 1.5)
             if tie_w > 0:
-                from PySide6.QtGui import QPainterPath
                 path = QPainterPath()
                 path.moveTo(tie_x, tie_y)
                 path.quadTo(tie_x + tie_w/2, tie_y + (tie_dir * spacing * 0.8), tie_x + tie_w, tie_y)
@@ -1061,7 +1074,7 @@ class NotationView(QQuickPaintedItem):
         """
         Draws a modern pedagogical capsule with fixed interior text metrics.
         """
-        h = spacing * 0.7 
+        h = spacing * 0.9 
         painter.setBrush(QBrush(color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(QRectF(x, y - h/2, width, h), h/2, h/2)
@@ -1077,11 +1090,39 @@ class NotationView(QQuickPaintedItem):
         else:
             painter.drawLine(int(x), int(y + h/2), int(x), int(y + h/2 + stem_h))
 
-        painter.setPen(QPen(QColor("white")))
-        f = QFont("Outfit", int(h * 0.65), QFont.Weight.Bold)
+        f = QFont("Inter", int(h * 0.85), QFont.Weight.Bold)
         f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
         painter.setFont(f)
         
-        painter.drawText(QRectF(x, y - h / 2, width, h), 
-                         Qt.AlignmentFlag.AlignCenter, 
-                         self._get_note_name(pitch))
+        text = self._get_note_name(pitch)
+        rect = QRectF(x, y - h / 2, width, h)
+        
+        # Draw text shadow for contrast against bright finger colors
+        painter.setPen(QPen(QColor(0, 0, 0, 160)))
+        painter.drawText(QRectF(rect.x() + 1.5, rect.y() + 1.5, rect.width(), rect.height()), Qt.AlignmentFlag.AlignCenter, text)
+        
+        painter.setPen(QPen(QColor(255, 255, 255, 250)))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _draw_enhanced_rest(self, painter: QPainter, x: float, y: float, width: float, spacing: float):
+        """
+        Draws a modern pedagogical rest capsule (ghosted).
+        """
+        h = spacing * 0.9 
+        painter.setBrush(QBrush(QColor(150, 150, 150, 60)))
+        painter.setPen(QPen(QColor(150, 150, 150, 200), 1.0, Qt.PenStyle.DashLine))
+        painter.drawRoundedRect(QRectF(x, y - h/2, width, h), h/2, h/2)
+        
+        painter.setPen(QPen(QColor(150, 150, 150, 200)))
+        f = QFont("Inter", int(h * 0.75), QFont.Weight.Bold)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
+        painter.setFont(f)
+        
+        text = "REST" if width > spacing * 3.0 else ("Z" if width > spacing * 1.5 else "")
+        if text:
+            oblique_font = QFont(f)
+            oblique_font.setItalic(True)
+            painter.setFont(oblique_font)
+            painter.drawText(QRectF(x, y - h / 2, width, h), 
+                             Qt.AlignmentFlag.AlignCenter, 
+                             text)

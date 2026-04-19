@@ -1,4 +1,6 @@
 import requests # type: ignore
+import urllib.parse
+import threading
 from bs4 import BeautifulSoup # type: ignore
 from PySide6.QtCore import QObject, Signal, Slot # type: ignore
 from core.bootstrap import get_user_data_dir

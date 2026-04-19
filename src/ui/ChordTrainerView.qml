@@ -39,6 +39,13 @@ Rectangle {
     onIsPausedForSpeechChanged: {
         console.log("[TIMING " + new Date().toISOString() + "] QML root.isPausedForSpeech is now: " + root.isPausedForSpeech)
     }
+    
+    onIsActiveChanged: {
+        if (!root.isActive) {
+            console.log("ChordTrainerView: Session became inactive. Auto-returning to dashboard.");
+            root.returnToDashboard();
+        }
+    }
     property bool isWaitingToBegin: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingToBegin : false
     property real estimatedGenerationMs: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.estimatedGenerationMs : 0.0
     
@@ -507,7 +514,7 @@ Rectangle {
         
         
         // Target display area - Dedicated Layout for Hands and Music
-        RowLayout {
+        ColumnLayout {
             id: displayAreaRow
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
@@ -517,11 +524,27 @@ Rectangle {
             spacing: 20 * mainWindow.uiScale
             visible: root.isActive && !root.isLessonComplete && root.exerciseType !== "listen"
 
-            // Professional Visual Hand Guides (Image-based)
-            Components.HandGuide {
-                handType: "left"
-                Layout.alignment: Qt.AlignVCenter
-                opacity: 0.8
+            // Professional Visual Hand Guides (Image-based) - Above the staff
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true
+                spacing: 80 * mainWindow.uiScale // spacing between hands
+
+                Item { Layout.fillWidth: true } // spacer to keep hands centered
+
+                Components.HandGuide {
+                    handType: "left"
+                    Layout.alignment: Qt.AlignVCenter
+                    opacity: 0.8
+                }
+
+                Components.HandGuide {
+                    handType: "right"
+                    Layout.alignment: Qt.AlignVCenter
+                    opacity: 0.8
+                }
+
+                Item { Layout.fillWidth: true } // spacer
             }
 
             // Sheet Music Pane
@@ -538,15 +561,8 @@ Rectangle {
                     opacity: (appState && appState.chordTrainer && appState.chordTrainer.mistakeActive) ? 0.85 : 1.0
                     Behavior on opacity { NumberAnimation { duration: 200 } }
                 }
-                
             }
-
-            Components.HandGuide {
-                handType: "right"
-                Layout.alignment: Qt.AlignVCenter
-                opacity: 0.8
-            }
-        } 
+        }
         
         // Ear Training Quiz View
         Rectangle {

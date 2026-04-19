@@ -105,6 +105,12 @@ class CorpusManager:
             corpus_dir = os.path.join(path, 'music21', 'corpus')
 
             lc = m21corpus.corpora.LocalCorpus('local')
+            
+            # Prune any stale or broken paths saved in the user's music21rc
+            bad_paths = [p for p in lc.directoryPaths if p != corpus_dir]
+            for p in bad_paths:
+                lc.removePath(p)
+                
             if corpus_dir not in lc.directoryPaths:
                 lc.addPath(corpus_dir)
             lc.save()

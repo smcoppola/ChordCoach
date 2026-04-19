@@ -12,6 +12,8 @@ if(NOT pybind11_DIR)
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
 endif()
+
+set(PYBIND11_FINDPYTHON ON)
 find_package(pybind11 REQUIRED PATHS ${pybind11_DIR} NO_DEFAULT_PATH)
 
 include(FetchContent)

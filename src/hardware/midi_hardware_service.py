@@ -114,7 +114,7 @@ class MidiHardwareService(QObject):
     _cmdPlayStartupRiff = Signal()
     _cmdInitialSearchComplete = Signal()
 
-    def __init__(self, chordcoach_hw, ll_lib_path: Path, midi_out_enabled: bool = True):
+    def __init__(self, chordcoach_hw, ll_lib_path: Optional[Path], midi_out_enabled: bool = True):
         """
         Constructs the service and configures internal state and cross-thread signals.
         

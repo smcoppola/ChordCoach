@@ -2,7 +2,7 @@ import os
 import time
 import random
 import json
-from typing import Set, List, Dict, Tuple
+from typing import Set, List, Dict, Tuple, Optional
 from datetime import datetime
 from enum import Enum, auto
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
@@ -291,185 +291,185 @@ class ChordTrainerService(QObject):
             self.loadingStatusChanged.emit()
 
     @Property(bool, notify=activeChanged)
-    def isActive(self) -> bool:
+    def isActive(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state != LessonState.IDLE
 
     @Property(str, notify=targetChordChanged)
-    def targetChord(self) -> str:
+    def targetChord(self) -> str:  # type: ignore[reportRedeclaration]
         return self._target_chord_name
 
     @Property(list, notify=targetChordChanged)
-    def targetPitches(self) -> list:
+    def targetPitches(self) -> list:  # type: ignore[reportRedeclaration]
         # ALWAYS return sorted for UI/Fingering consistency (except sequential drills)
         if self._exercise_type == "pentascale":
             return self._target_pitches
         return sorted(self._target_pitches)
 
     @Property(list, notify=targetChordChanged)
-    def targetHands(self) -> list:
+    def targetHands(self) -> list:  # type: ignore[reportRedeclaration]
         return self._target_hands
 
     @Property(list, notify=pentascaleNotesChanged)
-    def pentascaleNotes(self) -> list:
+    def pentascaleNotes(self) -> list:  # type: ignore[reportRedeclaration]
         # Full 5-note sequence for UI guides/scrolling
         return self._pentascale_sequence or []
 
     @Property(int, notify=currentNoteIndexChanged)
-    def currentNoteIndex(self) -> int:
+    def currentNoteIndex(self) -> int:  # type: ignore[reportRedeclaration]
         return self._pentascale_index
 
     @Property(list, notify=targetFingersChanged)
-    def targetFingers(self) -> list:
+    def targetFingers(self) -> list:  # type: ignore[reportRedeclaration]
         return self._target_fingers
 
     @Property(float, notify=scrollBeatChanged)
-    def scrollBeat(self) -> float:
+    def scrollBeat(self) -> float:  # type: ignore[reportRedeclaration]
         return self._scroll_beat
 
     @Property(list, notify=scrollingNotesChanged)
-    def scrollingNotes(self) -> list:
+    def scrollingNotes(self) -> list:  # type: ignore[reportRedeclaration]
         return self._scrolling_notes
 
     @Property(int, notify=scrollBpmChanged)
-    def scrollBpm(self) -> int:
+    def scrollBpm(self) -> int:  # type: ignore[reportRedeclaration]
         return self._scroll_bpm
 
     @Property(str, notify=songTitleChanged)
-    def songTitle(self) -> str:
+    def songTitle(self) -> str:  # type: ignore[reportRedeclaration]
         return self._song_title
 
     @Property(str, notify=songKeyChanged)
-    def songKey(self) -> str:
+    def songKey(self) -> str:  # type: ignore[reportRedeclaration]
         return self._song_key
 
     @Property(int, notify=songKeySharpsChanged)
-    def songKeySharps(self) -> int:
+    def songKeySharps(self) -> int:  # type: ignore[reportRedeclaration]
         return self._song_key_sharps
 
     @Property(str, notify=songComposerChanged)
-    def songComposer(self) -> str:
+    def songComposer(self) -> str:  # type: ignore[reportRedeclaration]
         return self._song_composer
 
     @Property(bool, notify=songCompletedChanged)
-    def isSongCompleted(self) -> bool:
+    def isSongCompleted(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._song_completed
 
     @Property(str, notify=targetChordChanged)
-    def pedalType(self) -> str:
+    def pedalType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._pedal_type
 
     @Property(str, notify=lessonStateChanged)
-    def exerciseName(self) -> str:
+    def exerciseName(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercise_name
 
     @Property(bool, notify=lessonStateChanged)
-    def isPausedForSpeech(self) -> bool:
+    def isPausedForSpeech(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state == LessonState.AI_SPEAKING
 
     @Property(int, notify=lessonStateChanged)
-    def lessonProgress(self) -> int:
+    def lessonProgress(self) -> int:  # type: ignore[reportRedeclaration]
         return self._lesson_progress
 
     @Property(int, notify=lessonStateChanged)
-    def lessonTotal(self) -> int:
+    def lessonTotal(self) -> int:  # type: ignore[reportRedeclaration]
         return self._lesson_total
 
     @Property(bool, notify=lessonStateChanged)
-    def isWaitingForAi(self) -> bool:
+    def isWaitingForAi(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state == LessonState.AWAITING_EXERCISE
 
     @Property(list, notify=lessonStateChanged)
-    def lessonBlocks(self) -> list:
+    def lessonBlocks(self) -> list:  # type: ignore[reportRedeclaration]
         return self._lesson_blocks
 
     @Property(bool, notify=lessonStateChanged)
-    def isLessonComplete(self) -> bool:
+    def isLessonComplete(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._is_lesson_complete
 
     @Property(bool, notify=lessonStateChanged)
-    def isWaitingToBegin(self) -> bool:
+    def isWaitingToBegin(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state == LessonState.WAITING_TO_BEGIN
 
     @Property(str, notify=lessonStateChanged)
-    def currentHand(self):
+    def currentHand(self):  # type: ignore[reportRedeclaration]
         return self._current_hand
 
     @Property(bool, notify=lessonStateChanged)
-    def isLessonMode(self) -> bool:
+    def isLessonMode(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._is_lesson_mode
 
     @Property(str, notify=lessonStateChanged)
-    def exerciseType(self) -> str:
+    def exerciseType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercise_type
 
     @Property(float, notify=loadingStatusChanged)
-    def estimatedGenerationMs(self) -> float:
+    def estimatedGenerationMs(self) -> float:  # type: ignore[reportRedeclaration]
         return self._estimated_gen_ms
 
     @Property(bool, notify=isCircleOfFifthsModeChanged)
-    def isCircleOfFifthsMode(self) -> bool:
+    def isCircleOfFifthsMode(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._is_circle_of_fifths_mode
 
     @Property(bool, notify=waitingForUserContinueChanged)
-    def isWaitingForUserContinue(self) -> bool:
+    def isWaitingForUserContinue(self) -> bool:  # type: ignore[reportRedeclaration]
         return getattr(self, '_waiting_for_user_continue', False)
 
     @Property(float, notify=lessonStateChanged)
-    def holdProgress(self) -> float:
+    def holdProgress(self) -> float:  # type: ignore[reportRedeclaration]
         return self._hold_progress
 
     @Property(int, notify=lessonStateChanged)
-    def requiredHoldMs(self) -> int:
+    def requiredHoldMs(self) -> int:  # type: ignore[reportRedeclaration]
         return self._required_hold_ms
 
     @Property(bool, notify=lessonStateChanged)
-    def isLoading(self) -> bool:
+    def isLoading(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state == LessonState.LOADING
 
     @Property(str, notify=loadingStatusChanged)
-    def loadingStatusText(self) -> str:
+    def loadingStatusText(self) -> str:  # type: ignore[reportRedeclaration]
         return self._loading_status_text
 
     @Property(float, notify=loadingStatusChanged)
-    def estimatedGenerationMs(self) -> float:
+    def estimatedGenerationMs(self) -> float:  # type: ignore[reportRedeclaration]
         return self._estimated_gen_ms
 
     @Property(str, notify=targetChordChanged)
-    def targetChordType(self) -> str:
+    def targetChordType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._target_chord_type
 
     @Property(str, notify=targetChordChanged)
-    def targetFormulaText(self) -> str:
+    def targetFormulaText(self) -> str:  # type: ignore[reportRedeclaration]
         return self._target_formula_text
 
     @Property(str, notify=lessonStateChanged)
-    def exerciseType(self) -> str:
+    def exerciseType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercise_type
 
     @Property(list, notify=lessonStateChanged)
-    def struggledItems(self):
+    def struggledItems(self):  # type: ignore[reportRedeclaration]
         """List of items where user performance was below threshold."""
         return self._struggled_items
 
 
     @Property(int, notify=metronomeTick)
-    def pentascaleBeatCount(self) -> int:
+    def pentascaleBeatCount(self) -> int:  # type: ignore[reportRedeclaration]
         return self.metronome.beatCount if self.metronome else 0
 
     @Property(list, notify=lessonStateChanged)
-    def progressionNumerals(self) -> list:
+    def progressionNumerals(self) -> list:  # type: ignore[reportRedeclaration]
         return self._progression_numerals
 
     @Property(int, notify=targetChordChanged)
-    def currentProgressionIndex(self) -> int:
+    def currentProgressionIndex(self) -> int:  # type: ignore[reportRedeclaration]
         return self._progression_index
 
     @Property(str, notify=targetChordChanged)
-    def scaleName(self) -> str:
+    def scaleName(self) -> str:  # type: ignore[reportRedeclaration]
         return self._scale_name
 
     @Property(bool, notify=lessonStateChanged)
-    def mistakeActive(self) -> bool:
+    def mistakeActive(self) -> bool:  # type: ignore[reportRedeclaration]
         """Determines if the student is currently holding any notes that are NOT in the target set."""
         if not self.isActive or self._is_lesson_complete or len(self._active_pitches) == 0:
             return False
@@ -1483,6 +1483,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         piece_name = chord_data.get("piece_name", "bach/bwv1.6.mxl")
         
         # Load from the new service
+        assert self.music21 is not None, "Music21Service is not initialized!"
         song_data = self.music21.load_song_as_steps(piece_name)
         self._song_steps = song_data.get("steps", [])
         
@@ -1745,7 +1746,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             # Optionally replay the sound as feedback
             self.replay_preview()
 
-    def _calculate_fingerings(self, pitches: List[int], hand: str, inversion: int = 0, base_pitch: int = None) -> List[int]:
+    def _calculate_fingerings(self, pitches: List[int], hand: str, inversion: int = 0, base_pitch: Optional[int] = None) -> List[int]:
         """Use music21 to represent the chord/note and assign pedagogical fingerings."""
         if not pitches:
             return []

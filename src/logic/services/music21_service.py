@@ -354,7 +354,8 @@ class Music21Service(QObject):
                 key_name = "Unknown Key"
                 key_sharps = 0
                 
-            all_parts = score.parts if score.parts else [score]
+            parts = getattr(score, 'parts', None)
+            all_parts = parts if parts else [score]
             
             barlines = set()
             for part in all_parts:

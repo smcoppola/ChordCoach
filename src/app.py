@@ -128,7 +128,7 @@ class AppState(QObject):
         except Exception as e:
             print(f"AppState: Pathing error for rtmidi: {e}")
             
-        self.hw_service = MidiHardwareService(chordcoach_hw, ll_lib_file, midi_out_enabled=bool(self.settings.midiOutEnabled))
+        self.hw_service = MidiHardwareService(chordcoach_hw, ll_lib_file, midi_out_enabled=bool(self.settings.midiOutEnabled)) # type: ignore
         self.hw_service.setParent(self)
         
         self.coordinator = AppCoordinator(
@@ -280,7 +280,7 @@ def main():
     QtWebEngineQuick.initialize()
     
     from PySide6.QtQml import qmlRegisterType
-    qmlRegisterType(NotationView, "ChordCoach", 1, 0, "NotationView")
+    qmlRegisterType(NotationView, "ChordCoach", 1, 0, "NotationView") # type: ignore
     
     app = QGuiApplication(sys.argv)
     app.setApplicationName("ChordCoach")
