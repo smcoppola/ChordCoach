@@ -64,7 +64,6 @@ except ImportError as e:
 from hardware.midi_hardware_service import MidiHardwareService
 
 from logic.services.gemini_service import GeminiService # type: ignore
-from logic.services.midi_ingestor import MidiIngestor # type: ignore
 from logic.services.repertoire_crawler import RepertoireCrawler # type: ignore
 from logic.services.database_manager import DatabaseManager # type: ignore
 from logic.services.chord_trainer import ChordTrainerService # type: ignore

@@ -1,132 +1,175 @@
 """
-MIDI Ingestor Service
-NOTE: This service is currently unused but kept for future functionality 
-(e.g., recording/exporting performance MIDI data).
+MIDI Import Pipeline — parses a user-supplied MIDI file (often a live,
+unquantized performance) and produces timing-cleaned note groups in
+quarterLength units, ready for conversion into a music21 score.
+
+Timing cleanup strategy:
+- If the file carries a real tempo map (>1 tempo event, i.e. exported from
+  notation software), trust the file's own tick grid.
+- Otherwise (live capture at the default 120bpm), estimate the actual tempo
+  from note onsets and build a grid phase-aligned to the first note.
+- Notes whose onsets fall within CHORD_WINDOW_SEC of each other are merged
+  into one chord group, then group onsets/durations snap to a 16th-note grid.
 """
-import mido  # type: ignore
 import pretty_midi  # type: ignore
-from PySide6.QtCore import QObject, Signal, Slot  # type: ignore
-from dataclasses import dataclass, asdict
-from typing import List, Dict
+from pathlib import Path
+from typing import List, Tuple
 
-@dataclass
-class VisualBlock:
-    pitch: int
-    start_time: float
-    duration: float
-    color: str
+GRID = 0.25              # 16th note, in quarterLength units
+CHORD_WINDOW_SEC = 0.08  # notes within 80ms are considered one chord
+MIN_BPM, MAX_BPM = 40, 200
+LEFT_HAND_SPLIT = 60     # middle C — single-track fallback split point
 
-class MidiIngestor(QObject):
+
+def parse_and_quantize(file_path: str) -> dict:
     """
-    MIDI Ingestor Service
-    NOTE: This service is currently unused but kept for future functionality 
-    (e.g., recording/exporting performance MIDI data).
+    Returns {
+        "title": str,
+        "bpm": float,
+        "groups": [ {"offset": float, "duration": float,
+                     "notes": [(pitch:int, hand:str), ...]} ],
+    }
+    Raises ValueError if the file contains no usable notes.
     """
-    # Emit a list of dictionaries representing the 'VisualBlocks'
-    midiParsed = Signal(list)
-    
-    # Optional signal for metadata
-    midiMetadata = Signal(dict)
+    pm = pretty_midi.PrettyMIDI(file_path)
+    tagged = _collect_notes_with_hands(pm)
+    if not tagged:
+        raise ValueError("No playable notes found in MIDI file")
 
-    def __init__(self):
-        super().__init__()
+    to_beats = _make_beat_converter(pm, tagged)
+    groups = _group_chords(tagged)
+    quantized = _quantize_groups(groups, to_beats)
 
-    @Slot(str)
-    def ingest_file(self, file_path: str):
-        try:
-            print(f"Ingesting MIDI file: {file_path}")
-            pm = pretty_midi.PrettyMIDI(file_path)
-            
-            # Find the best track for the piano notation
-            target_track = self._select_piano_track(pm)
-            
-            if not target_track:
-                print("Warning: No suitable tracks found in MIDI file.")
-                self.midiParsed.emit([])
-                return
+    title = Path(file_path).stem.replace("_", " ").replace("-", " ").strip().title()
+    return {
+        "title": title or "Imported Song",
+        "bpm": to_beats.bpm,
+        "groups": quantized,
+    }
 
-            blocks = self._translate_to_blocks(target_track.notes)
-            
-            # Emit metadata
-            metadata = {
-                "duration": pm.get_end_time(),
-                "instruments": [i.name for i in pm.instruments],
-                "note_count": len(target_track.notes),
-                "selected_track": target_track.name
-            }
-            self.midiMetadata.emit(metadata)
-            
-            # Emit the list of raw dictionaries for QML to easily consume
-            # We construct dict directly instead of using asdict() due to static analysis struggles with it
-            raw_blocks = [{"pitch": b.pitch, "start_time": b.start_time, "duration": b.duration, "color": b.color} for b in blocks]
-            self.midiParsed.emit(raw_blocks)
-            print(f"Successfully processed {len(blocks)} visual blocks.")
-            
-        except Exception as e:
-            print(f"Error ingesting MIDI file: {e}")
-            self.midiParsed.emit([])
 
-    def _select_piano_track(self, pm: pretty_midi.PrettyMIDI) -> pretty_midi.Instrument | None:
-        """Heuristically select the best track for a piano tutorial."""
-        if not pm.instruments:
-            return None
-            
-        # 1. Look for explicit Acoustic Grand Piano (program 0)
-        for inst in pm.instruments:
-            if not inst.is_drum and inst.program == 0:
-                print(f"Selected acoustic grand piano track: {inst.name}")
-                return inst
-                
-        # 2. Fallback: Find the non-drum track with the most notes (likely the melody/chord track)
-        best_track = None
-        max_notes = 0
-        for inst in pm.instruments:
-            if not inst.is_drum and len(inst.notes) > max_notes:
-                max_notes = len(inst.notes)
-                best_track = inst
-                
-        if best_track is not None:
-            print(f"Fallback track selected (most notes): {best_track.name}")  # type: ignore
-            
-        return best_track
+def _collect_notes_with_hands(pm) -> List[Tuple[object, str]]:
+    """Assign each note a hand. Two+ tracks: lower-pitched track is the left
+    hand. Single track: split at middle C."""
+    insts = [i for i in pm.instruments if not i.is_drum and i.notes]
+    if not insts:
+        return []
 
-    def _translate_to_blocks(self, notes: List[pretty_midi.Note]) -> List[VisualBlock]:
-        """Convert pretty_midi Notes to our proprietary physical duration blocks."""
-        blocks = []
-        for note in notes:
-            # Enforce a minimum duration for playability on the hybrid UI
-            duration = max(note.end - note.start, 0.05) 
-            blocks.append(
-                VisualBlock(
-                    pitch=note.pitch,
-                    start_time=note.start,
-                    duration=duration,
-                    color=self.get_color_for_note(note.pitch)
-                )
-            )
-            
-        # Ensure they are sorted by time so the QML scroller can process them sequentially
-        blocks.sort(key=lambda b: b.start_time)
-        return blocks
+    if len(insts) >= 2:
+        # Two busiest tracks are assumed to be the two hands
+        insts.sort(key=lambda i: len(i.notes), reverse=True)
+        a, b = insts[0], insts[1]
+        mean_a = sum(n.pitch for n in a.notes) / len(a.notes)
+        mean_b = sum(n.pitch for n in b.notes) / len(b.notes)
+        right, left = (a, b) if mean_a >= mean_b else (b, a)
+        tagged = [(n, "right") for n in right.notes] + [(n, "left") for n in left.notes]
+    else:
+        tagged = [(n, "right" if n.pitch >= LEFT_HAND_SPLIT else "left")
+                  for n in insts[0].notes]
 
-    def get_color_for_note(self, pitch: int) -> str:
-        """
-        Assigns standard colors based on the pitch octave class.
-        In a full version, this would be highly adaptive based on hand span.
-        """
-        # Map 12 chromatic pitches to a distinct palette to help with hand-span awareness
-        colors = [
-            "#FF2B2B", # C - Red
-            "#FF7A2B", # C# - Orange
-            "#FFD02B", # D - Yellow
-            "#C3FF2B", # D# - Lime
-            "#55FF2B", # E - Green
-            "#2BFF93", # F - Mint
-            "#2BFFE4", # F# - Cyan
-            "#2B93FF", # G - Blue
-            "#502BFF", # G# - Indigo
-            "#AC2BFF", # A - Purple
-            "#FF2BE1", # A# - Magenta
-            "#FF2B6D", # B - Pink
-        ]
-        return colors[pitch % 12]
+    tagged.sort(key=lambda t: (t[0].start, t[0].pitch))
+    return tagged
+
+
+class _BeatConverter:
+    """Converts absolute seconds to quarterLength beats."""
+
+    def __init__(self, pm, bpm: float, phase_sec: float, use_tick_grid: bool):
+        self._pm = pm
+        self.bpm = bpm
+        self._phase = phase_sec
+        self._use_ticks = use_tick_grid
+
+    def __call__(self, t_sec: float) -> float:
+        if self._use_ticks:
+            return self._pm.time_to_tick(t_sec) / self._pm.resolution
+        return max(0.0, (t_sec - self._phase)) * self.bpm / 60.0
+
+    def duration(self, start_sec: float, end_sec: float) -> float:
+        if self._use_ticks:
+            return (self._pm.time_to_tick(end_sec) - self._pm.time_to_tick(start_sec)) / self._pm.resolution
+        return (end_sec - start_sec) * self.bpm / 60.0
+
+
+def _make_beat_converter(pm, tagged) -> _BeatConverter:
+    _, tempi = pm.get_tempo_changes()
+    has_tempo_map = len(tempi) > 1
+
+    if has_tempo_map:
+        # Score-exported MIDI: its own tick grid is authoritative
+        return _BeatConverter(pm, float(tempi[0]), 0.0, use_tick_grid=True)
+
+    # Live capture: estimate the real tempo from onsets
+    try:
+        bpm = float(pm.estimate_tempo())
+    except Exception:
+        bpm = float(tempi[0]) if len(tempi) else 120.0
+    # estimate_tempo often returns double/half time — fold into playable range
+    while bpm > MAX_BPM:
+        bpm /= 2.0
+    while bpm < MIN_BPM:
+        bpm *= 2.0
+
+    first_onset = tagged[0][0].start
+    return _BeatConverter(pm, bpm, first_onset, use_tick_grid=False)
+
+
+def _group_chords(tagged) -> List[dict]:
+    """Cluster notes whose onsets are within CHORD_WINDOW_SEC into chords."""
+    groups = []
+    current = None
+    for n, hand in tagged:
+        if current is not None and (n.start - current["start"]) <= CHORD_WINDOW_SEC:
+            current["notes"].append((n, hand))
+            current["end"] = max(current["end"], n.end)
+        else:
+            current = {"start": n.start, "end": n.end, "notes": [(n, hand)]}
+            groups.append(current)
+    return groups
+
+
+def _quantize_groups(groups, to_beats: _BeatConverter) -> List[dict]:
+    """Snap group onsets and durations to the grid; merge collisions."""
+    result = []
+    for g in groups:
+        offset = round(to_beats(g["start"]) / GRID) * GRID
+        dur = to_beats.duration(g["start"], g["end"])
+        dur = max(GRID, round(dur / GRID) * GRID)
+
+        # Deduplicate pitches within the group (keep first hand tag seen)
+        seen = {}
+        for n, hand in g["notes"]:
+            if n.pitch not in seen:
+                seen[n.pitch] = hand
+        notes = sorted(seen.items())  # [(pitch, hand)]
+
+        if result and result[-1]["offset"] == offset:
+            # Two live "chords" snapped to the same grid point — merge
+            merged = {p: h for p, h in result[-1]["notes"]}
+            for p, h in notes:
+                merged.setdefault(p, h)
+            result[-1]["notes"] = sorted(merged.items())
+            result[-1]["duration"] = max(result[-1]["duration"], dur)
+            continue
+
+        result.append({"offset": offset, "duration": dur, "notes": notes})
+
+    # Normalize so the song starts at beat 0
+    if result:
+        base = result[0]["offset"]
+        for g in result:
+            g["offset"] = round((g["offset"] - base) / GRID) * GRID
+
+    # Trim durations that overlap the next onset in the same hand (live
+    # legato bleed makes notation unreadable otherwise)
+    for i, g in enumerate(result):
+        g_hands = {h for _, h in g["notes"]}
+        for nxt in result[i + 1:]:
+            if not g_hands & {h for _, h in nxt["notes"]}:
+                continue
+            gap = nxt["offset"] - g["offset"]
+            if gap > 0:
+                g["duration"] = max(GRID, min(g["duration"], gap))
+            break
+
+    return result

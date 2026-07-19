@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Dialogs
 import Qt5Compat.GraphicalEffects
 
 Rectangle {
@@ -26,6 +27,18 @@ Rectangle {
     signal freePractice()
     signal startSong(string pieceName)
     signal startSpecificDrill(string track, string milestoneId)
+
+    // Imported songs get a difficulty chooser; catalog songs load directly
+    function requestSongWithDifficulty(songId) {
+        if (songId.indexOf("user::") === 0) {
+            difficultyPicker.pendingSongId = songId;
+            difficultyPicker.open();
+        } else {
+            appState.music21Service.mark_song_played(songId);
+            songPicker.isLoadingSong = true;
+            appState.music21Service.songRequested(songId);
+        }
+    }
 
     layer.enabled: durationPicker.visible
 
@@ -546,6 +559,105 @@ Rectangle {
         }
     }
 
+    // ── Difficulty Chooser for Imported Songs ──
+    Popup {
+        id: difficultyPicker
+        anchors.centerIn: parent
+        width: 340 * mainWindow.uiScale
+        modal: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        property string pendingSongId: ""
+
+        function play(level) {
+            var baseId = pendingSongId;
+            appState.music21Service.mark_song_played(baseId);
+            songPicker.isLoadingSong = true;
+            appState.music21Service.songRequested(
+                level > 0 ? baseId + "::L" + level : baseId);
+            difficultyPicker.close();
+        }
+
+        background: Rectangle {
+            color: "#1c1c1e"
+            radius: 12 * mainWindow.uiScale
+            border.color: "#4CAF50"
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            Text {
+                text: "CHOOSE DIFFICULTY"
+                color: "#666666"
+                font.pixelSize: 11 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 3 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: 8 * mainWindow.uiScale
+            }
+
+            Repeater {
+                model: [
+                    { level: 0, label: "Original", desc: "No adjustment — play it as imported" },
+                    { level: 4, label: "Level 4", desc: "Light touch: extreme stretches tamed" },
+                    { level: 3, label: "Level 3", desc: "Smaller chords, easier reaches" },
+                    { level: 2, label: "Level 2", desc: "Simple chords, thinned fast runs" },
+                    { level: 1, label: "Level 1", desc: "Simplest: melody + bass, slow pace" }
+                ]
+                delegate: Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 52 * mainWindow.uiScale
+                    Layout.leftMargin: 8 * mainWindow.uiScale
+                    Layout.rightMargin: 8 * mainWindow.uiScale
+                    radius: 8 * mainWindow.uiScale
+                    color: levelMouse.containsMouse ? "#4CAF5020" : "#2a2a2a"
+                    border.color: levelMouse.containsMouse ? "#4CAF50" : "#444444"
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 8 * mainWindow.uiScale
+                        spacing: 2
+                        Text {
+                            text: modelData.label
+                            color: "white"
+                            font.bold: true
+                            font.pixelSize: 13 * mainWindow.uiScale
+                        }
+                        Text {
+                            text: modelData.desc
+                            color: "#888888"
+                            font.pixelSize: 10 * mainWindow.uiScale
+                        }
+                    }
+
+                    MouseArea {
+                        id: levelMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: difficultyPicker.play(modelData.level)
+                    }
+                }
+            }
+
+            Item { Layout.preferredHeight: 4 * mainWindow.uiScale }
+        }
+    }
+
+    // ── MIDI Import File Dialog ──
+    FileDialog {
+        id: midiImportDialog
+        title: "Import a MIDI File"
+        nameFilters: ["MIDI files (*.mid *.midi)"]
+        onAccepted: {
+            songPicker.importError = "";
+            songPicker.isLoadingSong = true;
+            // Async: importSucceeded / importFailed arrive via Connections below
+            appState.music21Service.import_midi_file(selectedFile.toString());
+        }
+    }
+
     // ── Song Picker Popup (Hierarchical) ──
     Popup {
         id: songPicker
@@ -558,11 +670,13 @@ Rectangle {
         property var catalogPath: []
         property string searchQuery: ""
         property bool isLoadingSong: false
+        property string importError: ""
 
         onClosed: {
             isLoadingSong = false;
             catalogPath = [];
             searchQuery = "";
+            importError = "";
         }
 
         // Auto-close once Python finishes parsing the score
@@ -572,6 +686,19 @@ Rectangle {
                 if (songPicker.isLoadingSong && !appState.chordTrainer.isLoading) {
                     songPicker.close();
                 }
+            }
+        }
+
+        // Background MIDI import results
+        Connections {
+            target: (typeof appState !== "undefined" && appState && appState.music21Service) ? appState.music21Service : null
+            function onImportSucceeded(songId) {
+                songPicker.isLoadingSong = false;
+                root.requestSongWithDifficulty(songId);
+            }
+            function onImportFailed(error) {
+                songPicker.isLoadingSong = false;
+                songPicker.importError = "Import failed: " + error;
             }
         }
 
@@ -653,7 +780,44 @@ Rectangle {
                                 }
                             }
                         }
+
+                        Rectangle {
+                            Layout.preferredWidth: importLabel.implicitWidth + 24 * mainWindow.uiScale
+                            Layout.preferredHeight: 30 * mainWindow.uiScale
+                            radius: 15 * mainWindow.uiScale
+                            color: importMouse.containsMouse ? "#4CAF5030" : "transparent"
+                            border.color: "#4CAF50"
+
+                            Text {
+                                id: importLabel
+                                anchors.centerIn: parent
+                                text: "⬆ IMPORT MIDI"
+                                color: "#4CAF50"
+                                font.bold: true
+                                font.pixelSize: 10 * mainWindow.uiScale
+                            }
+
+                            MouseArea {
+                                id: importMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: midiImportDialog.open()
+                            }
+                        }
                     }
+                }
+
+                // Import error banner
+                Text {
+                    visible: songPicker.importError.length > 0
+                    text: "⚠ " + songPicker.importError
+                    color: "#FF7043"
+                    font.pixelSize: 12 * mainWindow.uiScale
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
                 }
 
                 // Header Section
@@ -795,10 +959,8 @@ Rectangle {
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
-                                                appState.music21Service.mark_song_played(modelData.id);
-                                                songPicker.isLoadingSong = true;
-                                                appState.music21Service.songRequested(modelData.id);
                                                 // Popup stays open — Connections block closes it when loading finishes
+                                                root.requestSongWithDifficulty(modelData.id);
                                             }
                                         }
                                     }
@@ -927,10 +1089,8 @@ Rectangle {
                                         } else {
                                             console.log("Dashboard: Requesting song selection: " + modelData.id);
                                             if (typeof appState !== "undefined" && appState && appState.music21Service) {
-                                                appState.music21Service.mark_song_played(modelData.id);
-                                                songPicker.isLoadingSong = true;
-                                                appState.music21Service.songRequested(modelData.id);
                                                 // Popup stays open — Connections block closes it when loading finishes
+                                                root.requestSongWithDifficulty(modelData.id);
                                             }
                                         }
                                     }
@@ -1094,6 +1254,17 @@ Rectangle {
                         Layout.alignment: Qt.AlignHCenter
                     }
 
+                    // Import error (imports work even without the corpus)
+                    Text {
+                        visible: songPicker.importError.length > 0
+                        text: "⚠ " + songPicker.importError
+                        color: "#FF7043"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
                     // Action Buttons
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
@@ -1116,6 +1287,27 @@ Rectangle {
                                 implicitWidth: 160 * mainWindow.uiScale
                                 implicitHeight: 45 * mainWindow.uiScale
                                 color: parent.pressed ? "#1976D2" : "#2196F3"
+                                radius: 8 * mainWindow.uiScale
+                            }
+                        }
+
+                        Button {
+                            text: "Import MIDI Instead"
+                            onClicked: midiImportDialog.open()
+
+                            contentItem: Text {
+                                text: parent.text
+                                color: "#4CAF50"
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            background: Rectangle {
+                                implicitWidth: 160 * mainWindow.uiScale
+                                implicitHeight: 45 * mainWindow.uiScale
+                                color: parent.pressed ? "#4CAF5030" : "transparent"
+                                border.color: "#4CAF50"
                                 radius: 8 * mainWindow.uiScale
                             }
                         }

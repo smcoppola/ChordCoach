@@ -243,6 +243,59 @@
 
 ---
 
+## Phase 8 — User MIDI Import (Current Top Priority)
+
+**Goal:** Let the user import their own MIDI file (including unquantized live performances) into the song database and play it like any catalog song. Foundation for automatic difficulty adjustment.
+
+### Files
+
+#### [REWRITTEN] `src/logic/services/midi_ingestor.py`
+- Replaced the unused VisualBlock stub with the real import pipeline
+- `parse_and_quantize(file_path)` — timing cleanup:
+  - Files with a real tempo map (score exports): trust the file's tick grid
+  - Live captures (single default tempo): estimate actual BPM from onsets, phase-align grid to first note, fold double/half-time estimates into 40-200 BPM
+  - Chord grouping: onsets within 80ms merge into one chord
+  - Snap onsets/durations to 16th-note grid; merge grid collisions; trim same-hand legato bleed
+- Hand assignment: 2+ tracks → lower-pitched track is LH; single track → split at middle C
+
+#### [MODIFY] `src/logic/services/music21_service.py`
+- `_extract_steps_from_score(score)` — extraction refactored out of `load_song_as_steps` and shared with the import path (fingering injection, ties, beams, barlines all reused)
+- `_build_score_from_groups(groups)` — quantized groups → two-part music21 Score (treble/bass clefs, 4/4, key signature); key detection via Krumhansl (no corpus needed); flat keys respelled enharmonically
+- `import_midi_file(file_url)` slot — full pipeline; saves JSON record to `<user_data>/database/user_songs/`; returns song id (`user::<slug>-<ts>`)
+- `_score_difficulty(steps)` — heuristic Grade 1-10 from note density, polyphony, both-hands usage, chord spans; shown as the level badge
+- Catalog: virtual "My Songs" category at picker root; imported songs searchable and in recents; `load_song_as_steps("user::…")` loads the cached JSON
+- Saved record keeps raw `quantized_groups` so future difficulty re-arrangement can regenerate steps without re-parsing the MIDI
+
+#### [MODIFY] `src/ui/DashboardView.qml`
+- "⬆ IMPORT MIDI" button in the song picker search row + `FileDialog`
+- Import auto-plays the song through the existing `songRequested` flow
+- Error banner on failed imports
+
+### Verification
+- Song picker → Import MIDI → pick a live-recorded .mid → song opens in the trainer with clean notation
+- Re-launch app → song appears under "My Songs" and in search
+- Level badge shows computed Grade
+
+### Difficulty Adjustment (implemented)
+- 4 skill levels + "Original (no adjustment)", chosen in a popup whenever an imported song is opened (also right after import)
+- All levels keep **both hands**; they differ in three transforms applied to the stored `quantized_groups` at load time (`Music21Service._simplify_groups`):
+  1. **Timing** — minimum gap between onsets (L1: 1 beat, L2/L3: ½ beat, L4: ¼ beat); notes in faster sequences are shifted to empty grid slots or dropped ("fewer notes for difficult sequences")
+  2. **Chords** — max simultaneous notes per hand (RH keeps melody from the top: 2/3/4/5; LH keeps bass from the bottom: 1/1/2/3)
+  3. **Stretches** — max span from melody/bass anchor (RH: 7/9/12/14 semitones; LH: single note at L1-L2, 7/12 at L3-L4)
+- Thinned passages get durations extended to the next same-hand onset so notation reads legato
+- Song ids carry the level as a suffix (`user::<slug>::L2`); the original steps JSON is never modified
+
+### Async & Availability (implemented)
+- Import runs on a `MidiImportWorker(QThread)`; UI listens for `importSucceeded(song_id)` / `importFailed(error)` signals, spinner overlay shows during import
+- "Import MIDI Instead" button on the corpus-download overlay — importing works without the corpus (key detection is algorithmic)
+
+### Remaining (next iteration)
+- Level parameters in `Music21Service.SIMPLIFY_LEVELS` may need tuning after real-world use
+- Single-track hand split is a fixed middle-C threshold; could be smarter (e.g. gap clustering per group)
+- music21's local-corpus metadata cache lives in `%TEMP%\music21\local.p.gz`; if Windows cleans it, next startup rebuilds it (~2 min, spawns multiprocessing workers)
+
+---
+
 ## Dependencies Between Phases
 
 ```mermaid
