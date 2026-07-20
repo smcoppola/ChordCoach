@@ -32,13 +32,15 @@ def parse_and_quantize(file_path: str) -> dict:
     Raises ValueError if the file contains no usable notes.
     """
     pm = pretty_midi.PrettyMIDI(file_path)
-    tagged = _collect_notes_with_hands(pm)
+    tagged, single_track = _collect_notes_with_hands(pm)
     if not tagged:
         raise ValueError("No playable notes found in MIDI file")
 
     to_beats = _make_beat_converter(pm, tagged)
     groups = _group_chords(tagged)
     quantized = _quantize_groups(groups, to_beats)
+    if single_track:
+        _refine_hands(quantized)
 
     title = Path(file_path).stem.replace("_", " ").replace("-", " ").strip().title()
     return {
@@ -48,14 +50,16 @@ def parse_and_quantize(file_path: str) -> dict:
     }
 
 
-def _collect_notes_with_hands(pm) -> List[Tuple[object, str]]:
+def _collect_notes_with_hands(pm) -> Tuple[List[Tuple[object, str]], bool]:
     """Assign each note a hand. Two+ tracks: lower-pitched track is the left
-    hand. Single track: split at middle C."""
+    hand. Single track: provisional middle-C split, refined per chord group
+    later by _refine_hands. Returns (tagged_notes, is_single_track)."""
     insts = [i for i in pm.instruments if not i.is_drum and i.notes]
     if not insts:
-        return []
+        return [], False
 
-    if len(insts) >= 2:
+    single_track = len(insts) < 2
+    if not single_track:
         # Two busiest tracks are assumed to be the two hands
         insts.sort(key=lambda i: len(i.notes), reverse=True)
         a, b = insts[0], insts[1]
@@ -68,7 +72,36 @@ def _collect_notes_with_hands(pm) -> List[Tuple[object, str]]:
                   for n in insts[0].notes]
 
     tagged.sort(key=lambda t: (t[0].start, t[0].pitch))
-    return tagged
+    return tagged, single_track
+
+
+def _refine_hands(groups):
+    """
+    Per-chord hand assignment for single-track recordings. A fixed middle-C
+    threshold tears chords apart (e.g. A3 in an A-minor RH voicing); instead
+    split each group at its widest pitch gap when the shape demands two
+    hands, otherwise keep the whole group in one hand.
+    """
+    for g in groups:
+        pitches = sorted(p for p, _h in g["notes"])
+        span = pitches[-1] - pitches[0]
+        centroid = sum(pitches) / len(pitches)
+
+        if len(pitches) == 1:
+            g["notes"] = [(pitches[0], "right" if pitches[0] >= LEFT_HAND_SPLIT else "left")]
+            continue
+
+        gaps = [(pitches[i + 1] - pitches[i], i) for i in range(len(pitches) - 1)]
+        best_gap, idx = max(gaps)
+
+        # Split when one hand can't cover the span, or when there's a clear
+        # bass + chord shape (wide gap with the low cluster in bass territory)
+        if span > 12 or (best_gap >= 7 and pitches[0] < 57):
+            low, high = pitches[:idx + 1], pitches[idx + 1:]
+            g["notes"] = [(p, "left") for p in low] + [(p, "right") for p in high]
+        else:
+            hand = "right" if centroid >= LEFT_HAND_SPLIT else "left"
+            g["notes"] = [(p, hand) for p in pitches]
 
 
 class _BeatConverter:

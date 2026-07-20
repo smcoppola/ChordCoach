@@ -289,9 +289,12 @@
 - Import runs on a `MidiImportWorker(QThread)`; UI listens for `importSucceeded(song_id)` / `importFailed(error)` signals, spinner overlay shows during import
 - "Import MIDI Instead" button on the corpus-download overlay — importing works without the corpus (key detection is algorithmic)
 
+### Hand Assignment (implemented)
+- Multi-track files: lower-pitched of the two busiest tracks = left hand
+- Single-track files: per-chord-group split (`_refine_hands` in midi_ingestor.py) — split at the widest pitch gap when the span exceeds an octave or there's a clear bass+chord shape (gap ≥ 7 semitones with the low cluster below A2-ish); otherwise the whole group goes to one hand by centroid. Fixes chords like A-minor RH voicings losing their A3 to the left hand under the old middle-C threshold
+
 ### Remaining (next iteration)
 - Level parameters in `Music21Service.SIMPLIFY_LEVELS` may need tuning after real-world use
-- Single-track hand split is a fixed middle-C threshold; could be smarter (e.g. gap clustering per group)
 - music21's local-corpus metadata cache lives in `%TEMP%\music21\local.p.gz`; if Windows cleans it, next startup rebuilds it (~2 min, spawns multiprocessing workers)
 
 ---
