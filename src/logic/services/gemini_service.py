@@ -35,6 +35,11 @@ def _build_ssl_context() -> ssl.SSLContext:
     return ctx
 
 class GeminiService(QObject):
+    # Latest Flash Live model (March 2026). If the preview id is ever
+    # rejected, the service downgrades to the fallback automatically.
+    LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
+    LIVE_MODEL_FALLBACK = "models/gemini-2.5-flash-native-audio-latest"
+
     responseReceived = Signal(str)
     connectionStatusChanged = Signal(bool)
     audioDataReceived = Signal(bytes)
@@ -58,6 +63,11 @@ class GeminiService(QObject):
         self._intentional_disconnect = False
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
+        self._active_model = self.LIVE_MODEL
+        self._setup_complete_seen = False
+        # set_exercise call awaiting its (delayed) tool response — the
+        # performance report is delivered as the function result on 3.1
+        self._pending_exercise_call = None
         
         self._audio_buffer = b""
         self._last_audio_write_time = 0.0
@@ -273,7 +283,7 @@ class GeminiService(QObject):
                 "5. Keep transitions fast. Call set_exercise immediately after receiving performance data. "
                 "If the next exercise is the same type as the last, do NOT speak - just call the tool."
                 "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson. "
-                "7. THOUGHT BUCKET RULE (CRITICAL): You are a native audio model. EVERY WORD of your main response is immediately synthesized into speech and spoken aloud. Put all your internal reasoning, step-by-step planning, performance evaluation, and state tracking into the 'internal_monologue' parameter of your tool calls. BUT CRITICALLY: DO NOT put musical explanations or theory teaching into the thought bucket! If you are introducing a new concept (like 'What is an Inversion?'), you MUST speak the explanation ALOUD so the student hears it.\n"
+                "7. Your reasoning is private and is never spoken. Every word of your spoken response must be meant for the student's ears. When introducing a NEW concept (like 'What is an Inversion?'), speak the explanation ALOUD so the student hears it.\n"
                 "CRITICAL RULES FOR EXERCISE GENERATION:\n"
                 "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME. (Note: A 'progression' exercise containing multiple chords counts as a single exercise. Use 'progression' for ANY chord transition drills).\n"
                 "- If the curriculum requires 'song_application', you MUST use the `song_application` exercise_type and provide a `piece_name` (e.g. 'bach/bwv1.6.mxl').\n"
@@ -291,19 +301,28 @@ class GeminiService(QObject):
             if hasattr(self, 'coach_context') and self.coach_context:
                 base_instruction += "\n\n" + self.coach_context
                 
-            setup_msg = {
-                "setup": {
-                    "model": "models/gemini-2.5-flash-native-audio-latest",
-                    "generationConfig": {
-                         "responseModalities": ["AUDIO"],
-                         "speechConfig": {
-                             "voiceConfig": {
-                                 "prebuiltVoiceConfig": {
-                                     "voiceName": voice 
-                                 }
-                             }
+            generation_config: dict = {
+                 "responseModalities": ["AUDIO"],
+                 "speechConfig": {
+                     "voiceConfig": {
+                         "prebuiltVoiceConfig": {
+                             "voiceName": voice
                          }
-                    },
+                     }
+                 }
+            }
+            # Gemini 3.x has a private thinking channel — reasoning happens
+            # internally and is never synthesized to speech. The 2.5 fallback
+            # predates thinkingLevel, so only send it on the primary model.
+            if self._active_model == self.LIVE_MODEL:
+                generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
+
+            self._setup_complete_seen = False
+            self._pending_exercise_call = None
+            setup_msg: dict = {
+                "setup": {
+                    "model": self._active_model,
+                    "generationConfig": generation_config,
                     "systemInstruction": {
                         "parts": [{
                             "text": base_instruction
@@ -327,10 +346,6 @@ class GeminiService(QObject):
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
-                                    "internal_monologue": {
-                                        "type": "STRING",
-                                        "description": "MANDATORY THOUGHT BUCKET. Put all your internal reasoning, step-by-step planning, performance evaluation, and state tracking here. Do NOT speak this out loud. Provide a detailed explanation of why you are calling this tool and what your plan is."
-                                    },
                                     "exercise_type": {
                                         "type": "STRING",
                                         "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal, steady_pulse"
@@ -429,10 +444,6 @@ class GeminiService(QObject):
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
-                                    "internal_monologue": {
-                                        "type": "STRING",
-                                        "description": "MANDATORY THOUGHT BUCKET. Put all your internal reasoning and summary generation here instead of speaking it."
-                                    },
                                     "feedback_summary": {
                                         "type": "STRING",
                                         "description": "Brief text summary of the student's performance"
@@ -450,10 +461,6 @@ class GeminiService(QObject):
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
-                                    "internal_monologue": {
-                                        "type": "STRING",
-                                        "description": "MANDATORY THOUGHT BUCKET. Put all your calculations for the next visual stage update here instead of speaking them."
-                                    },
                                     "show_base": { "type": "BOOLEAN", "description": "True to draw the blank base wheel." },
                                     "show_major": { "type": "BOOLEAN", "description": "True to reveal the outer Major key names." },
                                     "show_minor": { "type": "BOOLEAN", "description": "True to reveal the inner Minor key ring." },
@@ -470,6 +477,11 @@ class GeminiService(QObject):
                         }
                     ]
                 }]
+                if self._active_model == self.LIVE_MODEL:
+                    # Async function calling: the model keeps conversing while
+                    # set_exercise awaits its delayed result (the performance
+                    # report), so mid-exercise questions still work.
+                    setup_msg["setup"]["tools"][0]["functionDeclarations"][0]["behavior"] = "NON_BLOCKING"
             else:
                 print("Gemini Service: Tools DISABLED for this session (voice-only mode).")
             await self._safe_ws_send(json.dumps(setup_msg))
@@ -518,7 +530,8 @@ class GeminiService(QObject):
                 data = json.loads(msg)
                 
                 if "setupComplete" in data:
-                    print("Gemini Service: Setup is complete.")
+                    self._setup_complete_seen = True
+                    print(f"Gemini Service: Setup is complete (model: {self._active_model}).")
 
                 # ── Handle tool calls from the model ──
                 if "toolCall" in data:
@@ -568,6 +581,14 @@ class GeminiService(QObject):
                                 else:
                                     self._exercise_pending = True
                                     self.exerciseReceived.emit(fn_args)
+                                    if self._active_model == self.LIVE_MODEL:
+                                        # Hold the tool response until the student
+                                        # finishes — the performance report rides
+                                        # back as the function result (data the
+                                        # model can't read aloud), instead of a
+                                        # fake user message it might recite.
+                                        self._pending_exercise_call = {"id": fn_id, "name": fn_name}
+                                        continue
                             elif fn_name == "update_theory_visual":
                                 self.theoryVisualReceived.emit(fn_args)
                             elif fn_name == "end_lesson":
@@ -659,6 +680,14 @@ class GeminiService(QObject):
             self.ws = None
             self.connected = False
             
+            # If the server rejected us before completing setup while on the
+            # newest model, fall back to the previous known-good model
+            if (not self._intentional_disconnect and not self._setup_complete_seen
+                    and self._active_model == self.LIVE_MODEL):
+                print(f"Gemini Service: Setup never completed on {self._active_model}; "
+                      f"falling back to {self.LIVE_MODEL_FALLBACK}")
+                self._active_model = self.LIVE_MODEL_FALLBACK
+
             if not self._intentional_disconnect:
                 await self._attempt_reconnect()
             else:
@@ -699,6 +728,51 @@ class GeminiService(QObject):
         print("Gemini Service: All reconnection attempts failed.")
         self.connectionStatusChanged.emit(False)
 
+    def _flush_pending_exercise_call(self, payload: dict | None = None):
+        """Answer a held set_exercise tool call. Called with the performance
+        report when the exercise completes, or bare (status ok) as a safety
+        valve before any new text goes out, so the model is never left with
+        an unanswered call."""
+        call = self._pending_exercise_call
+        self._pending_exercise_call = None
+        if not call or not self.connected or not self.ws:
+            return False
+        response = {"status": "ok"}
+        if payload:
+            response.update(payload)
+        msg = {
+            "toolResponse": {
+                "functionResponses": [{
+                    "id": call["id"],
+                    "name": call["name"],
+                    "response": response
+                }]
+            }
+        }
+        asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)
+        return True
+
+    @Slot(str)
+    def send_performance_report(self, report: str):
+        """Deliver an exercise performance report to the model.
+
+        Preferred path (Gemini 3.1): as the delayed tool response to the held
+        set_exercise call — tool results are data, so the model has nothing
+        to accidentally read aloud. Falls back to a plain text prompt when no
+        call is being held (2.5 fallback model, reconnected session, etc.)."""
+        self._turn_complete = False  # Expecting a response
+        clean = (report
+                 .replace("<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>", "")
+                 .replace("</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>", "")
+                 .strip())
+        # scheduling INTERRUPT makes the model act on the result immediately
+        # (assign the next exercise) instead of waiting for more input
+        if self._flush_pending_exercise_call({"performance_report": clean,
+                                              "scheduling": "INTERRUPT"}):
+            print("Gemini Service: Performance report sent as delayed tool response.")
+        else:
+            self.send_prompt(report)
+
     @Slot(str)
     def send_prompt(self, prompt: str):
         """Send a standard text message."""
@@ -706,18 +780,36 @@ class GeminiService(QObject):
             print("Gemini Service: Not connected. Dropping prompt.")
             return
 
+        # Safety valve: release a STALE held set_exercise call (e.g. lesson
+        # aborted mid-exercise, then new text goes out). While an exercise is
+        # genuinely in progress (_exercise_pending), keep holding — the call
+        # is NON_BLOCKING, so mid-exercise hints can flow alongside it.
+        if self._pending_exercise_call and not self._exercise_pending:
+            print("Gemini Service: Releasing stale set_exercise response before text prompt.")
+            self._flush_pending_exercise_call()
+
         self._turn_complete = False # Expecting a response
             
-        # Format the message correctly for the Bidi API
-        msg = {
-            "clientContent": {
-                "turns": [{
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }],
-                "turnComplete": True
+        # Format the message correctly for the Bidi API.
+        # Gemini 3.1 Flash Live only accepts clientContent turns for seeding
+        # initial history — ongoing text must be sent as realtimeInput.
+        # The 2.5 fallback model keeps the classic clientContent turn format.
+        if self._active_model == self.LIVE_MODEL:
+            msg = {
+                "realtimeInput": {
+                    "text": prompt
+                }
             }
-        }
+        else:
+            msg = {
+                "clientContent": {
+                    "turns": [{
+                        "role": "user",
+                        "parts": [{"text": prompt}]
+                    }],
+                    "turnComplete": True
+                }
+            }
         asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)
 
     @Slot()

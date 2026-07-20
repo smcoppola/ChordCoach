@@ -53,7 +53,7 @@ class AppCoordinator(QObject):
         # Lesson flow: trainer requests → coordinator sends to gemini → gemini tools → trainer receives
         self.chord_trainer.requestLessonStart.connect(self.gemini.send_prompt)
         self.chord_trainer.reportPerformance.connect(self.gemini.clear_exercise_pending)
-        self.chord_trainer.reportPerformance.connect(self.gemini.send_prompt)
+        self.chord_trainer.reportPerformance.connect(self.gemini.send_performance_report)
         self.chord_trainer.exerciseRequestUnlocked.connect(self.gemini.clear_exercise_pending)
         self.chord_trainer.speakInstruction.connect(self.gemini.send_prompt)
         self.chord_trainer.speakBrief.connect(self.gemini.send_prompt)  # Non-blocking commentary (no pause)
