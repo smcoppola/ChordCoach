@@ -40,7 +40,7 @@ def parse_and_quantize(file_path: str) -> dict:
     groups = _group_chords(tagged)
     quantized = _quantize_groups(groups, to_beats)
     if single_track:
-        _refine_hands(quantized)
+        assign_hands(quantized)
 
     title = Path(file_path).stem.replace("_", " ").replace("-", " ").strip().title()
     return {
@@ -75,33 +75,128 @@ def _collect_notes_with_hands(pm) -> Tuple[List[Tuple[object, str]], bool]:
     return tagged, single_track
 
 
-def _refine_hands(groups):
+HAND_ALGO_VERSION = 2  # bump when assign_hands changes enough to re-migrate
+
+# Viterbi cost weights (all in "penalty per semitone" unless noted)
+_SPAN_COMFORT = 9        # free reach within a hand
+_SPAN_STRETCH = 12       # up to here costs _W_STRETCH per semitone
+_W_STRETCH = 1.5
+_W_IMPOSSIBLE = 6.0      # per semitone beyond _SPAN_STRETCH
+_W_EXTRA_FINGER = 8.0    # per simultaneous note beyond 5 in one hand
+_W_REGISTER = 0.4        # gentle prior: LH belongs below ~E4, RH above ~G3
+_LH_HIGH, _RH_LOW = 64, 55
+_W_MOVE = 0.6            # hand-center movement between consecutive groups
+_FREE_STEP = 2.0         # semitones of free movement — stepwise lines cost 0
+_REST_RELAX = 2.0        # beats of silence after which movement cost halves
+_W_NEW_HAND = 3.0        # cost to introduce a hand with no playing history —
+                         # comparable to a large leap, so a melody keeps its
+                         # hand across leaps instead of recruiting the idle one
+
+
+def assign_hands(groups):
     """
-    Per-chord hand assignment for single-track recordings. A fixed middle-C
-    threshold tears chords apart (e.g. A3 in an A-minor RH voicing); instead
-    split each group at its widest pitch gap when the shape demands two
-    hands, otherwise keep the whole group in one hand.
+    Continuity-aware hand assignment for single-track recordings (Viterbi).
+
+    Per-group candidate states are split indices k: the k lowest pitches go
+    to the left hand, the rest to the right (k=0 all-RH, k=n all-LH).
+    Emission costs penalize unplayable spans, >5 notes per hand, and
+    out-of-register hands; transition costs penalize hand-center movement,
+    so a melody that dips below middle C stays in the right hand instead of
+    flip-flopping between staves. Mutates groups in place and returns them.
     """
-    for g in groups:
-        pitches = sorted(p for p, _h in g["notes"])
-        span = pitches[-1] - pitches[0]
-        centroid = sum(pitches) / len(pitches)
+    if not groups:
+        return groups
 
-        if len(pitches) == 1:
-            g["notes"] = [(pitches[0], "right" if pitches[0] >= LEFT_HAND_SPLIT else "left")]
-            continue
+    seqs = [sorted(p for p, _h in g["notes"]) for g in groups]
+    times = [float(g["offset"]) for g in groups]
 
-        gaps = [(pitches[i + 1] - pitches[i], i) for i in range(len(pitches) - 1)]
-        best_gap, idx = max(gaps)
+    def emission(pitches, k):
+        cost = 0.0
+        for hand in (pitches[:k], pitches[k:]):
+            if len(hand) >= 2:
+                span = hand[-1] - hand[0]
+                if span > _SPAN_STRETCH:
+                    cost += (_SPAN_STRETCH - _SPAN_COMFORT) * _W_STRETCH \
+                            + (span - _SPAN_STRETCH) * _W_IMPOSSIBLE
+                elif span > _SPAN_COMFORT:
+                    cost += (span - _SPAN_COMFORT) * _W_STRETCH
+            if len(hand) > 5:
+                cost += (len(hand) - 5) * _W_EXTRA_FINGER
+        lh, rh = pitches[:k], pitches[k:]
+        if lh:
+            c = sum(lh) / len(lh)
+            if c > _LH_HIGH:
+                cost += (c - _LH_HIGH) * _W_REGISTER
+        if rh:
+            c = sum(rh) / len(rh)
+            if c < _RH_LOW:
+                cost += (_RH_LOW - c) * _W_REGISTER
+        return cost
 
-        # Split when one hand can't cover the span, or when there's a clear
-        # bass + chord shape (wide gap with the low cluster in bass territory)
-        if span > 12 or (best_gap >= 7 and pitches[0] < 57):
-            low, high = pitches[:idx + 1], pitches[idx + 1:]
-            g["notes"] = [(p, "left") for p in low] + [(p, "right") for p in high]
-        else:
-            hand = "right" if centroid >= LEFT_HAND_SPLIT else "left"
-            g["notes"] = [(p, hand) for p in pitches]
+    # dp[k] = (total_cost, prev_state_index, ctx)
+    # ctx = (lh_center, lh_last_time, rh_center, rh_last_time) carried along
+    # the best path so a hand that rests keeps its position
+    def apply_ctx(ctx, pitches, k, t):
+        lh, rh = pitches[:k], pitches[k:]
+        lh_c, lh_t, rh_c, rh_t = ctx
+        if lh:
+            lh_c, lh_t = sum(lh) / len(lh), t
+        if rh:
+            rh_c, rh_t = sum(rh) / len(rh), t
+        return (lh_c, lh_t, rh_c, rh_t)
+
+    def transition(ctx, pitches, k, t):
+        # Movement beyond a whole step costs; stepwise lines are free so a
+        # melody can dip below middle C without the LH stealing its notes
+        cost = 0.0
+        lh_c, lh_t, rh_c, rh_t = ctx
+        lh, rh = pitches[:k], pitches[k:]
+        if lh:
+            if lh_c is None:
+                cost += _W_NEW_HAND
+            else:
+                w = _W_MOVE * (0.5 if (t - lh_t) > _REST_RELAX else 1.0)
+                cost += max(0.0, abs(sum(lh) / len(lh) - lh_c) - _FREE_STEP) * w
+        if rh:
+            if rh_c is None:
+                cost += _W_NEW_HAND
+            else:
+                w = _W_MOVE * (0.5 if (t - rh_t) > _REST_RELAX else 1.0)
+                cost += max(0.0, abs(sum(rh) / len(rh) - rh_c) - _FREE_STEP) * w
+        return cost
+
+    empty_ctx = (None, 0.0, None, 0.0)
+    dp = [(emission(seqs[0], k), -1, apply_ctx(empty_ctx, seqs[0], k, times[0]))
+          for k in range(len(seqs[0]) + 1)]
+
+    choices: list = [0] * len(groups)
+    backptrs = []
+    for i in range(1, len(groups)):
+        pitches, t = seqs[i], times[i]
+        new_dp = []
+        ptr_row = []
+        for k in range(len(pitches) + 1):
+            e = emission(pitches, k)
+            total, pk, pctx = min(
+                ((dp[j][0] + e + transition(dp[j][2], pitches, k, t), j, dp[j][2])
+                 for j in range(len(dp))),
+                key=lambda cand: cand[0])
+            new_dp.append((total, pk, apply_ctx(pctx, pitches, k, t)))
+            ptr_row.append(pk)
+        dp = new_dp
+        backptrs.append(ptr_row)
+
+    # Backtrack
+    k = min(range(len(dp)), key=lambda j: dp[j][0])
+    choices[-1] = k
+    for i in range(len(groups) - 1, 0, -1):
+        k = backptrs[i - 1][k]
+        choices[i - 1] = k
+
+    for g, pitches, k in zip(groups, seqs, choices):
+        g["notes"] = [(p, "left") for p in pitches[:k]] + \
+                     [(p, "right") for p in pitches[k:]]
+    return groups
 
 
 class _BeatConverter:

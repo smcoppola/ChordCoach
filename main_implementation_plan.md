@@ -289,9 +289,11 @@
 - Import runs on a `MidiImportWorker(QThread)`; UI listens for `importSucceeded(song_id)` / `importFailed(error)` signals, spinner overlay shows during import
 - "Import MIDI Instead" button on the corpus-download overlay — importing works without the corpus (key detection is algorithmic)
 
-### Hand Assignment (implemented)
-- Multi-track files: lower-pitched of the two busiest tracks = left hand
-- Single-track files: per-chord-group split (`_refine_hands` in midi_ingestor.py) — split at the widest pitch gap when the span exceeds an octave or there's a clear bass+chord shape (gap ≥ 7 semitones with the low cluster below A2-ish); otherwise the whole group goes to one hand by centroid. Fixes chords like A-minor RH voicings losing their A3 to the left hand under the old middle-C threshold
+### Hand Assignment (v2 — continuity-aware Viterbi)
+- Multi-track files: lower-pitched of the two busiest tracks = left hand (unchanged)
+- Single-track files: `assign_hands()` in midi_ingestor.py runs a Viterbi DP over chord groups. States = split indices (k lowest notes → LH). Emission costs punish unplayable spans (>9 free, >12 heavy), >5 notes/hand, out-of-register hands (gentle prior). Transition costs punish hand-center movement beyond a whole step (stepwise lines are free), halve after >2 beats of rest, and charge ~a large leap to introduce a hand with no history. Result: melodies that dip below middle C stay RH; walking bass that climbs above it stays LH; no per-group flip-flopping
+- `HAND_ALGO_VERSION = 2`; songs imported with v1 are migrated in place on next open (hands re-assigned, steps rebuilt, JSON rewritten)
+- Per-song manual override: HANDS chips (Auto / Split C4 / RH only / LH only) in the difficulty chooser popup; persisted as `hand_mode` in the song JSON via `set_user_song_hand_mode`, applied before difficulty simplification
 
 ### Remaining (next iteration)
 - Level parameters in `Music21Service.SIMPLIFY_LEVELS` may need tuning after real-world use

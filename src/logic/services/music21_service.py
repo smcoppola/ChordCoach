@@ -688,7 +688,7 @@ class Music21Service(QObject):
         raises on failure.
         """
         import json, re, time
-        from logic.services.midi_ingestor import parse_and_quantize
+        from logic.services.midi_ingestor import parse_and_quantize, HAND_ALGO_VERSION
 
         quantized = parse_and_quantize(path)
         score, key_name, key_sharps = self._build_score_from_groups(quantized["groups"])
@@ -710,6 +710,8 @@ class Music21Service(QObject):
             "key": key_name,
             "key_sharps": key_sharps,
             "bpm": quantized["bpm"],
+            "hand_algo": HAND_ALGO_VERSION,
+            "hand_mode": "auto",
             "barlines": barlines,
             "steps": steps,
             # Raw quantized groups kept for difficulty re-arrangement
@@ -839,6 +841,18 @@ class Music21Service(QObject):
             with open(path, "r") as f:
                 data = json.load(f)
 
+            # One-time migration: re-run hand assignment on songs imported
+            # with an older algorithm (fixes wrong-hand notes in place)
+            from logic.services.midi_ingestor import HAND_ALGO_VERSION
+            if data.get("quantized_groups") and int(data.get("hand_algo", 1)) < HAND_ALGO_VERSION:
+                print(f"Music21Service: Upgrading hand assignment for '{data.get('title')}' "
+                      f"(v{data.get('hand_algo', 1)} -> v{HAND_ALGO_VERSION})")
+                try:
+                    data = self._rebuild_user_song_record(data)
+                    self._save_user_song_record(data)
+                except Exception as e:
+                    print(f"Music21Service: Hand migration failed, using stored steps: {e}")
+
             title = data.get("title", "Imported Song")
             result = {
                 "steps": data.get("steps", []),
@@ -877,3 +891,86 @@ class Music21Service(QObject):
         except Exception as e:
             print(f"Music21Service: Error loading imported song {song_id}: {e}")
             return {"steps": [], "title": "Error", "key": "Import Error"}
+
+    # ── Hand-Mode Overrides & Record Rebuilding ────────────────────────
+
+    def _user_song_path(self, song_id: str):
+        """Filesystem path for a user song record (level suffix tolerated)."""
+        base_id = song_id.rsplit("::L", 1)[0] if "::L" in song_id else song_id
+        return self._user_songs_dir() / (base_id.replace(self.USER_SONG_PREFIX, "") + ".json")
+
+    def _apply_hand_mode(self, groups, mode: str):
+        """Re-tags note hands on quantized groups per the song's hand mode."""
+        if mode in ("right", "left"):
+            for g in groups:
+                g["notes"] = [(p, mode) for p, _h in g["notes"]]
+        elif mode == "split":
+            for g in groups:
+                g["notes"] = [(p, "right" if p >= 60 else "left") for p, _h in g["notes"]]
+        else:  # auto — continuity-aware Viterbi assignment
+            from logic.services.midi_ingestor import assign_hands
+            assign_hands(groups)
+        return groups
+
+    def _rebuild_user_song_record(self, record: dict) -> dict:
+        """
+        Re-runs hand assignment and step extraction on a stored song record
+        (after a hand-mode change or hand-algorithm upgrade). Returns the
+        updated record; caller persists it.
+        """
+        from logic.services.midi_ingestor import HAND_ALGO_VERSION
+        groups = [
+            {"offset": g["offset"], "duration": g["duration"],
+             "notes": [(int(p), h) for p, h in g["notes"]]}
+            for g in record.get("quantized_groups", [])
+        ]
+        if not groups:
+            return record
+        self._apply_hand_mode(groups, record.get("hand_mode", "auto"))
+        score, _kn, _ks = self._build_score_from_groups(
+            groups,
+            key_name=record.get("key"),
+            key_sharps=record.get("key_sharps"))
+        steps, barlines = self._extract_steps_from_score(score)
+        record["quantized_groups"] = groups
+        record["steps"] = steps
+        record["barlines"] = barlines
+        record["hand_algo"] = HAND_ALGO_VERSION
+        return record
+
+    def _save_user_song_record(self, record: dict):
+        import json
+        with open(self._user_song_path(record["id"]), "w") as f:
+            json.dump(record, f)
+
+    @Slot(str, result=str)
+    def get_user_song_hand_mode(self, song_id: str) -> str:
+        import json
+        try:
+            with open(self._user_song_path(song_id), "r") as f:
+                return json.load(f).get("hand_mode", "auto")
+        except Exception:
+            return "auto"
+
+    @Slot(str, str)
+    def set_user_song_hand_mode(self, song_id: str, mode: str):
+        """Sets and persists the hand-assignment mode for an imported song,
+        rebuilding its notation steps immediately."""
+        import json
+        from logic.services.midi_ingestor import HAND_ALGO_VERSION
+        if mode not in ("auto", "split", "right", "left"):
+            print(f"Music21Service: Unknown hand mode '{mode}' ignored")
+            return
+        try:
+            path = self._user_song_path(song_id)
+            with open(path, "r") as f:
+                record = json.load(f)
+            if (record.get("hand_mode", "auto") == mode
+                    and int(record.get("hand_algo", 1)) >= HAND_ALGO_VERSION):
+                return  # nothing to do
+            record["hand_mode"] = mode
+            record = self._rebuild_user_song_record(record)
+            self._save_user_song_record(record)
+            print(f"Music21Service: Hand mode for '{record.get('title')}' set to '{mode}'")
+        except Exception as e:
+            print(f"Music21Service: Failed to set hand mode: {e}")

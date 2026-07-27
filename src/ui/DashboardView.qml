@@ -568,6 +568,10 @@ Rectangle {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         property string pendingSongId: ""
+        property string handMode: "auto"
+
+        onOpened: handMode = (!!appState && !!appState.music21Service)
+                  ? appState.music21Service.get_user_song_hand_mode(pendingSongId) : "auto"
 
         function play(level) {
             var baseId = pendingSongId;
@@ -595,6 +599,59 @@ Rectangle {
                 font.letterSpacing: 3 * mainWindow.uiScale
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 8 * mainWindow.uiScale
+            }
+
+            // Hand-assignment override (persists per song)
+            Text {
+                text: "HANDS"
+                color: "#666666"
+                font.pixelSize: 9 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 6 * mainWindow.uiScale
+
+                Repeater {
+                    model: [
+                        { mode: "auto",  label: "Auto" },
+                        { mode: "split", label: "Split C4" },
+                        { mode: "right", label: "RH only" },
+                        { mode: "left",  label: "LH only" }
+                    ]
+                    delegate: Rectangle {
+                        property bool isActive: difficultyPicker.handMode === modelData.mode
+                        Layout.preferredWidth: handChipLabel.implicitWidth + 16 * mainWindow.uiScale
+                        Layout.preferredHeight: 24 * mainWindow.uiScale
+                        radius: 12 * mainWindow.uiScale
+                        color: isActive ? "#4CAF5030" : (handChipMouse.containsMouse ? "#333333" : "#2a2a2a")
+                        border.color: isActive ? "#4CAF50" : "#444444"
+
+                        Text {
+                            id: handChipLabel
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: isActive ? "#4CAF50" : "#aaaaaa"
+                            font.pixelSize: 10 * mainWindow.uiScale
+                            font.bold: isActive
+                        }
+
+                        MouseArea {
+                            id: handChipMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                difficultyPicker.handMode = modelData.mode;
+                                appState.music21Service.set_user_song_hand_mode(
+                                    difficultyPicker.pendingSongId, modelData.mode);
+                            }
+                        }
+                    }
+                }
             }
 
             Repeater {
