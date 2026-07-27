@@ -42,12 +42,76 @@ def parse_and_quantize(file_path: str) -> dict:
     if single_track:
         assign_hands(quantized)
 
+    time_signatures = _extract_time_signatures(pm, to_beats)
+    tempo_map = _extract_tempo_map(pm, to_beats)
+    pedal_events = _extract_pedal_events(pm, to_beats)
+
     title = Path(file_path).stem.replace("_", " ").replace("-", " ").strip().title()
     return {
         "title": title or "Imported Song",
         "bpm": to_beats.bpm,
         "groups": quantized,
+        "time_signatures": time_signatures,
+        "tempo_map": tempo_map,
+        "pedal_events": pedal_events,
+        "single_track": single_track,
     }
+
+
+def _extract_time_signatures(pm, to_beats) -> List[dict]:
+    sigs = []
+    for ts in pm.time_signature_changes:
+        off = round(to_beats(ts.time), 5)
+        sigs.append({"offset": off, "numerator": int(ts.numerator), "denominator": int(ts.denominator)})
+    sigs.sort(key=lambda s: s["offset"])
+
+    if not sigs or sigs[0]["offset"] > 0:
+        sigs.insert(0, {"offset": 0.0, "numerator": 4, "denominator": 4})
+
+    # Dedup by offset (keep last)
+    dedup = {}
+    for s in sigs:
+        dedup[s["offset"]] = s
+    return [dedup[k] for k in sorted(dedup.keys())]
+
+
+def _extract_tempo_map(pm, to_beats) -> List[dict]:
+    tempo_times, tempi = pm.get_tempo_changes()
+    tempo_map = []
+    for t, b in zip(tempo_times, tempi):
+        off = round(to_beats(t), 5)
+        tempo_map.append({"offset": off, "bpm": round(float(b), 2)})
+    tempo_map.sort(key=lambda tm: tm["offset"])
+
+    if not tempo_map or tempo_map[0]["offset"] > 0:
+        tempo_map.insert(0, {"offset": 0.0, "bpm": round(to_beats.bpm, 2)})
+
+    dedup = {}
+    for tm in tempo_map:
+        dedup[tm["offset"]] = tm
+    return [dedup[k] for k in sorted(dedup.keys())]
+
+
+def _extract_pedal_events(pm, to_beats) -> List[dict]:
+    pedals = []
+    for inst in pm.instruments:
+        if inst.is_drum:
+            continue
+        for cc in inst.control_changes:
+            if cc.number == 64:
+                off = round(to_beats(cc.time), 5)
+                is_down = bool(cc.value >= 64)
+                pedals.append({"offset": off, "down": is_down})
+    pedals.sort(key=lambda p: (p["offset"], not p["down"]))
+
+    # Clean up duplicate state changes at exact same offset
+    cleaned = []
+    last_state = None
+    for p in pedals:
+        if p["down"] != last_state:
+            cleaned.append(p)
+            last_state = p["down"]
+    return cleaned
 
 
 def _collect_notes_with_hands(pm) -> Tuple[List[Tuple[object, str]], bool]:
@@ -268,19 +332,28 @@ def _quantize_groups(groups, to_beats: _BeatConverter) -> List[dict]:
         seen = {}
         for n, hand in g["notes"]:
             if n.pitch not in seen:
-                seen[n.pitch] = hand
-        notes = sorted(seen.items())  # [(pitch, hand)]
+                vel = getattr(n, "velocity", None)
+                seen[n.pitch] = (hand, int(vel) if vel is not None else None)
+        
+        sorted_pitches = sorted(seen.keys())
+        notes = [(p, seen[p][0]) for p in sorted_pitches]
+        velocities = [seen[p][1] for p in sorted_pitches]
 
         if result and result[-1]["offset"] == offset:
             # Two live "chords" snapped to the same grid point — merge
-            merged = {p: h for p, h in result[-1]["notes"]}
-            for p, h in notes:
-                merged.setdefault(p, h)
-            result[-1]["notes"] = sorted(merged.items())
+            merged_hand = {p: h for p, h in result[-1]["notes"]}
+            merged_vel = {p: v for p, v in zip([p for p, _ in result[-1]["notes"]], result[-1]["velocities"])}
+            for p, (h, v) in seen.items():
+                merged_hand.setdefault(p, h)
+                merged_vel.setdefault(p, v)
+            
+            sorted_m = sorted(merged_hand.keys())
+            result[-1]["notes"] = [(p, merged_hand[p]) for p in sorted_m]
+            result[-1]["velocities"] = [merged_vel[p] for p in sorted_m]
             result[-1]["duration"] = max(result[-1]["duration"], dur)
             continue
 
-        result.append({"offset": offset, "duration": dur, "notes": notes})
+        result.append({"offset": offset, "duration": dur, "notes": notes, "velocities": velocities})
 
     # Normalize so the song starts at beat 0
     if result:

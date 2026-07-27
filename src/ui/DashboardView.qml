@@ -702,16 +702,16 @@ Rectangle {
         }
     }
 
-    // ── MIDI Import File Dialog ──
+    // ── Music Import File Dialog ──
     FileDialog {
         id: midiImportDialog
-        title: "Import a MIDI File"
-        nameFilters: ["MIDI files (*.mid *.midi)"]
+        title: "Import a Music File"
+        nameFilters: ["Music files (*.mid *.midi *.xml *.mxl *.musicxml)", "MIDI files (*.mid *.midi)", "MusicXML files (*.xml *.mxl *.musicxml)"]
         onAccepted: {
             songPicker.importError = "";
             songPicker.isLoadingSong = true;
-            // Async: importSucceeded / importFailed arrive via Connections below
-            appState.music21Service.import_midi_file(selectedFile.toString());
+            // Async: importSucceeded / importFailed / importDuplicate arrive via Connections below
+            appState.music21Service.import_file(selectedFile.toString());
         }
     }
 
@@ -746,7 +746,7 @@ Rectangle {
             }
         }
 
-        // Background MIDI import results
+        // Background MIDI/MusicXML import results
         Connections {
             target: (typeof appState !== "undefined" && appState && appState.music21Service) ? appState.music21Service : null
             function onImportSucceeded(songId) {
@@ -756,6 +756,11 @@ Rectangle {
             function onImportFailed(error) {
                 songPicker.isLoadingSong = false;
                 songPicker.importError = "Import failed: " + error;
+            }
+            function onImportDuplicate(existingSongId, existingTitle) {
+                songPicker.isLoadingSong = false;
+                songPicker.importError = "'" + existingTitle + "' is already in your library.";
+                root.requestSongWithDifficulty(existingSongId);
             }
         }
 
@@ -848,7 +853,7 @@ Rectangle {
                             Text {
                                 id: importLabel
                                 anchors.centerIn: parent
-                                text: "⬆ IMPORT MIDI"
+                                text: "⬆ IMPORT MUSIC"
                                 color: "#4CAF50"
                                 font.bold: true
                                 font.pixelSize: 10 * mainWindow.uiScale
@@ -1349,7 +1354,7 @@ Rectangle {
                         }
 
                         Button {
-                            text: "Import MIDI Instead"
+                            text: "Import Music Instead"
                             onClicked: midiImportDialog.open()
 
                             contentItem: Text {

@@ -348,7 +348,7 @@ class GeminiService(QObject):
                                 "properties": {
                                     "exercise_type": {
                                         "type": "STRING",
-                                        "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal, steady_pulse"
+                                        "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal, steady_pulse, song_application"
                                     },
                                     "exercise_name": {
                                         "type": "STRING",

@@ -1,0 +1,106 @@
+{
+  "id": "user::test-v1-song-123456",
+  "title": "Test V1 Song",
+  "artist": "Imported MIDI",
+  "level": "Grade 3",
+  "key": "C Major",
+  "key_sharps": 0,
+  "bpm": 120.0,
+  "hand_algo": 2,
+  "hand_mode": "auto",
+  "barlines": [
+    4.0,
+    8.0
+  ],
+  "steps": [
+    {
+      "offset": 0.0,
+      "pitches": [
+        60,
+        48
+      ],
+      "spellings": [
+        [
+          "C",
+          0
+        ],
+        [
+          "C",
+          0
+        ]
+      ],
+      "hands": [
+        "right",
+        "left"
+      ],
+      "fingers": [
+        1,
+        5
+      ],
+      "ties": [
+        null,
+        null
+      ],
+      "beams": [
+        null,
+        null
+      ],
+      "duration": 1.0,
+      "rests": []
+    },
+    {
+      "offset": 1.0,
+      "pitches": [
+        64
+      ],
+      "spellings": [
+        [
+          "E",
+          0
+        ]
+      ],
+      "hands": [
+        "right"
+      ],
+      "fingers": [
+        3
+      ],
+      "ties": [
+        null
+      ],
+      "beams": [
+        null
+      ],
+      "duration": 1.0,
+      "rests": []
+    }
+  ],
+  "quantized_groups": [
+    {
+      "offset": 0.0,
+      "duration": 1.0,
+      "notes": [
+        [
+          60,
+          "right"
+        ],
+        [
+          48,
+          "left"
+        ]
+      ]
+    },
+    {
+      "offset": 1.0,
+      "duration": 1.0,
+      "notes": [
+        [
+          64,
+          "right"
+        ]
+      ]
+    }
+  ],
+  "source_file": "/path/to/test.mid",
+  "imported_at": "2026-07-27 10:00:00"
+}
