@@ -21,14 +21,24 @@ public:
       // in openPort() after the port is successfully opened.
 
     } catch (RtMidiError &error) {
+      // midiIn stays nullptr — all methods below must null-guard
       error.printMessage();
     }
   }
 
-  ~MidiHandler() { delete midiIn; }
+  ~MidiHandler() {
+    if (midiIn) {
+      if (callbackActive)
+        midiIn->cancelCallback();
+      delete midiIn;
+      midiIn = nullptr;
+    }
+  }
 
   void openPort(int port) {
-    if (port < midiIn->getPortCount()) {
+    if (!midiIn)
+      return;
+    if (port >= 0 && static_cast<unsigned int>(port) < midiIn->getPortCount()) {
       midiIn->openPort(port);
       std::cout << "Opened MIDI Input port: " << midiIn->getPortName(port)
                 << std::endl;
@@ -36,8 +46,25 @@ public:
       // Register the C++ wrapper callback now that the port is open.
       // This starts RtMidi's internal input thread.
       midiIn->setCallback(&MidiHandler::midiInputCallback, this);
+      callbackActive = true;
       std::cout << "MIDI input callback registered." << std::endl;
     }
+  }
+
+  // Deterministic teardown callable from Python BEFORE the reference is
+  // dropped. Runs with the GIL released (see pybindings), so the WinMM /
+  // CoreMIDI close cannot deadlock against the input thread acquiring the
+  // GIL for a Python callback.
+  void closePort() {
+    if (!midiIn)
+      return;
+    if (callbackActive) {
+      midiIn->cancelCallback();
+      callbackActive = false;
+    }
+    midiIn->closePort();
+    delete midiIn;
+    midiIn = nullptr;
   }
 
   void setIgnoreTypes(bool sysex, bool timing, bool activeSensing) {
@@ -48,6 +75,8 @@ public:
 
   std::vector<std::string> getPortNames() {
     std::vector<std::string> names;
+    if (!midiIn)
+      return names;
     unsigned int nPorts = midiIn->getPortCount();
     for (unsigned int i = 0; i < nPorts; i++) {
       names.push_back(midiIn->getPortName(i));
@@ -80,6 +109,7 @@ private:
     }
   }
 
-  RtMidiIn *midiIn;
+  RtMidiIn *midiIn = nullptr;
+  bool callbackActive = false;
   std::function<void(double, std::vector<unsigned char>)> pyCallback;
 };

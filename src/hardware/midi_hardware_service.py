@@ -137,6 +137,7 @@ class MidiHardwareService(QObject):
             
         self._polling_timer = QTimer(self)
         self._is_polling = False # Thread-safe state tracking to avoid QTimer checks outside main thread
+        self._probe_in_flight = False # Guards against probe-thread pileup when WinMM is slow/wedged
         
         # 1. Bind Qt signals to ensure execution happens on the main thread loop
         self._polling_timer.timeout.connect(self.initialize_async)
@@ -170,10 +171,36 @@ class MidiHardwareService(QObject):
         """
         Dispatches initialization to a background thread to prevent GUI stall during hardware scans.
         """
+        # 0. Never stack probe threads: if the previous probe is still running
+        # (or stuck inside a wedged WinMM call), skip this tick. The stuck
+        # call typically returns when the device state changes, after which
+        # polling resumes normally.
+        if self._probe_in_flight:
+            print("MidiHardwareService: Probe already running — skipping this poll tick.")
+            return
+        self._probe_in_flight = True
+
+        # Watchdog: if hardware doesn't answer within 10s, release the UI —
+        # the app runs without MIDI and the QML banner explains why.
+        QTimer.singleShot(10000, self._probe_watchdog_check)
+
         # 1. Spawn daemon thread targeting main init payload. Daemon ensures it dies with the app.
-        t = threading.Thread(target=self._execute_initialization, daemon=True)
+        t = threading.Thread(target=self._execute_initialization_guarded, daemon=True)
         t.start()
-            
+
+    def _execute_initialization_guarded(self):
+        try:
+            self._execute_initialization()
+        finally:
+            self._probe_in_flight = False
+
+    @Slot()
+    def _probe_watchdog_check(self):
+        if self._probe_in_flight and not self._initial_search_done:
+            print("MidiHardwareService: Hardware probe unresponsive after 10s — "
+                  "continuing without MIDI (probe left to finish in background).")
+            self._on_initial_search_complete()
+
     def _execute_initialization(self):
         """
         Threaded payload: Probes for MIDI hardware on a background thread to avoid
@@ -223,6 +250,14 @@ class MidiHardwareService(QObject):
                     print("MidiHardwareService: MIDI device lost.")
                     self.is_connected = False
                     self.device_name = "Not Connected"
+                    # Deterministically close the dead handler so WinMM
+                    # releases the port (avoids zombie locks on re-plug)
+                    if self.hw_midi_in is not None:
+                        try:
+                            self.hw_midi_in.closePort()
+                        except Exception:
+                            pass
+                        self.hw_midi_in = None
                     self.connectionStatusChanged.emit(False)
                 self._cmdInitialSearchComplete.emit()
                 return
@@ -232,9 +267,16 @@ class MidiHardwareService(QObject):
                 self._cmdStopPolling.emit()
                 print(f"MidiHardwareService: MIDI Device detected during polling: {ports[0]}")
 
-            # 6. Delegate port binding to the main thread (required for macOS CoreMIDI)
-            self._cmdBindPort.emit(list(ports))
-            
+            # 6. Bind the port. On macOS this MUST happen on the main thread
+            # (CoreMIDI needs the CFRunLoop). On Windows there is no such
+            # constraint — bind right here on the probe thread so a blocked
+            # WinMM open can never stall the UI (the C++ layer releases the
+            # GIL around all driver calls).
+            if sys.platform == "win32":
+                self._do_bind(list(ports))
+            else:
+                self._cmdBindPort.emit(list(ports))
+
         except Exception as e:
             print(f"MidiHardwareService: MIDI Hardware Init Error: {e}")
             self.is_connected = False
@@ -244,42 +286,44 @@ class MidiHardwareService(QObject):
     @Slot(list)
     def _bind_port_on_main_thread(self, ports: list):
         """
-        Executes on the main thread (via signal).  Opens the MIDI input port and
-        registers the Python callback.  On macOS this guarantees the CFRunLoop is
-        active so CoreMIDI can deliver messages.
+        Executes on the main thread (via signal) — macOS path only, where
+        CoreMIDI requires the CFRunLoop that lives on the main thread.
+        """
+        self._do_bind(ports)
+
+    def _do_bind(self, ports: list):
+        """
+        Single bind attempt — safe on any thread (the C++ layer releases the
+        GIL around driver calls). No blocking retries: on failure the 2s
+        polling loop is (re)armed and simply tries again on the next tick,
+        which also covers Windows' delayed port release after unplug.
         """
         if self.is_connected or not ports:
             return
-            
-        import gc
-        
-        # Retry loop — on Windows the OS may not release the port instantly
-        bind_success = False
-        last_err = ""
-        for attempt in range(3):
-            try:
-                # Force garbage collection/release of any old pointer if re-initializing
-                self.hw_midi_in = None 
-                gc.collect()
-                
-                m_handler = self.hw_module.MidiHandler()
-                m_handler.openPort(0)
-                m_handler.setCallback(self._on_raw_midi_data)
-                self.hw_midi_in = m_handler
-                bind_success = True
-                break
-            except Exception as e:
-                last_err = str(e)
-                print(f"MidiHardwareService: Retrying MIDI bind (Attempt {attempt+1}/3) due to: {e}")
-                # Use a non-blocking single-shot timer for retries instead of
-                # time.sleep() to keep the main thread responsive.  However for
-                # simplicity and because 0.5 s is brief, a blocking sleep is
-                # acceptable during startup.
-                import time
-                time.sleep(0.5)
 
-        if not bind_success:
-            print(f"MidiHardwareService: Failed to bind MIDI port listener after 3 attempts: {last_err}")
+        import gc
+        try:
+            # Deterministic teardown of any previous handler BEFORE creating
+            # a new one — avoids the WinMM zombie-port lock.
+            if self.hw_midi_in is not None:
+                try:
+                    self.hw_midi_in.closePort()
+                except Exception:
+                    pass
+            self.hw_midi_in = None
+            gc.collect()
+
+            m_handler = self.hw_module.MidiHandler()
+            if not m_handler.getPortNames():
+                # RtMidi backend failed to construct (null-guarded in C++) or
+                # the device vanished between probe and bind
+                raise RuntimeError("MIDI backend unavailable or device disappeared")
+            m_handler.openPort(0)
+            m_handler.setCallback(self._on_raw_midi_data)
+            self.hw_midi_in = m_handler
+        except Exception as e:
+            print(f"MidiHardwareService: MIDI bind failed ({e}) — will retry on next poll tick.")
+            self._cmdStartPolling.emit()
             self._cmdInitialSearchComplete.emit()
             return
 
@@ -288,7 +332,7 @@ class MidiHardwareService(QObject):
         self.device_name = ports[0]
         self.connectionStatusChanged.emit(True)
         print(f"MidiHardwareService: MIDI Input Hardware initialized: {ports[0]}")
-        
+
         # Defer output initialization/matching to sub-routine
         self._initialize_output_hardware(target_name=ports[0])
         self._cmdInitialSearchComplete.emit()

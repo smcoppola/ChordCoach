@@ -350,8 +350,11 @@ As we proceed through the phases, keep these crucial architectural details in mi
 - The `VisualKeyboard.qml` uses a `Canvas` overlay to draw interval arches. These arches are now interactive via a `MouseArea` that triggers a `ToolTip` identifying the musical interval (e.g., "Major 3rd").
 - This interactivity was integrated into a dedicated onboarding tutorial phase, guided by the AI coach.
 
-### 5. Known Hardware Issues / Backlog
-- **MIDI Hot-plugging on Windows**: The application uses `RtMidi` (via `chordcoach_hw`) for MIDI input and `LowLevelMidiOutput` for MIDI output. While we deferred `LowLevelMidiOutput` initialization to avoid locking the Windows MM device list on startup, if a MIDI keyboard is plugged in while the app is running and fails to connect correctly on the very first try, `RtMidi` may fail with `MidiInWinMM::openPort: error creating Windows MM MIDI input port`. This is likely a zombie handle issue in the Windows Multimedia API, `midi_ingestor`, or the `RtMidi` wrapper locking the port exclusively. It is currently placed on the backlog for a future phase focused on hardware robustness.
+### 5. Hardware Robustness (fixed July 2026)
+- **Startup hang with no/wedged MIDI device — FIXED.** Root cause was the GIL being held across blocking WinMM calls in `chordcoach_hw`: a stuck `midiInOpen`/`RtMidiIn()` froze every Python thread including the UI. Fixes:
+  - C++ (`midi_handler.cpp`/`pybindings.cpp`): `gil_scoped_release` call guards on all driver-touching methods; `midiIn` nullptr-initialized with null guards everywhere; explicit `closePort()` for deterministic teardown; destructor no longer UB when RtMidi construction fails
+  - Python (`midi_hardware_service.py`): probe in-flight guard (no thread pileup), Windows binds on the probe thread (macOS keeps main-thread CoreMIDI binding), the 3×0.5s main-thread sleep retry loop replaced by retry-on-next-poll-tick, 10s watchdog releases the UI banner if hardware never answers, device-lost and rebind paths close old handlers via `closePort()` to avoid WinMM zombie ports
+- `MidiInWinMM::openPort` failures still occur when a port advertises but can't open (e.g. WIDI dongle with keyboard off) — now they log once per 2s poll tick and bind succeeds automatically when the device becomes openable. If re-plug still fails to bind on some hardware, the remaining suspect is the OS-level port release delay, retried automatically.
 
 ### 6. Numerical Skill Level Tracking
 - **Future Feature**: The UI should display a persistent, numerical skill level score (similar to the onboarding score, rather than the text-based beginner/intermediate tiers we use internally for AI prompting).
