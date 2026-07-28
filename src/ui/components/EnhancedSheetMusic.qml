@@ -22,6 +22,8 @@ Rectangle {
     property string displayMode: "trainer"  // "trainer" or "evaluation"
     property var evalNotes: []               // Array of {pitch, start_beat, duration_beats, hand}
     property real evalBeat: 0                // Current beat position from service
+    property real loopStartBeat: -1.0
+    property real loopEndBeat: -1.0
     property var evalNoteStates: []          // Array of "pending"/"hit"/"miss"
     property real pixelsPerBeat: width * 0.10
     
@@ -231,6 +233,27 @@ Rectangle {
         // Synchronization
         scrollBeat: root.scrollBeat
         evalBeat: root.evalBeat
+        loopStartBeat: root.loopStartBeat
+        loopEndBeat: root.loopEndBeat
+    }
+
+    // 2.5 Tap-to-Seek Mouse Area (active during piece playback)
+    MouseArea {
+        id: tapToSeekArea
+        anchors.fill: parent
+        z: 500
+        enabled: typeof appState !== "undefined" && appState !== null && appState.playback && appState.playback.isPlaying
+        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+
+        onClicked: (mouse) => {
+            if (appState && appState.playback) {
+                var currentBeat = appState.playback.playbackBeat;
+                var clickBeat = currentBeat + (mouse.x - root.noteStartX) / root.pixelsPerBeat;
+                if (clickBeat >= 0) {
+                    appState.playback.seek(clickBeat);
+                }
+            }
+        }
     }
 
     // 3. Playhead Line (Green) — remains for scrolling/evaluation modes

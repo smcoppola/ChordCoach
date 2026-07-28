@@ -1,6 +1,16 @@
 # Phase 5 — Library Management UX
 
-**Size: M. Dependencies: Phase 1 (`source_hash`, `source_copy`, `import_file`). May be executed before Phases 3/4 for earlier visible wins. Read `00-README.md` first.**
+**Size: M. Dependencies: Phase 1 (shipped 2026-07-27 — `source_hash`, `source_copy`, `import_file`, `importDuplicate` all exist). May be executed before Phases 3/4 for earlier visible wins. Read `00-README.md` first — especially the Editing discipline section.**
+
+## ⚠️ Rework guardrails (binding — `music21_service.py` has already been destroyed once)
+
+During Phase 1 an agent regenerated `music21_service.py` from scratch and deleted the entire catalog API, breaking the app's song browser; a repair pass restored it. This phase adds slots to that same file — the risk of a repeat is highest here.
+
+- **Add-only in `music21_service.py`.** New slots (`get_user_songs`, `rename_user_song`, `delete_user_song`, `find_duplicates`) are appended; existing methods are not restructured, reordered, or "cleaned up".
+- **Must survive** (grep after editing; all must exist with unchanged behavior): `get_catalog_level`, `search_catalog`, `get_recent_songs`, `get_catalog`, `_flatten_catalog`, `mark_song_played`, `_load_catalog` (reads `music21_catalog.json` — never any other filename), `_load_recents`, `_save_recents`, `import_file`, `import_midi_file`, `_do_import_midi`, `_do_import_musicxml`, `_finalize_import`, `SIMPLIFY_LEVELS` (min_gap/rh_notes/lh_notes/rh_span/lh_span shape), `_simplify_groups`, `_apply_hand_mode`, `_rebuild_user_song_record`, `request_song_level`, `_regenerate_level_steps`, and the `_level_cache` invalidation block inside `set_user_song_hand_mode`. `tests/test_catalog_and_pickup.py` enforces a subset — run the canonical suite.
+- **Wire everything:** LibraryView must be reachable from the sidebar/dashboard and every card action must call a real slot by phase end.
+- **Test hygiene:** all library-ops tests use the existing `tmp_user_songs_dir` fixture in `tests/conftest.py`.
+- Line numbers in the Current-state section below predate Phase 1's reorganization of `music21_service.py` — grep for symbols.
 
 ## Mission
 
@@ -13,11 +23,12 @@ Give the app a real library surface: a dedicated `LibraryView` screen with drag-
 **DashboardView.qml (1,397 lines)** contains: 4 action cards (Daily Lesson, Quick Review, Specific Drill, Free Play); the `songPicker` Popup (~:719) — breadcrumb catalog browser over `music21Service.get_catalog_level(path)` (Difficulty → Style → Composer → Song), search via `search_catalog` (~:280 in the service), Recent Songs rail (`get_recent_songs`), IMPORT button + `FileDialog` (~:706); the `difficultyPicker` Popup (~:563) for `user::` songs (Original + Levels 4–1, hand-mode chips calling `set_user_song_hand_mode`); `requestSongWithDifficulty(songId)` (~:32) branches catalog-direct vs user-song-dialog.
 
 **Service facts (`src/logic/services/music21_service.py`):**
-- Imported songs live in `_user_songs` (scanned at startup by `_load_user_songs` ~:631 from `<user_data>/database/user_songs/*.json`), surfaced as a virtual **"My Songs"** category injected at catalog root (`get_catalog_level` ~:206, ~:243) and merged into search + recents.
-- **`userSongsChanged` is emitted (~:676) but no QML listens to it** — the picker model only refreshes on popup reopen.
-- No rename, no delete, no metadata editing exists anywhere.
-- Phase 1 added: `source_hash` per record, source copies under `user_songs/sources/`, `import_file` slot (multi-format), `importDuplicate` signal.
-- Import worker rejects concurrent imports (~:659) — queued sequential imports are the caller's job.
+- Imported songs live in `_user_songs` (scanned at startup by `_load_user_songs` from `<user_data>/database/user_songs/*.json`); since Phase 1 each in-memory entry carries `id, title, artist, level, source_hash`. Surfaced as a virtual **"My Songs"** category injected at catalog root (`get_catalog_level`) and merged into search + recents.
+- **`userSongsChanged` is emitted but no QML listens to it** — the picker model only refreshes on popup reopen.
+- No rename, no delete, no metadata editing exists anywhere. A `get_user_songs` slot existed briefly during Phase 1 and was **removed** — it does not exist; create it per this brief.
+- Phase 1 added: `source_hash` per record, source copies under `user_songs/sources/`, `import_file` slot (multi-format, with SHA-1 duplicate check emitting `importDuplicate`), `request_song_level` async level regeneration with `_level_cache`.
+- Import worker rejects concurrent imports — queued sequential imports are the caller's job.
+- Punch-list items from `00-README.md` that land in this file: `_on_simplify_failed` must clear the QML spinner; `delete_user_song`'s source-copy sweep should also handle pre-existing orphans in `sources/`.
 
 **Mastery data:** `songs` table in `src/logic/services/database_manager.py` (`filepath, title, last_played, play_count, mastery_score`), written by `record_song_play` — populated from Phase 4 onward (shows 0/absent before that; the UI must tolerate missing rows).
 

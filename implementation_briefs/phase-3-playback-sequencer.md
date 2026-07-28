@@ -1,6 +1,14 @@
 # Phase 3 — Piece Playback Sequencer
 
-**Size: M. Dependencies: Phase 1 (per-note `durations[]`/`velocities[]`, `tempo_map`, `time_signatures`, `pedal_events`). Read `00-README.md` first.**
+**Size: M. Dependencies: Phase 1 (shipped 2026-07-27 — per-note `durations[]`/`velocities[]`, `tempo_map`, `time_signatures`, `pedal_events` are guaranteed present on every loaded song via `step_schema.migrate_record` normalization). Read `00-README.md` first — especially the Editing discipline section.**
+
+## Rework guardrails (binding)
+
+- `PlaybackService` and `PlaybackBar.qml` are **new files** — the existing files you touch (`midi_hardware_service.py`, `chord_trainer.py`, `ChordTrainerView.qml`, `EnhancedSheetMusic.qml`, `app.py`) take only additive, surgical edits. Never regenerate any of them.
+- **Must survive** (grep after editing): in `midi_hardware_service.py` — `LowLevelMidiOutput`, `_safe_bulk_send`, `_cmdBulkSend`, `play_chord_preview`, `play_metronome_tick`, `play_startup_riff`, `play_happy_tone`, `play_sad_tone`, `play_reconnect_ping`; in `chord_trainer.py` — `_check_chord`, `_complete_chord`, `_advance_song_chord`, `handle_midi_note` (gains only the suppression early-return), `_ignore_midi_until`.
+- **Wire everything:** the PlaybackBar must be visible and functional in song mode by phase end; `PlaybackService` must be registered in `AppState` and driven by the bar — a service with no UI caller is an incomplete phase.
+- **Async UI contract:** any loading/busy state the bar sets must clear on failure paths too (see the Phase 1 punch-list item about `_on_simplify_failed` for the anti-pattern).
+- `music21_service.py` line numbers cited anywhere are stale after Phase 1's reorganization — grep for symbols.
 
 ## Mission
 

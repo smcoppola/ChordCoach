@@ -547,6 +547,12 @@ Rectangle {
                 Item { Layout.fillWidth: true } // spacer
             }
 
+            // Piece Playback Sequencer Toolbar (Song Mode)
+            Components.PlaybackBar {
+                isSongMode: root.exerciseType === "song_application" || root.exerciseType === "song"
+                baseBpm: 120.0
+            }
+
             // Sheet Music Pane
             Item {
                 Layout.fillWidth: true
@@ -556,6 +562,11 @@ Rectangle {
                     id: sheetMusicPane
                     anchors.fill: parent
                     targetChordName: root.currentTarget
+                    
+                    // Dynamic playhead binding: use playbackBeat during playback, chordTrainer.scrollBeat otherwise
+                    evalBeat: (appState && appState.playback && appState.playback.isPlaying) ? appState.playback.playbackBeat : (appState && appState.chordTrainer ? appState.chordTrainer.scrollBeat : 0.0)
+                    loopStartBeat: appState && appState.playback ? appState.playback.loopStartBeat : -1.0
+                    loopEndBeat: appState && appState.playback ? appState.playback.loopEndBeat : -1.0
                     
                     // Subtle dimming if a mistake is currently being held
                     opacity: (appState && appState.chordTrainer && appState.chordTrainer.mistakeActive) ? 0.85 : 1.0

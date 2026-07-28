@@ -577,8 +577,12 @@ Rectangle {
             var baseId = pendingSongId;
             appState.music21Service.mark_song_played(baseId);
             songPicker.isLoadingSong = true;
-            appState.music21Service.songRequested(
-                level > 0 ? baseId + "::L" + level : baseId);
+            if (level > 0 && typeof appState.music21Service.request_song_level === "function") {
+                appState.music21Service.request_song_level(baseId + "::L" + level);
+            } else {
+                appState.music21Service.songRequested(
+                    level > 0 ? baseId + "::L" + level : baseId);
+            }
             difficultyPicker.close();
         }
 

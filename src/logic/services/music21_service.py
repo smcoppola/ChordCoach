@@ -106,11 +106,12 @@ class Music21Service(QObject):
     importDuplicate = Signal(str, str)   # existing_song_id, existing_title
 
     USER_SONG_PREFIX = "user::"
+
     SIMPLIFY_LEVELS = {
-        1: {"note_cap": 2, "max_span": 7, "prob": 0.9},
-        2: {"note_cap": 3, "max_span": 10, "prob": 0.75},
-        3: {"note_cap": 4, "max_span": 12, "prob": 0.5},
-        4: {"note_cap": 5, "max_span": 14, "prob": 0.25},
+        1: {"min_gap": 1.0,  "rh_notes": 2, "lh_notes": 1, "rh_span": 7,  "lh_span": 0},
+        2: {"min_gap": 0.5,  "rh_notes": 3, "lh_notes": 1, "rh_span": 9,  "lh_span": 0},
+        3: {"min_gap": 0.5,  "rh_notes": 4, "lh_notes": 2, "rh_span": 12, "lh_span": 7},
+        4: {"min_gap": 0.25, "rh_notes": 5, "lh_notes": 3, "rh_span": 14, "lh_span": 12},
     }
 
     def __init__(self, project_root=None):
@@ -170,7 +171,10 @@ class Music21Service(QObject):
 
     def _on_download_finished(self, success: bool):
         if success:
+            from logic.utils.corpus_manager import CorpusManager
+            CorpusManager.configure_environment()
             self._corpus_ready = True
+            self._corpus_status = "Corpus Ready"
             self.corpusReady.emit()
             self._load_catalog()
         else:
@@ -183,6 +187,136 @@ class Music21Service(QObject):
             self._corpus_ready = True
         else:
             print("Music21Service: Core corpus not found locally.")
+
+    def _load_catalog(self):
+        cat_file = get_user_data_dir() / "database" / "music21_catalog.json"
+        if not cat_file.exists():
+            if self._project_root:
+                cat_file = Path(self._project_root) / "database" / "music21_catalog.json"
+            else:
+                cat_file = Path(__file__).parent.parent.parent.parent / "database" / "music21_catalog.json"
+        try:
+            if cat_file.exists():
+                with open(cat_file, "r") as f:
+                    self._catalog = json.load(f)
+                self._flat_catalog = self._flatten_catalog(self._catalog)
+                print(f"Music21Service: Loaded hierarchical catalog with {len(self._flat_catalog)} tracks from {cat_file}")
+            else:
+                print(f"Music21Service: Catalog file not found at {cat_file}")
+                self._catalog = {}
+                self._flat_catalog = []
+        except Exception as e:
+            print(f"Music21Service: Error loading catalog from {cat_file}: {e}")
+            self._catalog = {}
+            self._flat_catalog = []
+
+    def _flatten_catalog(self, node):
+        songs = []
+        if isinstance(node, list):
+            for item in node:
+                if isinstance(item, dict):
+                    if item.get("isCategory") and "children" in item:
+                        songs.extend(self._flatten_catalog(item["children"]))
+                    else:
+                        songs.append(item)
+        elif isinstance(node, dict):
+            for v in node.values():
+                songs.extend(self._flatten_catalog(v))
+        return songs
+
+    @Slot(list, result="QVariantList")
+    def get_catalog_level(self, path):
+        if path and path[0] == "My Songs":
+            return list(reversed(self._user_songs))
+
+        node = self._catalog
+        for segment in path:
+            if isinstance(node, dict) and segment in node:
+                node = node[segment]
+            elif isinstance(node, list):
+                found = False
+                for item in node:
+                    if isinstance(item, dict) and item.get("id") == segment:
+                        node = item.get("children", [])
+                        found = True
+                        break
+                if not found:
+                    return []
+            else:
+                return []
+
+        if isinstance(node, list):
+            return node
+
+        if isinstance(node, dict):
+            def natural_sort_key(s):
+                return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+
+            if len(path) == 0:
+                keys = sorted(node.keys(), key=natural_sort_key)
+            else:
+                keys = sorted(node.keys())
+            entries = [{"id": k, "isCategory": True} for k in keys]
+            if len(path) == 0 and self._user_songs:
+                entries.insert(0, {"id": "My Songs", "isCategory": True})
+            return entries
+
+        return []
+
+    def _load_recents(self):
+        try:
+            p = get_user_data_dir() / "database" / "recent_songs.json"
+            if p.exists():
+                with open(p, "r") as f:
+                    self._recent_songs = json.load(f)
+        except Exception:
+            self._recent_songs = []
+
+    def _save_recents(self):
+        try:
+            p = get_user_data_dir() / "database" / "recent_songs.json"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w") as f:
+                json.dump(self._recent_songs, f)
+        except Exception:
+            pass
+
+    @Slot(result="QVariantList")
+    def get_recent_songs(self):
+        res = []
+        lookup = {s['id']: s for s in self._flat_catalog}
+        lookup.update({s['id']: s for s in self._user_songs})
+        for sid in self._recent_songs:
+            if sid in lookup:
+                res.append(lookup[sid])
+        return res[:5]
+
+    @Slot(str, result="QVariantList")
+    def search_catalog(self, query):
+        if not query or len(query) < 2:
+            return []
+        q = query.lower()
+        matches = []
+        for song in self._user_songs + self._flat_catalog:
+            title = song.get("title", "").lower()
+            artist = song.get("artist", "").lower()
+            if q in title or q in artist:
+                matches.append(song)
+            if len(matches) >= 50:
+                break
+        return matches
+
+    @Slot(str)
+    def mark_song_played(self, song_id):
+        if song_id in self._recent_songs:
+            self._recent_songs.remove(song_id)
+        self._recent_songs.insert(0, song_id)
+        self._recent_songs = self._recent_songs[:10]
+        self._save_recents()
+
+    @Slot(result="QVariantList")
+    def get_catalog(self):
+        return self.get_catalog_level([])
 
     def _user_songs_dir(self) -> Path:
         p = get_user_data_dir() / "database" / "user_songs"
@@ -216,7 +350,6 @@ class Music21Service(QObject):
             from PySide6.QtCore import QUrl
             path = QUrl(file_url).toLocalFile()
 
-        # Duplicate check
         try:
             with open(path, "rb") as f:
                 src_bytes = f.read()
@@ -253,7 +386,6 @@ class Music21Service(QObject):
 
     @Slot(str)
     def request_song_level(self, song_id: str):
-        """Asynchronously regenerates steps for requested difficulty level."""
         if song_id in self._level_cache:
             self.songRequested.emit(song_id)
             return
@@ -291,24 +423,51 @@ class Music21Service(QObject):
                     tune_index = None
 
             print(f"Music21Service: Loading '{piece_name}'" + (f" (Tune {tune_index})" if tune_index else "") + "...")
-            if tune_index is not None:
-                score_or_opus = corpus.parse(piece_name)
-                if hasattr(score_or_opus, 'scores') and score_or_opus.scores:
-                    score = score_or_opus.scores[tune_index]
-                elif isinstance(score_or_opus, stream.Opus):
-                    score = score_or_opus[tune_index]
+            score = corpus.parse(piece_name)
+
+            if isinstance(score, stream.Opus):
+                if tune_index is not None:
+                    try:
+                        score = score.getScoreByNumber(tune_index)
+                    except Exception:
+                        score = score[0]
                 else:
-                    score = score_or_opus
-            else:
-                score = corpus.parse(piece_name)
+                    score = score[0]
+
+            if not isinstance(score, (stream.Score, stream.Part, stream.Stream)):
+                for el in score:
+                    if isinstance(el, (stream.Score, stream.Part, stream.Stream)):
+                        score = el
+                        break
 
             title = "Unknown Piece"
             composer = "Unknown Composer"
-            if hasattr(score, 'metadata') and score.metadata:
-                if score.metadata.title:
-                    title = score.metadata.title
-                if score.metadata.composer:
-                    composer = score.metadata.composer
+
+            flat_lookup = {}
+            def build_lookup(node):
+                if isinstance(node, list):
+                    for item in node:
+                        if isinstance(item, dict):
+                            if item.get("isCategory") and "children" in item:
+                                build_lookup(item["children"])
+                            else:
+                                flat_lookup[item["id"]] = item
+                elif isinstance(node, dict):
+                    for v in node.values():
+                        build_lookup(v)
+            build_lookup(self._catalog)
+
+            full_id = f"{piece_name}::{tune_index}" if tune_index else piece_name
+            if full_id in flat_lookup:
+                title = flat_lookup[full_id]['title']
+                composer = flat_lookup[full_id].get('artist', "Unknown Composer")
+            else:
+                if hasattr(score, 'metadata') and score.metadata:
+                    title = (score.metadata.title or
+                             score.metadata.movementName or
+                             score.metadata.workTitle or
+                             "Unknown Piece")
+                    composer = (score.metadata.composer or "Unknown Composer")
 
             if title == "Unknown Piece" or ".mxl" in title.lower() or ".xml" in title.lower():
                 title = os.path.basename(piece_name).replace(".mxl", "").replace(".xml", "").replace(".abc", "").replace(".krn", "").replace("_", " ").title()
@@ -522,12 +681,45 @@ class Music21Service(QObject):
         sorted_offsets = sorted(offset_map.keys())
         steps = []
         for off in sorted_offsets:
-            step_obj = offset_map[off]
-            step_obj['offset'] = off
-            steps.append(step_obj)
+            step_data = offset_map[off]
+            paired = sorted(list(zip(
+                step_data['pitches'],
+                step_data['spellings'],
+                step_data['hands'],
+                step_data['fingers'],
+                step_data['durations'],
+                step_data['ties'],
+                step_data['beams'],
+                step_data['tuplets'],
+                step_data['articulations'],
+                step_data['velocities']
+            )), key=lambda x: x[0])
 
-        max_off = round(sorted_offsets[-1] + offset_map[sorted_offsets[-1]]['duration'], 4) if sorted_offsets else 0.0
-        barlines = compute_barlines(time_signatures, max_off)
+            steps.append({
+                'offset': off,
+                'pitches': [p[0] for p in paired],
+                'spellings': [p[1] for p in paired],
+                'hands': [p[2] for p in paired],
+                'fingers': [p[3] for p in paired],
+                'durations': [p[4] for p in paired],
+                'duration': max([p[4] for p in paired]) if paired else step_data['duration'],
+                'ties': [p[5] for p in paired],
+                'beams': [p[6] for p in paired],
+                'tuplets': [p[7] for p in paired],
+                'articulations': [p[8] for p in paired],
+                'velocities': [p[9] for p in paired],
+                'rests': step_data['rests']
+            })
+
+        barlines_set = set()
+        for part_obj in all_parts:
+            for m in part_obj.getElementsByClass(music21.stream.Measure):
+                if float(m.offset) > 0:
+                    barlines_set.add(float(m.offset))
+        barlines = sorted(list(barlines_set))
+        if not barlines:
+            max_off = round(sorted_offsets[-1] + offset_map[sorted_offsets[-1]]['duration'], 4) if sorted_offsets else 0.0
+            barlines = compute_barlines(time_signatures, max_off)
 
         extra_meta = {
             "time_signatures": time_signatures,
@@ -698,7 +890,6 @@ class Music21Service(QObject):
             p_rh.insert(0, meter.TimeSignature('4/4'))
             p_lh.insert(0, meter.TimeSignature('4/4'))
 
-        # Add key signatures
         try:
             ks = m21key.KeySignature(key_sharps)
             p_rh.insert(0, ks)
@@ -843,16 +1034,46 @@ class Music21Service(QObject):
         self._level_cache[song_id] = res
         return res
 
-    def _simplify_groups(self, groups: list, level: int) -> list:
+    def _simplify_groups(self, groups, level: int):
         cfg = self.SIMPLIFY_LEVELS.get(level)
         if not cfg:
             return groups
-        out = []
+        min_gap = cfg["min_gap"]
+
+        def aligned(off):
+            return abs(off / min_gap - round(off / min_gap)) < 1e-6
+
+        kept = [dict(g) for g in groups if aligned(g["offset"])]
+        kept_offsets = {g["offset"] for g in kept}
         for g in groups:
-            notes = g["notes"]
-            if len(notes) > cfg["note_cap"]:
-                notes = sorted(notes, key=lambda n: n[0], reverse=True)[:cfg["note_cap"]]
-            out.append({"offset": g["offset"], "duration": g["duration"], "notes": notes})
+            if aligned(g["offset"]):
+                continue
+            slot = round(g["offset"] / min_gap) * min_gap
+            if slot >= 0 and slot not in kept_offsets:
+                moved = dict(g)
+                moved["offset"] = slot
+                kept.append(moved)
+                kept_offsets.add(slot)
+        kept.sort(key=lambda g: g["offset"])
+
+        out = []
+        for g in kept:
+            rh = sorted(p for p, h in g["notes"] if h == "right")
+            lh = sorted(p for p, h in g["notes"] if h == "left")
+            notes = []
+            if rh:
+                top = rh[-1]
+                within = [p for p in rh if top - p <= cfg["rh_span"]]
+                notes += [(p, "right") for p in within[-int(cfg["rh_notes"]):]]
+            if lh:
+                bottom = lh[0]
+                if cfg["lh_span"] > 0:
+                    within = [p for p in lh if p - bottom <= cfg["lh_span"]]
+                else:
+                    within = [bottom]
+                notes += [(p, "left") for p in within[:int(cfg["lh_notes"])]]
+            if notes:
+                out.append({"offset": g["offset"], "duration": g["duration"], "notes": notes})
         return out
 
     def _user_song_path(self, song_id: str):
@@ -928,50 +1149,13 @@ class Music21Service(QObject):
             record["hand_mode"] = mode
             record = self._rebuild_user_song_record(record)
             self._save_user_song_record(record)
+
+            # Invalidate level cache for this song
+            base_id = song_id.rsplit("::L", 1)[0] if "::L" in song_id else song_id
+            keys_to_del = [k for k in self._level_cache if k == base_id or k.startswith(base_id + "::L")]
+            for k in keys_to_del:
+                self._level_cache.pop(k, None)
+
             print(f"Music21Service: Hand mode for '{record.get('title')}' set to '{mode}'")
         except Exception as e:
             print(f"Music21Service: Failed to set hand mode: {e}")
-
-    # Catalog & search helper methods
-    def _load_catalog(self):
-        try:
-            cat_file = get_user_data_dir() / "database" / "repertoire_catalog.json"
-            if cat_file.exists():
-                with open(cat_file, "r") as f:
-                    self._catalog = json.load(f)
-            else:
-                self._catalog = {}
-        except Exception as e:
-            print(f"Music21Service: Error loading repertoire catalog: {e}")
-            self._catalog = {}
-
-    def _load_recents(self):
-        try:
-            rec_file = get_user_data_dir() / "database" / "recent_songs.json"
-            if rec_file.exists():
-                with open(rec_file, "r") as f:
-                    self._recent_songs = json.load(f)
-            else:
-                self._recent_songs = []
-        except Exception as e:
-            print(f"Music21Service: Error loading recents: {e}")
-            self._recent_songs = []
-
-    @Slot(str)
-    def mark_song_played(self, song_id: str):
-        if song_id in self._recent_songs:
-            self._recent_songs.remove(song_id)
-        self._recent_songs.insert(0, song_id)
-        if len(self._recent_songs) > 10:
-            self._recent_songs = self._recent_songs[:10]
-        try:
-            rec_file = get_user_data_dir() / "database" / "recent_songs.json"
-            rec_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(rec_file, "w") as f:
-                json.dump(self._recent_songs, f)
-        except Exception as e:
-            print(f"Music21Service: Error saving recents: {e}")
-
-    @Slot(result="QVariantList")
-    def get_user_songs(self):
-        return self._user_songs

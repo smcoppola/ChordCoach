@@ -73,6 +73,7 @@ from logic.services.curriculum_service import CurriculumService # type: ignore
 from logic.services.metronome_service import MetronomeService # type: ignore
 from logic.services.circle_of_fifths_service import CircleOfFifthsService # type: ignore
 from logic.services.music21_service import Music21Service # type: ignore
+from logic.services.playback_service import PlaybackService # type: ignore
 from logic.coordinators.app_coordinator import AppCoordinator # type: ignore
 from ui.notation_view import NotationView
 
@@ -129,6 +130,10 @@ class AppState(QObject):
             
         self.hw_service = MidiHardwareService(chordcoach_hw, ll_lib_file, midi_out_enabled=bool(self.settings.midiOutEnabled)) # type: ignore
         self.hw_service.setParent(self)
+        
+        self.playback_service = PlaybackService(self.hw_service)
+        self.playback_service.setParent(self)
+        self.chord_trainer.set_playback_service(self.playback_service)
         
         self.coordinator = AppCoordinator(
             self._gemini, 
@@ -268,6 +273,10 @@ class AppState(QObject):
     @Property(QObject, constant=True)
     def music21Service(self):
         return self.music21_service
+
+    @Property(QObject, constant=True)
+    def playback(self):
+        return self.playback_service
             
     @Slot(str)
     def fetch_song(self, query: str):

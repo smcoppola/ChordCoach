@@ -1,8 +1,14 @@
 # Phase 2 — Measure-Aware Notation
 
-**Size: L. Dependencies: Phase 1 (schema v2 fields). Read `00-README.md` first.**
+**Size: L. Dependencies: Phase 1 (shipped 2026-07-27). Read `00-README.md` first — especially the Editing discipline section.**
 
 ⚠️ This phase is **visual QPainter geometry work**. Unit tests cannot validate most of it — the human acceptance pass at the end is the real gate. Budget iteration time with the app running.
+
+## Rework guardrails (binding)
+
+- **Do not regenerate `notation_view.py` or `chord_trainer.py`** — they are 1,100+ and ~3,000+ lines respectively; every change here is a surgical edit. A diff that rewrites either file wholesale fails review.
+- **Must survive** (grep after editing; all must exist with unchanged behavior): in `notation_view.py` — `_get_layout_for_notes`, `_render_scrolling_array`, `_render_stems`, `_render_ledgers`, `_draw_enhanced_note`, `_draw_enhanced_rest`, `_draw_traditional_note`, `_draw_key_signature`, `_draw_staff_lines`, `_blend_to_black`, `_stem_done`, `_get_accidental_from_spelling`, `_get_smufl_family`, the `evalNoteStates` coloring branch and its `displayMode == "evaluation"` gate; in `chord_trainer.py` — everything (only `_setup_song_target` gains item-injection lines).
+- **Wire everything:** `_duration_to_glyph` must actually replace the old threshold chains at both call sites, not sit beside them; the culling index must be used by `_render_scrolling_array`, not merely built.
 
 ## Mission
 
@@ -26,7 +32,11 @@ Add time signatures, dotted notes, tuplets, and dynamics to the existing custom 
 
 **Latent bug:** `_draw_traditional_note` (~:1051) calls `_get_accidental_from_spelling(pitch, None)` — hardcoded `None` discards the real spelling that is already present in `sn` (chord_trainer ~:1554), so enharmonics can get a wrong accidental glyph despite correct vertical placement.
 
-**Phase 1 gave you** (via schema v2, always present after normalization): song-level `time_signatures[]`, `dynamics[]`, `tempo_map[]`; per-step parallel `durations[]`, `tuplets[]`, `articulations[]`. `step_schema.compute_barlines(time_signatures, end_beat)` exists and is tested.
+**Phase 1 shipped — updated facts (2026-07-27):**
+- `Music21Service.load_song_as_steps` / `_load_user_song_steps` return `step_schema.migrate_record`-normalized v2 dicts, so `song_data["time_signatures"]`, `["tempo_map"]`, `["dynamics"]` are **guaranteed present** (defaults injected for old data). Per-step parallel arrays `durations[]`, `tuplets[]`, `articulations[]`, `velocities[]` are guaranteed and **pitch-sorted ascending** along with all other parallel arrays.
+- `_extract_steps_from_score` now returns a 3-tuple `(steps, barlines, extra_meta)`; `barlines` are measure-derived from the score with `step_schema.compute_barlines` as fallback (pickup measures correct — covered by `tests/test_catalog_and_pickup.py::test_pickup_measure_barlines`).
+- `music21_service.py` was heavily reorganized in Phase 1 — its line numbers in this brief's Current-state section are stale; grep for symbols.
+- `tests/conftest.py` provides the `tmp_user_songs_dir` fixture — use it for any test touching user songs.
 
 ## Tasks (in order)
 

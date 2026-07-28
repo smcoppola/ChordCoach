@@ -136,6 +136,11 @@ class ChordTrainerService(QObject):
         self._dominant_motion_hesitation_timer.setSingleShot(True)
         self._dominant_motion_hesitation_timer.setInterval(3000)  # 3 seconds
         self._dominant_motion_hesitation_timer.timeout.connect(self._dominant_motion_hint)
+        self._playback_service = None
+
+    def set_playback_service(self, playback_service):
+        """Inject PlaybackService reference for song loading and input suppression."""
+        self._playback_service = playback_service
 
         # V→I pairs: (V_key, I_key, V_root_idx, I_root_idx, shared_note)
         # shared_note = the 5th of I chord = root of V chord
@@ -1511,6 +1516,14 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self.songKeyChanged.emit()
         self.songKeySharpsChanged.emit()
         self.songComposerChanged.emit()
+
+        if self._playback_service:
+            self._playback_service.load(
+                steps=self._song_steps,
+                tempo_map=song_data.get("tempo_map", []),
+                time_signatures=song_data.get("time_signatures", []),
+                pedal_events=song_data.get("pedal_events", [])
+            )
         
         self._song_index = 0
         self._target_hold_ms = 0
@@ -1541,6 +1554,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 ties = step.get('ties', [None] * len(pitches))
                 beams = step.get('beams', [None] * len(pitches))
                 spellings = step.get('spellings', [None] * len(pitches))
+                durations = step.get('durations', [duration] * len(pitches))
+                tuplets = step.get('tuplets', [None] * len(pitches))
                 
                 for i, p in enumerate(pitches):
                     hand_tag = hands[i] if i < len(hands) else "right"
@@ -1548,6 +1563,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                     t_val = ties[i] if i < len(ties) else None
                     b_val = beams[i] if i < len(beams) else None
                     s_val = spellings[i] if i < len(spellings) else None
+                    d_val = durations[i] if i < len(durations) else duration
+                    tuplet_val = tuplets[i] if i < len(tuplets) else None
                     
                     sn.append({
                         "pitch": p,
@@ -1557,11 +1574,42 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                         "tie": t_val,
                         "beam": b_val,
                         "start_beat": float(offset),
-                        "duration_beats": float(duration)
+                        "duration_beats": float(d_val),
+                        "tuplet": tuplet_val
                     })
 
-        # 3. Barlines
+        # 3. Time Signatures
+        time_sigs = song_data.get("time_signatures", [])
+        for ts in time_sigs:
+            sn.append({
+                "is_time_sig": True,
+                "start_beat": float(ts.get("offset", 0.0)),
+                "numerator": int(ts.get("numerator", 4)),
+                "denominator": int(ts.get("denominator", 4))
+            })
+
+        # 4. Dynamics
+        dynamics = song_data.get("dynamics", [])
+        for d in dynamics:
+            sn.append({
+                "is_dynamic": True,
+                "start_beat": float(d.get("offset", 0.0)),
+                "mark": str(d.get("mark", "p")),
+                "hand": "R" if d.get("hand") == "right" else "L"
+            })
+
+        # Compute song end beat for barlines fallback
+        if self._song_steps:
+            last = max(self._song_steps, key=lambda s: float(s['offset']) + float(s['duration']))
+            self._song_end_beat = float(last['offset']) + float(last['duration'])
+        else:
+            self._song_end_beat = 0.0
+
+        # 5. Barlines
         barlines = song_data.get("barlines", [])
+        if not barlines and time_sigs:
+            from logic.utils.step_schema import compute_barlines
+            barlines = compute_barlines(time_sigs, self._song_end_beat)
         for b in barlines:
             sn.append({
                 "is_barline": True,
@@ -1570,7 +1618,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             })
 
         # Ensure purely deterministic timeline ordering
-        sn.sort(key=lambda x: (x.get("start_beat", 0.0), bool(x.get("is_barline", False))))
+        sn.sort(key=lambda x: (x.get("start_beat", 0.0), not bool(x.get("is_time_sig", False)), not bool(x.get("is_dynamic", False)), not bool(x.get("is_barline", False)), x.get("pitch", 0)))
 
         self._scrolling_notes = sn
         self.scrollingNotesChanged.emit()
@@ -2348,6 +2396,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         # If it's a Note On, respect the ignore window (loopback prevention)
         if is_on and time.time() < self._ignore_midi_until:
             return
+
+        # Playback Sequencer demo/duet input suppression
+        if is_on and self._playback_service and self._playback_service.isPlaying:
+            if self._playback_service.handFilter == "both":
+                return
+            elif self._playback_service.was_just_sent(pitch, 80.0):
+                return
 
         if is_on:
             self._active_pitches.add(pitch)

@@ -5,7 +5,7 @@ from logic.services.music21_service import Music21Service
 FIXTURES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures"))
 
 
-def test_do_import_musicxml():
+def test_do_import_musicxml(tmp_user_songs_dir):
     xml_path = os.path.join(FIXTURES_DIR, "waltz_34.musicxml")
     service = Music21Service()
 
@@ -23,9 +23,13 @@ def test_do_import_musicxml():
 
     # Step 0 checks
     s0 = steps[0]
-    assert s0["durations"][0] == 1.5
-    # Native fingering preserved
-    assert s0["fingers"][0] == 3
+    # Step parallel arrays are sorted by pitch ascending: pitch 72 (RH C5, dur 1.5) and pitch 48 (LH C3, dur 3.0)
+    assert 72 in s0["pitches"]
+    rh_idx = s0["pitches"].index(72)
+    assert s0["durations"][rh_idx] == 1.5
+
+    # Native fingering preserved on RH note
+    assert s0["fingers"][rh_idx] == 3
 
     # Dynamic extracted
     assert any(d["mark"] == "p" for d in record.get("dynamics", []))

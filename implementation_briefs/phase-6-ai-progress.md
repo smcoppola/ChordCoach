@@ -1,6 +1,13 @@
 # Phase 6 — AI + Progress Integration
 
-**Size: S–M. Dependencies: Phase 4 (mastery data), Phase 5 (nice-to-have for surfacing). Read `00-README.md` first.**
+**Size: S–M. Dependencies: Phase 4 (mastery data), Phase 5 (nice-to-have for surfacing). Read `00-README.md` first — especially the Editing discipline section.**
+
+## Rework guardrails (binding)
+
+- **Prompt/description strings only in `gemini_service.py`.** This phase edits exactly two description strings and one system-prompt line — the tool declaration block's structure, the three tool names, `NON_BLOCKING` behavior, and everything else in that file are untouched. Do not regenerate the file.
+- **Must survive** (grep after editing): in `gemini_service.py` — the three tool declarations `set_exercise` / `end_lesson` / `update_theory_visual` and the `coach_context` injection; in `curriculum_service.py` — `plan_session` (unchanged), `get_curriculum_context` (gains an appended section only); in `curriculum_tracks.json` — every existing milestone field (`suggested_pieces` is additive; all other milestones must parse unchanged).
+- **Wire everything:** `reviewQueueCount` must be a real notifiable Property that the existing QML binding picks up; the library context section must demonstrably appear in the logged prompt.
+- **Status note:** the `song_application` enum fix landed in Phase 1 and was verified present after the repair pass — the "verify; fix if skipped" instruction below is satisfied; just confirm it survived.
 
 ## Mission
 

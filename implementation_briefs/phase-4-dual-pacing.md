@@ -6,6 +6,14 @@
 
 **Self-paced play is the product's core interaction and must not regress in any way.** In self-paced mode the piece advances only when the user plays the correct notes — no clock, no timing pressure. It is the default for every song the user has never played, permanently. Rhythm mode is **opt-in per song**. If any change in this phase alters self-paced behavior, the change is wrong.
 
+## Rework guardrails (binding — this phase is the highest refactor-risk of the roadmap)
+
+- **Extract by MOVING code, not re-deriving it.** `RhythmEngine` must be built by relocating `EvaluationService`'s existing timer/window/state code and renaming references — not by writing a fresh engine that "does the same thing". Phase 1 failed review because an agent re-derived a file from scratch and silently changed shipped behavior; the delegation refactor here is exactly the same trap. After the refactor, `evaluation_service.py`'s diff should be mostly deletions of moved code plus a thin adapter — if its public surface changed at all, the change is wrong.
+- **Must survive** (grep after editing): in `evaluation_service.py` — its entire public QML contract: every existing Signal, Property, and Slot name, plus `sequences.json` loading and the level ladder / thresholds; in `chord_trainer.py` — `_check_chord`, `_complete_chord`, `_advance_song_chord`, `mistakeActive`, and the entire self-paced code path byte-for-byte (the mode gate routes AROUND it, never through it).
+- **Wire everything:** the mode toggle must actually start/stop the engine; `songNoteStates` must reach the renderer; `record_song_play` must be called on completion. No dead machinery.
+- **Cache/state invalidation:** engine state must fully reset on mode switch, song change, and loop wrap — enumerate the reset sites in your self-review.
+- Use `tmp_user_songs_dir` (in `tests/conftest.py`) for any test touching user songs; mock the DB for mastery tests. `music21_service.py` line numbers in briefs are stale after Phase 1 — grep for symbols.
+
 ## Mission
 
 1. Extract `EvaluationService`'s proven beat-clock/hit-window engine into a reusable `RhythmEngine`.
