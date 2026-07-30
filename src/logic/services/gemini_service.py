@@ -287,6 +287,7 @@ class GeminiService(QObject):
                 "CRITICAL RULES FOR EXERCISE GENERATION:\n"
                 "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME. (Note: A 'progression' exercise containing multiple chords counts as a single exercise. Use 'progression' for ANY chord transition drills).\n"
                 "- If the curriculum requires 'song_application', you MUST use the `song_application` exercise_type and provide a `piece_name` (e.g. 'bach/bwv1.6.mxl').\n"
+                "- For repertoire milestones, prefer pieces from the STUDENT'S SONG LIBRARY at or slightly below the student's level; fall back to a corpus piece only if the library has nothing suitable.\n"
                 "- DO NOT use parallel function calling to dispense the entire block at once.\n"
                 "- Always wait for me to report the student's performance before giving the next step.\n"
                 "- For 'exercise_name', provide a descriptive name for the specific drill you are giving (e.g., \"C Major Root Position\"), NOT the name of the entire lesson block.\n"
@@ -428,7 +429,7 @@ class GeminiService(QObject):
                                     },
                                     "piece_name": {
                                         "type": "STRING",
-                                        "description": "For song_application exercises: music21 corpus identifier, e.g. 'bach/bwv1.6.mxl' or 'essenFolksong/erk5'"
+                                        "description": "For song_application exercises: a music21 corpus identifier (e.g. 'bach/bwv1.6.mxl' or 'essenFolksong/erk5') OR a user-library id starting with 'user::' taken EXACTLY from the Student's Song Library list in your context. Never invent user:: ids."
                                     }
                                 },
                                 "required": ["exercise_type", "exercise_name", "track", "milestone_id"]

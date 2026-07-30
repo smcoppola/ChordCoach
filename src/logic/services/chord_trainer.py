@@ -709,7 +709,7 @@ INSTRUCTIONS:
 6. You MUST REMAIN COMPLETELY SILENT between exercises of the SAME type. Do NOT provide any micro-affirmations or commentary. Just call `set_exercise` immediately.
 7. Only speak longer sentences when introducing a NEW exercise type FOR THE FIRST TIME, giving feedback on significant struggles, or ending.
 
-Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal
+Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal, song_application
 Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
 
 Start the lesson now by calling set_exercise and speaking.
@@ -805,7 +805,7 @@ INSTRUCTIONS:
 6. You MUST REMAIN COMPLETELY SILENT between exercises of the SAME type. Do NOT provide any micro-affirmations or commentary. Just call `set_exercise` immediately.
 7. Only speak longer sentences when giving feedback on significant struggles, or ending.
 
-Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal
+Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal, song_application
 Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
 
 Start the lesson now by calling set_exercise and speaking.

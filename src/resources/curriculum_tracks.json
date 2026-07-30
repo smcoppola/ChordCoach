@@ -380,7 +380,12 @@
                 "F Major"
             ],
             "min_attempts_to_advance": 8,
-            "min_accuracy_to_advance": 0.80
+            "min_accuracy_to_advance": 0.80,
+            "suggested_pieces": [
+                "essenFolksong/erk5.abc::7",
+                "airdsAirs/book1.abc::13",
+                "airdsAirs/book1.abc::12"
+            ]
         },
         {
             "id": "song_breakdown_intro",
@@ -394,7 +399,12 @@
             "target_keys": [],
             "target_chords": [],
             "min_attempts_to_advance": 3,
-            "min_accuracy_to_advance": 0.70
+            "min_accuracy_to_advance": 0.70,
+            "suggested_pieces": [
+                "essenFolksong/erk5.abc::6",
+                "airdsAirs/book1.abc::4",
+                "essenFolksong/altdeu10.abc::2"
+            ]
         },
         {
             "id": "dream_song_prep",
@@ -408,7 +418,12 @@
             "target_keys": [],
             "target_chords": [],
             "min_attempts_to_advance": 10,
-            "min_accuracy_to_advance": 0.70
+            "min_accuracy_to_advance": 0.70,
+            "suggested_pieces": [
+                "oneills1850/0001-0050.abc::2",
+                "oneills1850/0001-0050.abc::3",
+                "bach/bwv1.6.mxl"
+            ]
         }
     ],
     "ear": [

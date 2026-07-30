@@ -14,11 +14,18 @@ from PySide6.QtCore import QObject, Property, Signal, Slot  # type: ignore
 class CurriculumService(QObject):
     curriculumChanged = Signal()
     sessionPlanReady = Signal()
+    reviewQueueChanged = Signal()
 
-    def __init__(self, db_manager, resources_dir: Path):
+    # Keeps the coach prompt from ballooning as the library grows
+    MAX_LIBRARY_LINES = 20
+    MAX_RECENT_CORPUS = 5
+    MAX_TITLE_CHARS = 40
+
+    def __init__(self, db_manager, resources_dir: Path, music21_service=None):
         super().__init__()
         self.db = db_manager
         self._resources_dir = resources_dir
+        self.music21 = music21_service
         self._tracks_data: dict = {}
         self._session_plan: dict = {}
         self._session_start_time: float = 0.0
@@ -26,10 +33,12 @@ class CurriculumService(QObject):
         self._session_milestones: list = []
         self._session_exercises: int = 0
         self._session_successes: int = 0
+        self._review_queue_count: int = 0
 
         # Load track definitions and initialize DB
         self._load_tracks()
         self.db.initialize_curriculum(self._tracks_data)
+        self._refresh_review_queue()
 
     # ── Initialization ────────────────────────────────────────────────
 
@@ -174,7 +183,12 @@ class CurriculumService(QObject):
                 meta = self._get_milestone_meta(ms["track_name"], ms["milestone_id"])
                 title = meta.get("title", ms["milestone_id"]) if meta else ms["milestone_id"]
                 acc = f"{ms['successes']}/{ms['attempts']}" if ms["attempts"] > 0 else "not started"
-                context += f"- [{ms['track_name'].capitalize()}] {title} ({acc})\n"
+                context += f"- [{ms['track_name'].capitalize()}] {title} ({acc})"
+                # Optional per-milestone piece bindings; most milestones have none
+                suggested = (meta or {}).get("suggested_pieces") or []
+                if suggested:
+                    context += f" — suggested pieces: {', '.join(str(p) for p in suggested)}"
+                context += "\n"
 
         # Add recent session history
         recent = self.db.get_recent_sessions(limit=3)
@@ -192,7 +206,49 @@ class CurriculumService(QObject):
                     
                 context += f"- {date_str}: {tracks}, accuracy {acc}, {s.get('exercises_completed', 0)} exercises\n"
 
+        context += self._build_library_section()
+
         return context
+
+    def _build_library_section(self) -> str:
+        """
+        The student's own (imported) songs, so the coach can assign them for
+        repertoire work instead of guessing at corpus identifiers.
+        """
+        section = "\nSTUDENT'S SONG LIBRARY (assignable via song_application piece_name):\n"
+
+        summaries = []
+        recent_corpus = []
+        if self.music21 is not None:
+            try:
+                summaries = self.music21.get_user_song_summaries() or []
+            except Exception as e:
+                print(f"CurriculumService: Could not read the song library: {e}")
+            try:
+                recent_corpus = self.music21.get_recent_corpus_ids(self.MAX_RECENT_CORPUS) or []
+            except Exception as e:
+                print(f"CurriculumService: Could not read recent corpus songs: {e}")
+
+        if not summaries:
+            section += "(none yet)\n"
+        else:
+            # Already sorted in-progress → unplayed → mastered by the service
+            for song in summaries[:self.MAX_LIBRARY_LINES]:
+                title = str(song.get("title", "Untitled"))
+                if len(title) > self.MAX_TITLE_CHARS:
+                    title = title[:self.MAX_TITLE_CHARS - 1].rstrip() + "…"
+                grade = int(song.get("grade", 0) or 0)
+                grade_str = f"Grade {grade}" if grade else "ungraded"
+                mastery = int(round(float(song.get("mastery", 0.0) or 0.0)))
+                last = str(song.get("last_played") or "")
+                last_str = f", last played {last[:10]}" if last else ", never played"
+                section += (f"- {song.get('id', '')} — \"{title}\" "
+                            f"({grade_str}, mastery {mastery}%{last_str})\n")
+
+        if recent_corpus:
+            section += f"Recently played corpus pieces: {', '.join(str(c) for c in recent_corpus)}\n"
+
+        return section
 
     # ── Exercise Completion Tracking ──────────────────────────────────
 
@@ -266,6 +322,7 @@ class CurriculumService(QObject):
         self._session_exercises = 0
         self._session_successes = 0
         self.curriculumChanged.emit()
+        self._refresh_review_queue()
 
     # ── QML Properties ────────────────────────────────────────────────
 
@@ -319,6 +376,31 @@ class CurriculumService(QObject):
     @Property(list, notify=curriculumChanged)
     def recentSessions(self) -> list:
         return self.db.get_recent_sessions(limit=5)
+
+    @Property(int, notify=reviewQueueChanged)
+    def reviewQueueCount(self) -> int:
+        """Started songs that have gone 48h+ without a play. Derived, never stored."""
+        self._review_queue_count = self._compute_review_queue()
+        return self._review_queue_count
+
+    @Slot()
+    def refreshReviewQueue(self):
+        """Recomputes the review count (after a practice session, or on demand)."""
+        self._refresh_review_queue()
+
+    def _compute_review_queue(self) -> int:
+        try:
+            return int(self.db.count_songs_due_for_review(decay_hours=48))
+        except Exception as e:
+            print(f"CurriculumService: Review queue lookup failed: {e}")
+            return 0
+
+    def _refresh_review_queue(self):
+        """Recompute and, if the number moved, tell QML to re-read the property."""
+        count = self._compute_review_queue()
+        if count != self._review_queue_count:
+            self._review_queue_count = count
+            self.reviewQueueChanged.emit()
 
     @Property(dict, notify=sessionPlanReady)
     def currentSessionPlan(self) -> dict:
@@ -374,3 +456,4 @@ class CurriculumService(QObject):
         """Force a refresh of curriculum state (e.g. after settings reset)."""
         self.db.initialize_curriculum(self._tracks_data)
         self.curriculumChanged.emit()
+        self._refresh_review_queue()

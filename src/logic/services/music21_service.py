@@ -297,6 +297,12 @@ class Music21Service(QObject):
                 res.append(lookup[sid])
         return res[:5]
 
+    def get_recent_corpus_ids(self, limit: int = 5) -> list:
+        """Recently played corpus pieces (imported songs excluded), newest first."""
+        ids = [sid for sid in self._recent_songs
+               if not str(sid).startswith(self.USER_SONG_PREFIX)]
+        return ids[:limit]
+
     @Slot(str, result="QVariantList")
     def search_catalog(self, query):
         if not query or len(query) < 2:
@@ -425,7 +431,13 @@ class Music21Service(QObject):
             return self._level_cache[piece_name]
 
         if piece_name.startswith(self.USER_SONG_PREFIX):
-            return self._load_user_song_steps(piece_name)
+            try:
+                return self._load_user_song_steps(piece_name)
+            except Exception as e:
+                # A hallucinated / deleted user:: id must fail the same way a bad
+                # corpus id does — an empty error record the caller can recover from.
+                print(f"Music21Service: Error loading user song {piece_name}: {e}")
+                return {"steps": [], "title": "Error", "key": "Direct Error"}
 
         try:
             tune_index = None
@@ -1295,6 +1307,57 @@ class Music21Service(QObject):
             })
         songs.sort(key=lambda s: str(s["title"]).lower())
         return songs
+
+    @Slot(result="QVariantList")
+    def get_user_song_summaries(self):
+        """
+        Compact library listing for the AI coach context and the dashboard strip.
+
+        Each entry is {id, title, grade, mastery, last_played}. `grade` is the
+        numeric part of the "Grade N" level string (0 when unknown) and mastery
+        is 0 for songs the student has never played.
+
+        Sorted so the interesting songs come first: in progress (mastery 1-79),
+        then never played, then mastered — each group by descending mastery and
+        then title, so the order is stable.
+        """
+        masteries = {}
+        if self._db is not None and self._user_songs:
+            try:
+                masteries = self._db.get_song_masteries([s["id"] for s in self._user_songs])
+            except Exception as e:
+                print(f"Music21Service: Mastery lookup failed: {e}")
+
+        summaries = []
+        for entry in self._user_songs:
+            stats = masteries.get(entry["id"], {})
+            mastery = float(stats.get("mastery", 0.0) or 0.0)
+            summaries.append({
+                "id": entry["id"],
+                "title": entry.get("title", "Untitled"),
+                "grade": self._grade_number(entry.get("level", "")),
+                "mastery": mastery,
+                "last_played": stats.get("last_played") or "",
+            })
+
+        def rank(s):
+            m = s["mastery"]
+            if m >= 80:
+                group = 2          # mastered — least in need of attention
+            elif m >= 1:
+                group = 0          # in progress
+            else:
+                group = 1          # never played
+            return (group, -m, str(s["title"]).lower())
+
+        summaries.sort(key=rank)
+        return summaries
+
+    @staticmethod
+    def _grade_number(level: str) -> int:
+        """Pulls N out of a 'Grade N' level string; 0 when there isn't one."""
+        match = re.search(r"Grade\s+(\d+)", str(level or ""))
+        return int(match.group(1)) if match else 0
 
     @Slot(str, str, str)
     def rename_user_song(self, song_id: str, title: str, artist: str):

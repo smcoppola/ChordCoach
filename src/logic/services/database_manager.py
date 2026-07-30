@@ -409,6 +409,32 @@ class DatabaseManager:
             
         return decayed_chords
 
+    def count_songs_due_for_review(self, decay_hours: int = 48) -> int:
+        """
+        How many started songs have gone stale — same selection as the song half
+        of calculate_skill_decay, but read-only: it never writes a decayed score.
+        """
+        cutoff_time = (datetime.now() - timedelta(hours=decay_hours)).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT filepath, mastery_score, last_played FROM songs
+                WHERE last_played IS NOT NULL AND mastery_score > 0
+            ''')
+            rows = cursor.fetchall()
+
+        # Difficulty variants (`<id>::L<n>`) are rows of their own; collapse them
+        # so one library song counts once, using its most recent play.
+        by_song: dict = {}
+        for filepath, mastery, last_played in rows:
+            base = str(filepath).split("::L")[0]
+            agg = by_song.setdefault(base, {"mastery": 0.0, "last_played": ""})
+            agg["mastery"] = max(agg["mastery"], float(mastery or 0.0))
+            agg["last_played"] = max(agg["last_played"], str(last_played))
+
+        return sum(1 for agg in by_song.values()
+                   if agg["mastery"] > 0 and agg["last_played"] < cutoff_time)
+
     def reset_all_stats(self):
         """Clear all chord statistics and curriculum state."""
         with self._get_connection() as conn:

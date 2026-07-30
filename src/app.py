@@ -101,15 +101,20 @@ class AppState(QObject):
         self._circle_of_fifths.setParent(self)
         
         self.crawler = RepertoireCrawler()
-        self.curriculum = CurriculumService(self.db, project_root / "src" / "resources")
-        self.curriculum.setParent(self)
-        
-        self._metronome = MetronomeService()
-        self._metronome.setParent(self)
-        
+
         self.music21_service = Music21Service(project_root)
         self.music21_service.setParent(self)
-        
+
+        # The coach context lists the student's imported songs, so the curriculum
+        # needs the library service to build it.
+        self.curriculum = CurriculumService(
+            self.db, project_root / "src" / "resources", self.music21_service
+        )
+        self.curriculum.setParent(self)
+
+        self._metronome = MetronomeService()
+        self._metronome.setParent(self)
+
         self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings, self.music21_service)
         self.chord_trainer.set_metronome(self._metronome)
         self.chord_trainer.setParent(self)

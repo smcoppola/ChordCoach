@@ -198,6 +198,128 @@ Rectangle {
             }
         }
 
+        // ── Repertoire (imported pieces already in progress) ──
+        ColumnLayout {
+            id: repertoireStrip
+
+            // Top 3 in-progress pieces (mastery 1-79), newest progress first
+            property var pieces: []
+
+            function refresh() {
+                var out = [];
+                if (typeof appState !== "undefined" && appState !== null && appState.music21Service) {
+                    var all = appState.music21Service.get_user_song_summaries();
+                    for (var i = 0; i < all.length && out.length < 3; ++i) {
+                        var m = all[i].mastery;
+                        if (m >= 1 && m < 80)
+                            out.push(all[i]);
+                    }
+                }
+                pieces = out;
+                // Mastery and staleness move together — keep the review count honest
+                if (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine)
+                    appState.curriculumEngine.refreshReviewQueue();
+            }
+
+            Component.onCompleted: refresh()
+
+            Connections {
+                target: (typeof appState !== "undefined" && appState !== null) ? appState.music21Service : null
+                function onUserSongsChanged() { repertoireStrip.refresh(); }
+            }
+
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignHCenter
+            Layout.maximumWidth: 800 * mainWindow.uiScale
+            spacing: 16 * mainWindow.uiScale
+            visible: pieces.length > 0
+
+            Rectangle { Layout.fillWidth: true; height: Math.max(1, 1 * mainWindow.uiScale); color: "#2a2a2a" }
+
+            Text {
+                text: "REPERTOIRE"
+                font.pixelSize: 12 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+                color: "#666666"
+            }
+
+            Flow {
+                Layout.fillWidth: true
+                spacing: 16 * mainWindow.uiScale
+
+                Repeater {
+                    model: repertoireStrip.pieces
+
+                    delegate: Rectangle {
+                        width: 250 * mainWindow.uiScale
+                        height: 90 * mainWindow.uiScale
+                        color: "#1c1c1e"
+                        radius: 12 * mainWindow.uiScale
+                        border.color: repertoireMouse.containsMouse ? "#FFC107" : "#333333"
+                        border.width: repertoireMouse.containsMouse ? (2 * mainWindow.uiScale) : Math.max(1, 1 * mainWindow.uiScale)
+
+                        Behavior on border.color { ColorAnimation { duration: 200 } }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 16 * mainWindow.uiScale
+                            spacing: 8 * mainWindow.uiScale
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: modelData.grade > 0
+                                          ? ("GRADE " + modelData.grade) : "IMPORTED"
+                                    color: root.getColorForGrade("Grade " + modelData.grade)
+                                    font.pixelSize: 10 * mainWindow.uiScale
+                                    font.bold: true
+                                }
+                                Item { Layout.fillWidth: true }
+                                Text {
+                                    text: Math.round(modelData.mastery) + "%"
+                                    color: "#888888"
+                                    font.pixelSize: 10 * mainWindow.uiScale
+                                }
+                            }
+
+                            Text {
+                                text: modelData.title || ""
+                                color: "#ffffff"
+                                font.pixelSize: 14 * mainWindow.uiScale
+                                font.bold: true
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 4 * mainWindow.uiScale
+                                radius: 2 * mainWindow.uiScale
+                                color: "#333333"
+
+                                Rectangle {
+                                    width: parent.width * Math.max(0, Math.min(1, modelData.mastery / 100))
+                                    height: parent.height
+                                    radius: 2 * mainWindow.uiScale
+                                    color: "#FFC107"
+                                    Behavior on width { NumberAnimation { duration: 300 } }
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            id: repertoireMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.requestSongWithDifficulty(modelData.id)
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Curriculum Progress ──
         ColumnLayout {
             Layout.fillWidth: true

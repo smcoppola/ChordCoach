@@ -30,7 +30,7 @@ Song selection flows through a global signal relay: `Music21Service.songRequeste
 | 3 | `phase-3-playback-sequencer.md` | Piece playback, tempo scale, A/B loop, hand filter, metronome | M | 1 | ✅ Code complete 2026-07-27 (four defects fixed post-review; **human gates pending — this phase's value is audible, so the manual pass is mandatory**) |
 | 4 | `phase-4-dual-pacing.md` | Opt-in rhythm scoring beside untouched self-paced play; mastery recording | L | 1 (better after 3) | ✅ Code complete 2026-07-30 (human gates pending — **gate 1, the self-paced regression, and gate 6, onboarding end-to-end, are the mandatory ones**) |
 | 5 | `phase-5-library-view.md` | Library screen: drag-and-drop, rename/delete, dedupe UI | M | 1 (may run before 3/4) | ✅ Code complete 2026-07-30 (human gates pending — **gates 2/3, the drag-and-drop import strip, and gate 6, delete refusal during practice, are the mandatory ones**) |
-| 6 | `phase-6-ai-progress.md` | Gemini library awareness, repertoire binding, mastery surfacing | S–M | 4, 5 | Pending |
+| 6 | `phase-6-ai-progress.md` | Gemini library awareness, repertoire binding, mastery surfacing | S–M | 4, 5 | ✅ Code complete 2026-07-30 (human gates pending — **gate 1, the library section in the logged prompt, and gate 2, the AI assigning a library piece, are the mandatory ones**) |
 
 Phase 7 (Verovio-based print-quality sheet view, fed by the source copies Phase 1 stores) is future work — no brief exists; do not attempt it.
 
@@ -51,7 +51,7 @@ Phase 1 was first implemented by **regenerating `music21_service.py` from scratc
 1. **One phase per working session.** Do not start a phase until the previous one's acceptance gates have passed.
 2. **Line numbers are hints, not addresses.** Briefs cite symbols with approximate line numbers from a July 2026 snapshot (and `music21_service.py` shifted substantially in Phase 1). Always locate code by searching for the symbol name; never edit by line number alone.
 3. **Write the phase's unit tests first.** All specified tests are pure Python (no Qt event loop needed) and are the objective completion gate. Run the **canonical suite** and append your phase's files to it:
-   `python -m pytest tests/test_step_schema.py tests/test_midi_ingestor.py tests/test_simplify.py tests/test_musicxml_import.py tests/test_catalog_and_pickup.py tests/test_playback_compile.py tests/test_rhythm_engine.py tests/test_evaluation_regression.py tests/test_mastery.py tests/test_library_ops.py -q`
+   `python -m pytest tests/test_step_schema.py tests/test_midi_ingestor.py tests/test_simplify.py tests/test_musicxml_import.py tests/test_catalog_and_pickup.py tests/test_playback_compile.py tests/test_rhythm_engine.py tests/test_evaluation_regression.py tests/test_mastery.py tests/test_library_ops.py tests/test_ai_context.py -q`
    Do **not** run bare `pytest tests/` — three legacy files (`test_lesson_timing.py`, `test_full_lesson_timing.py`, `test_onboarding_flow.py`) fail at collection on a pre-existing PySide6 stub issue unrelated to this work.
 4. **Human acceptance gates are mandatory.** Each brief ends with manual checks a human performs by running `python src/app.py`. The phase is not done until a human signs off — especially Phase 2, whose output is visual.
 5. **Respect every "Do NOT touch" list.** These protect working behavior (the self-paced play path, onboarding evaluation, v1 saved-song compatibility, corpus loading).
@@ -73,6 +73,10 @@ Consult Gemini 3.1 Pro only as a second opinion on a stuck design puzzle — its
 ## Carry-over punch list
 
 Small known issues, none blocking. Fold each into whichever later session next touches the relevant file.
+
+From Phase 6:
+
+- The "Recently played corpus pieces" line in the coach context comes from `Music21Service._recent_songs`, which only `mark_song_played` writes — and the AI's own `song_application` path (`ChordTrainer._setup_song_target`) never calls it. Pieces the coach assigns therefore never show up as "recent". Fold a `mark_song_played` call into `_setup_song_target` whenever that file is next touched.
 
 From Phase 4:
 
