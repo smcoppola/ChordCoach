@@ -42,6 +42,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             onOpenSettings: mainWindow.showSettings = true
             onGoHome: centerWorkspace.goHome()
+            onOpenLibrary: centerWorkspace.showLibrary()
             onOpenOnboarding: {
                 onboardingOverlay.show();
             }

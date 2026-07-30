@@ -21,6 +21,10 @@ Rectangle {
         }
         workspaceStack.replace(dashboardComponent);
     }
+
+    function showLibrary() {
+        workspaceStack.replace(libraryComponent);
+    }
     // ── Watch for isCircleOfFifthsMode changes to route automatically ──────
 
     // ── Watch for isCircleOfFifthsMode changes to route automatically ──────
@@ -85,6 +89,18 @@ Rectangle {
             }
             onFreePractice: {
                 workspaceStack.replace(trainerViewComponent);
+            }
+            onOpenLibrary: {
+                workspaceStack.replace(libraryComponent);
+            }
+        }
+    }
+
+    Component {
+        id: libraryComponent
+        LibraryView {
+            onReturnToDashboard: {
+                workspaceStack.replace(dashboardComponent);
             }
         }
     }

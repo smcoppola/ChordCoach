@@ -104,6 +104,7 @@ class Music21Service(QObject):
     importSucceeded = Signal(str)       # song_id
     importFailed = Signal(str)          # error message
     importDuplicate = Signal(str, str)   # existing_song_id, existing_title
+    songLevelFailed = Signal(str)        # error message (async level generation)
 
     USER_SONG_PREFIX = "user::"
 
@@ -132,9 +133,14 @@ class Music21Service(QObject):
         self._simplify_worker = None
         self._level_cache = {}
 
+        # Set by AppState after construction (see set_database / set_chord_trainer)
+        self._db = None
+        self._chord_trainer = None
+
         self._setup_local_corpus()
         self._load_catalog()
         self._load_recents()
+        print(f"Music21Service: User songs directory = {self._user_songs_dir()}")
         self._load_user_songs()
 
     @Property(float, notify=corpusProgressChanged)
@@ -338,6 +344,13 @@ class Music21Service(QObject):
                         "artist": rec.get("artist", "Imported Song"),
                         "level": rec.get("level", "Imported"),
                         "source_hash": rec.get("source_hash"),
+                        # Light metadata for the library view, cached here so
+                        # get_user_songs() never has to re-read the (large) records.
+                        "key": rec.get("key", ""),
+                        "source_type": rec.get("source_type", ""),
+                        "hand_mode": rec.get("hand_mode", "auto"),
+                        "practice_mode": rec.get("practice_mode", "self_paced"),
+                        "imported_at": rec.get("imported_at", ""),
                     })
             except Exception as e:
                 print(f"Music21Service: Error reading user song {json_path}: {e}")
@@ -404,6 +417,8 @@ class Music21Service(QObject):
 
     def _on_simplify_failed(self, error: str):
         print(f"Music21Service: Async level generation failed: {error}")
+        # QML sets a loading spinner when requesting a level — clear it on failure too.
+        self.songLevelFailed.emit(error)
 
     def load_song_as_steps(self, piece_name: str) -> dict:
         if piece_name in self._level_cache:
@@ -855,6 +870,13 @@ class Music21Service(QObject):
             "artist": record["artist"],
             "level": record["level"],
             "source_hash": record.get("source_hash"),
+            # Same light metadata _load_user_songs caches, so a freshly imported
+            # song shows complete details in the library without a reload.
+            "key": record.get("key", ""),
+            "source_type": record.get("source_type", ""),
+            "hand_mode": record.get("hand_mode", "auto"),
+            "practice_mode": record.get("practice_mode", "self_paced"),
+            "imported_at": record.get("imported_at", ""),
         }
         print(f"Music21Service: Imported '{record['title']}' as {song_id} ({len(record['steps'])} steps)")
         return song_id, entry
@@ -1152,6 +1174,8 @@ class Music21Service(QObject):
                 return
             record[key] = value
             self._save_user_song_record(record)
+            if key in ("practice_mode", "practice_hands"):
+                self._update_user_song_entry(song_id, **{key: value})
             print(f"Music21Service: Pref '{key}' for '{record.get('title')}' set to '{value}'")
         except Exception as e:
             print(f"Music21Service: Failed to set pref '{key}': {e}")
@@ -1187,6 +1211,177 @@ class Music21Service(QObject):
             for k in keys_to_del:
                 self._level_cache.pop(k, None)
 
+            self._update_user_song_entry(song_id, hand_mode=mode)
             print(f"Music21Service: Hand mode for '{record.get('title')}' set to '{mode}'")
         except Exception as e:
             print(f"Music21Service: Failed to set hand mode: {e}")
+
+    # ── Phase 5: library management ──────────────────────────────────
+
+    def set_database(self, db):
+        """AppState hands the DatabaseManager over so the library can show mastery."""
+        self._db = db
+
+    def set_chord_trainer(self, trainer):
+        """Back-reference to ChordTrainerService, used to protect the song in play."""
+        self._chord_trainer = trainer
+
+    def _base_song_id(self, song_id: str) -> str:
+        """Strips the `::L<n>` difficulty suffix; ids themselves are never renamed."""
+        return song_id.rsplit("::L", 1)[0] if "::L" in song_id else song_id
+
+    def _update_user_song_entry(self, song_id: str, **fields):
+        """Keeps the light in-memory catalog entry in sync with the JSON record."""
+        base_id = self._base_song_id(song_id)
+        for entry in self._user_songs:
+            if entry.get("id") == base_id:
+                entry.update(fields)
+                return entry
+        return None
+
+    def _invalidate_level_cache(self, song_id: str):
+        base_id = self._base_song_id(song_id)
+        for k in [k for k in self._level_cache if k == base_id or k.startswith(base_id + "::L")]:
+            self._level_cache.pop(k, None)
+
+    def _sweep_orphan_sources(self):
+        """
+        Deletes archived source copies no remaining record references.
+
+        Covers both the copy freed by the delete that triggered this sweep and
+        orphans left behind before source copies were reference-counted.
+        """
+        sources_dir = self._user_songs_dir() / "sources"
+        if not sources_dir.is_dir():
+            return
+        referenced = {s.get("source_hash") for s in self._user_songs if s.get("source_hash")}
+        for src in sources_dir.iterdir():
+            if not src.is_file():
+                continue
+            if src.stem not in referenced:
+                try:
+                    src.unlink()
+                    print(f"Music21Service: Removed orphaned source copy {src.name}")
+                except Exception as e:
+                    print(f"Music21Service: Could not remove source copy {src.name}: {e}")
+
+    @Slot(result="QVariantList")
+    def get_user_songs(self):
+        """Full library listing for LibraryView, with mastery joined in one query."""
+        masteries = {}
+        if self._db is not None and self._user_songs:
+            try:
+                masteries = self._db.get_song_masteries([s["id"] for s in self._user_songs])
+            except Exception as e:
+                print(f"Music21Service: Mastery lookup failed: {e}")
+
+        songs = []
+        for entry in self._user_songs:
+            stats = masteries.get(entry["id"], {})
+            songs.append({
+                "id": entry["id"],
+                "title": entry.get("title", "Untitled"),
+                "artist": entry.get("artist", ""),
+                "level": entry.get("level", "Imported"),
+                "key": entry.get("key", ""),
+                "imported_at": entry.get("imported_at", ""),
+                "source_type": entry.get("source_type", ""),
+                "source_hash": entry.get("source_hash") or "",
+                "hand_mode": entry.get("hand_mode", "auto"),
+                "practice_mode": entry.get("practice_mode", "self_paced"),
+                "mastery": float(stats.get("mastery", 0.0)),
+                "play_count": int(stats.get("play_count", 0)),
+                "last_played": stats.get("last_played") or "",
+            })
+        songs.sort(key=lambda s: str(s["title"]).lower())
+        return songs
+
+    @Slot(str, str, str)
+    def rename_user_song(self, song_id: str, title: str, artist: str):
+        """Retitles an imported song. The id (and therefore its levels) never changes."""
+        title = (title or "").strip()
+        artist = (artist or "").strip()
+        if not title:
+            print("Music21Service: Refusing to rename a song to an empty title")
+            return
+        try:
+            with open(self._user_song_path(song_id), "r") as f:
+                record = json.load(f)
+            record["title"] = title
+            if artist:
+                record["artist"] = artist
+            self._save_user_song_record(record)
+
+            # Cached level steps carry the old title with them
+            self._invalidate_level_cache(song_id)
+            self._update_user_song_entry(song_id, title=title, artist=record.get("artist", ""))
+            self.userSongsChanged.emit()
+            print(f"Music21Service: Renamed {record.get('id')} to '{title}'")
+        except Exception as e:
+            print(f"Music21Service: Rename failed for {song_id}: {e}")
+
+    @Slot(str, result=str)
+    def delete_user_song(self, song_id: str) -> str:
+        """
+        Deletes an imported song and its now-unreferenced source copy.
+
+        Returns "" on success, or a human-readable reason it was refused.
+        """
+        base_id = self._base_song_id(song_id)
+        entry = next((s for s in self._user_songs if s.get("id") == base_id), None)
+        if entry is None:
+            return "That song is no longer in your library."
+
+        trainer = self._chord_trainer
+        if trainer is not None:
+            try:
+                if bool(trainer.isActive) and self._base_song_id(str(getattr(trainer, "_song_id", "") or "")) == base_id:
+                    return "Stop practising this song before deleting it."
+            except Exception as e:
+                print(f"Music21Service: Could not check the active song: {e}")
+
+        try:
+            path = self._user_song_path(base_id)
+            if path.exists():
+                path.unlink()
+        except Exception as e:
+            print(f"Music21Service: Failed to delete {base_id}: {e}")
+            return f"Could not delete the song file: {e}"
+
+        self._user_songs = [s for s in self._user_songs if s.get("id") != base_id]
+        self._invalidate_level_cache(base_id)
+        # Reference-counted: the sweep only removes copies nothing points at any more
+        self._sweep_orphan_sources()
+        self.userSongsChanged.emit()
+        print(f"Music21Service: Deleted user song {base_id} ('{entry.get('title')}')")
+        return ""
+
+    @Slot(result="QVariantList")
+    def find_duplicates(self):
+        """
+        Groups library records that share a source file (same SHA-1).
+
+        New imports are blocked by the check in import_file; this exists to clean
+        up copies made before that landed.
+        """
+        by_hash = {}
+        for entry in self._user_songs:
+            src_hash = entry.get("source_hash")
+            if not src_hash:
+                continue
+            by_hash.setdefault(src_hash, []).append({
+                "id": entry["id"],
+                "title": entry.get("title", "Untitled"),
+                "artist": entry.get("artist", ""),
+                "level": entry.get("level", "Imported"),
+                "imported_at": entry.get("imported_at", ""),
+            })
+
+        groups = []
+        for src_hash, songs in by_hash.items():
+            if len(songs) < 2:
+                continue
+            songs.sort(key=lambda s: str(s.get("imported_at", "")))
+            groups.append({"source_hash": src_hash, "count": len(songs), "songs": songs})
+        groups.sort(key=lambda g: -g["count"])
+        return groups

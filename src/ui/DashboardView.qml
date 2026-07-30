@@ -3,30 +3,23 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtQuick.Dialogs
 import Qt5Compat.GraphicalEffects
+import "components"
+import "components/grade_colors.js" as GradeColors
 
 Rectangle {
     id: root
     color: "#121212"
-    
+
     function getColorForGrade(level) {
-        if (!level) return "#666666";
-        var match = level.match(/Grade (\d+)/);
-        if (!match) return "#666666";
-        var g = parseInt(match[1]);
-        
-        // Gradient: Green -> Yellow -> Orange -> Red
-        var colors = [
-            "#4CAF50", "#8BC34A", "#CDDC39", "#FFEB3B", "#FFC107",
-            "#FF9800", "#FF5722", "#F44336", "#D32F2F", "#B71C1C"
-        ];
-        return colors[Math.max(0, Math.min(g-1, 9))];
+        return GradeColors.forGrade(level);
     }
-    
+
     signal startLesson(int minutes)
     signal startReview()
     signal freePractice()
     signal startSong(string pieceName)
     signal startSpecificDrill(string track, string milestoneId)
+    signal openLibrary()
 
     // Imported songs get a difficulty chooser; catalog songs load directly
     function requestSongWithDifficulty(songId) {
@@ -148,6 +141,63 @@ Rectangle {
                 }
             }
         }
+
+        // ── Library entry ──
+        Rectangle {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.preferredWidth: 468 * mainWindow.uiScale
+            Layout.preferredHeight: 62 * mainWindow.uiScale
+            color: "#1c1c1e"
+            radius: 12 * mainWindow.uiScale
+            border.color: libraryTileMouse.containsMouse ? "#FFC107" : "#333333"
+            border.width: libraryTileMouse.containsMouse ? (2 * mainWindow.uiScale) : Math.max(1, 1 * mainWindow.uiScale)
+
+            Behavior on border.color { ColorAnimation { duration: 200 } }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 20 * mainWindow.uiScale
+                anchors.rightMargin: 20 * mainWindow.uiScale
+                spacing: 14 * mainWindow.uiScale
+
+                Text {
+                    text: "📚"
+                    font.pixelSize: 24 * mainWindow.uiScale
+                }
+
+                ColumnLayout {
+                    spacing: 1
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Music Library"
+                        color: "#ffffff"
+                        font.pixelSize: 15 * mainWindow.uiScale
+                        font.bold: true
+                    }
+                    Text {
+                        text: "Import, rename and organise your own sheet music."
+                        color: "#888888"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                    }
+                }
+
+                Text {
+                    text: "→"
+                    color: libraryTileMouse.containsMouse ? "#FFC107" : "#444444"
+                    font.pixelSize: 18 * mainWindow.uiScale
+                }
+            }
+
+            MouseArea {
+                id: libraryTileMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.openLibrary()
+            }
+        }
+
         // ── Curriculum Progress ──
         ColumnLayout {
             Layout.fillWidth: true
@@ -559,151 +609,11 @@ Rectangle {
         }
     }
 
-    // ── Difficulty Chooser for Imported Songs ──
-    Popup {
+    // ── Difficulty Chooser for Imported Songs (shared with LibraryView) ──
+    SongDifficultyDialog {
         id: difficultyPicker
         anchors.centerIn: parent
-        width: 340 * mainWindow.uiScale
-        modal: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        property string pendingSongId: ""
-        property string handMode: "auto"
-
-        onOpened: handMode = (!!appState && !!appState.music21Service)
-                  ? appState.music21Service.get_user_song_hand_mode(pendingSongId) : "auto"
-
-        function play(level) {
-            var baseId = pendingSongId;
-            appState.music21Service.mark_song_played(baseId);
-            songPicker.isLoadingSong = true;
-            if (level > 0 && typeof appState.music21Service.request_song_level === "function") {
-                appState.music21Service.request_song_level(baseId + "::L" + level);
-            } else {
-                appState.music21Service.songRequested(
-                    level > 0 ? baseId + "::L" + level : baseId);
-            }
-            difficultyPicker.close();
-        }
-
-        background: Rectangle {
-            color: "#1c1c1e"
-            radius: 12 * mainWindow.uiScale
-            border.color: "#4CAF50"
-        }
-
-        contentItem: ColumnLayout {
-            spacing: 8
-
-            Text {
-                text: "CHOOSE DIFFICULTY"
-                color: "#666666"
-                font.pixelSize: 11 * mainWindow.uiScale
-                font.bold: true
-                font.letterSpacing: 3 * mainWindow.uiScale
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: 8 * mainWindow.uiScale
-            }
-
-            // Hand-assignment override (persists per song)
-            Text {
-                text: "HANDS"
-                color: "#666666"
-                font.pixelSize: 9 * mainWindow.uiScale
-                font.bold: true
-                font.letterSpacing: 2 * mainWindow.uiScale
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 6 * mainWindow.uiScale
-
-                Repeater {
-                    model: [
-                        { mode: "auto",  label: "Auto" },
-                        { mode: "split", label: "Split C4" },
-                        { mode: "right", label: "RH only" },
-                        { mode: "left",  label: "LH only" }
-                    ]
-                    delegate: Rectangle {
-                        property bool isActive: difficultyPicker.handMode === modelData.mode
-                        Layout.preferredWidth: handChipLabel.implicitWidth + 16 * mainWindow.uiScale
-                        Layout.preferredHeight: 24 * mainWindow.uiScale
-                        radius: 12 * mainWindow.uiScale
-                        color: isActive ? "#4CAF5030" : (handChipMouse.containsMouse ? "#333333" : "#2a2a2a")
-                        border.color: isActive ? "#4CAF50" : "#444444"
-
-                        Text {
-                            id: handChipLabel
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            color: isActive ? "#4CAF50" : "#aaaaaa"
-                            font.pixelSize: 10 * mainWindow.uiScale
-                            font.bold: isActive
-                        }
-
-                        MouseArea {
-                            id: handChipMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                difficultyPicker.handMode = modelData.mode;
-                                appState.music21Service.set_user_song_hand_mode(
-                                    difficultyPicker.pendingSongId, modelData.mode);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Repeater {
-                model: [
-                    { level: 0, label: "Original", desc: "No adjustment — play it as imported" },
-                    { level: 4, label: "Level 4", desc: "Light touch: extreme stretches tamed" },
-                    { level: 3, label: "Level 3", desc: "Smaller chords, easier reaches" },
-                    { level: 2, label: "Level 2", desc: "Simple chords, thinned fast runs" },
-                    { level: 1, label: "Level 1", desc: "Simplest: melody + bass, slow pace" }
-                ]
-                delegate: Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 52 * mainWindow.uiScale
-                    Layout.leftMargin: 8 * mainWindow.uiScale
-                    Layout.rightMargin: 8 * mainWindow.uiScale
-                    radius: 8 * mainWindow.uiScale
-                    color: levelMouse.containsMouse ? "#4CAF5020" : "#2a2a2a"
-                    border.color: levelMouse.containsMouse ? "#4CAF50" : "#444444"
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 8 * mainWindow.uiScale
-                        spacing: 2
-                        Text {
-                            text: modelData.label
-                            color: "white"
-                            font.bold: true
-                            font.pixelSize: 13 * mainWindow.uiScale
-                        }
-                        Text {
-                            text: modelData.desc
-                            color: "#888888"
-                            font.pixelSize: 10 * mainWindow.uiScale
-                        }
-                    }
-
-                    MouseArea {
-                        id: levelMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: difficultyPicker.play(modelData.level)
-                    }
-                }
-            }
-
-            Item { Layout.preferredHeight: 4 * mainWindow.uiScale }
-        }
+        onPlayStarted: songPicker.isLoadingSong = true
     }
 
     // ── Music Import File Dialog ──
@@ -765,6 +675,11 @@ Rectangle {
                 songPicker.isLoadingSong = false;
                 songPicker.importError = "'" + existingTitle + "' is already in your library.";
                 root.requestSongWithDifficulty(existingSongId);
+            }
+            // Async level generation failed — clear the spinner instead of hanging on it
+            function onSongLevelFailed(error) {
+                songPicker.isLoadingSong = false;
+                songPicker.importError = "Could not build that difficulty level: " + error;
             }
         }
 
@@ -1083,81 +998,19 @@ Rectangle {
                                 }
                                 return appState.music21Service.get_catalog_level(songPicker.catalogPath);
                             }
-                            delegate: Rectangle {
-                                id: catalogEntry
+                            delegate: SongRow {
+                                entry: modelData
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: (modelData.isCategory ? 50 : 70) * mainWindow.uiScale
-                                radius: 8 * mainWindow.uiScale
-                                color: entryMouse.containsMouse ? "#1a2a3a" : "#2a2a2a"
-                                border.color: entryMouse.containsMouse ? "#2196F3" : "#444444"
-                                border.width: 1
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 12
-                                    spacing: 2
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        Text {
-                                            text: (!!modelData.isCategory ? "📁  " : "🎵  ") + (modelData.title || modelData.id || "")
-                                            color: "#ffffff"
-                                            font.pixelSize: (!!modelData.isCategory ? 16 : 14) * mainWindow.uiScale
-                                            font.bold: true
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideRight
-                                        }
-                                        
-                                        // Item level tag for songs
-                                        Rectangle {
-                                            visible: !modelData.isCategory
-                                            width: 75 * mainWindow.uiScale
-                                            height: 22 * mainWindow.uiScale
-                                            radius: 4 * mainWindow.uiScale
-                                            color: root.getColorForGrade(modelData.level)
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: modelData.level || ""
-                                                color: "white"
-                                                font.pixelSize: 10 * mainWindow.uiScale
-                                                font.bold: true
-                                            }
-                                        }
-                                        
-                                        Text {
-                                            visible: !!modelData.isCategory
-                                            text: "→"
-                                            color: "#444444"
-                                            font.pixelSize: 18 * mainWindow.uiScale
-                                        }
-                                    }
-
-                                    Text {
-                                        visible: !modelData.isCategory
-                                        text: modelData.artist || "Unknown Composer"
-                                        color: "#888888"
-                                        font.pixelSize: 11 * mainWindow.uiScale
-                                        Layout.leftMargin: 26 * mainWindow.uiScale
-                                        Layout.fillWidth: true
-                                        elide: Text.ElideRight
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: entryMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (!!modelData.isCategory) {
-                                            var p = songPicker.catalogPath;
-                                            songPicker.catalogPath = p.concat([modelData.id]);
-                                        } else {
-                                            console.log("Dashboard: Requesting song selection: " + modelData.id);
-                                            if (typeof appState !== "undefined" && appState && appState.music21Service) {
-                                                // Popup stays open — Connections block closes it when loading finishes
-                                                root.requestSongWithDifficulty(modelData.id);
-                                            }
+                                Layout.preferredHeight: implicitHeight
+                                onActivated: {
+                                    if (!!modelData.isCategory) {
+                                        var p = songPicker.catalogPath;
+                                        songPicker.catalogPath = p.concat([modelData.id]);
+                                    } else {
+                                        console.log("Dashboard: Requesting song selection: " + modelData.id);
+                                        if (typeof appState !== "undefined" && appState && appState.music21Service) {
+                                            // Popup stays open — Connections block closes it when loading finishes
+                                            root.requestSongWithDifficulty(modelData.id);
                                         }
                                     }
                                 }

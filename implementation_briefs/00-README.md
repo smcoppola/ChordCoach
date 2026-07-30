@@ -29,7 +29,7 @@ Song selection flows through a global signal relay: `Music21Service.songRequeste
 | 2 | `phase-2-measure-notation.md` | Time signatures, dotted notes, tuplets, dynamics, renderer perf | L | 1 | ✅ Code complete 2026-07-27 (one blocker fixed post-review; human gates pending) |
 | 3 | `phase-3-playback-sequencer.md` | Piece playback, tempo scale, A/B loop, hand filter, metronome | M | 1 | ✅ Code complete 2026-07-27 (four defects fixed post-review; **human gates pending — this phase's value is audible, so the manual pass is mandatory**) |
 | 4 | `phase-4-dual-pacing.md` | Opt-in rhythm scoring beside untouched self-paced play; mastery recording | L | 1 (better after 3) | ✅ Code complete 2026-07-30 (human gates pending — **gate 1, the self-paced regression, and gate 6, onboarding end-to-end, are the mandatory ones**) |
-| 5 | `phase-5-library-view.md` | Library screen: drag-and-drop, rename/delete, dedupe UI | M | 1 (may run before 3/4) | Pending |
+| 5 | `phase-5-library-view.md` | Library screen: drag-and-drop, rename/delete, dedupe UI | M | 1 (may run before 3/4) | ✅ Code complete 2026-07-30 (human gates pending — **gates 2/3, the drag-and-drop import strip, and gate 6, delete refusal during practice, are the mandatory ones**) |
 | 6 | `phase-6-ai-progress.md` | Gemini library awareness, repertoire binding, mastery surfacing | S–M | 4, 5 | Pending |
 
 Phase 7 (Verovio-based print-quality sheet view, fed by the source copies Phase 1 stores) is future work — no brief exists; do not attempt it.
@@ -51,7 +51,7 @@ Phase 1 was first implemented by **regenerating `music21_service.py` from scratc
 1. **One phase per working session.** Do not start a phase until the previous one's acceptance gates have passed.
 2. **Line numbers are hints, not addresses.** Briefs cite symbols with approximate line numbers from a July 2026 snapshot (and `music21_service.py` shifted substantially in Phase 1). Always locate code by searching for the symbol name; never edit by line number alone.
 3. **Write the phase's unit tests first.** All specified tests are pure Python (no Qt event loop needed) and are the objective completion gate. Run the **canonical suite** and append your phase's files to it:
-   `python -m pytest tests/test_step_schema.py tests/test_midi_ingestor.py tests/test_simplify.py tests/test_musicxml_import.py tests/test_catalog_and_pickup.py tests/test_playback_compile.py tests/test_rhythm_engine.py tests/test_evaluation_regression.py tests/test_mastery.py -q`
+   `python -m pytest tests/test_step_schema.py tests/test_midi_ingestor.py tests/test_simplify.py tests/test_musicxml_import.py tests/test_catalog_and_pickup.py tests/test_playback_compile.py tests/test_rhythm_engine.py tests/test_evaluation_regression.py tests/test_mastery.py tests/test_library_ops.py -q`
    Do **not** run bare `pytest tests/` — three legacy files (`test_lesson_timing.py`, `test_full_lesson_timing.py`, `test_onboarding_flow.py`) fail at collection on a pre-existing PySide6 stub issue unrelated to this work.
 4. **Human acceptance gates are mandatory.** Each brief ends with manual checks a human performs by running `python src/app.py`. The phase is not done until a human signs off — especially Phase 2, whose output is visual.
 5. **Respect every "Do NOT touch" list.** These protect working behavior (the self-paced play path, onboarding evaluation, v1 saved-song compatibility, corpus loading).
@@ -86,11 +86,11 @@ From Phase 2 (`notation_view.py`):
 
 From Phase 1:
 
-- `Music21Service._on_simplify_failed` only logs — QML's `isLoadingSong` spinner is never cleared when async level regeneration fails. Emit a failure signal QML can handle. (Any phase touching `music21_service.py` or the picker; latest Phase 5.)
+- ~~`Music21Service._on_simplify_failed` only logs — QML's `isLoadingSong` spinner is never cleared when async level regeneration fails.~~ Fixed in Phase 5: emits `songLevelFailed`, consumed by both DashboardView's picker and LibraryView.
 - `request_song_level` calls `worker.wait()` on the UI thread when a previous regeneration is still running — brief UI freeze on rapid difficulty switching. Queue instead of blocking.
 - `_simplify_groups` is missing the original final transform: stretch each kept note's duration to the next same-hand onset, clamped to [0.25, 4.0]. Simplified levels can sound clipped without it.
 - `tests/test_catalog_and_pickup.py::test_catalog_methods_restored` requires `database/music21_catalog.json` to exist — make it `pytest.skip` cleanly when absent so the suite is portable.
-- Source copies under `user_songs/sources/` can be orphaned when no record references the hash — Phase 5's `delete_user_song` sweep should account for pre-existing orphans too.
+- ~~Source copies under `user_songs/sources/` can be orphaned when no record references the hash.~~ Fixed in Phase 5: `_sweep_orphan_sources` runs on every delete and removes every unreferenced copy, pre-existing ones included.
 
 ## Global regression watch
 

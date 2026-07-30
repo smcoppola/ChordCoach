@@ -113,6 +113,10 @@ class AppState(QObject):
         self.chord_trainer = ChordTrainerService(self.db, self.curriculum, self.settings, self.music21_service)
         self.chord_trainer.set_metronome(self._metronome)
         self.chord_trainer.setParent(self)
+
+        # Library view needs mastery stats and the "song currently in play" guard
+        self.music21_service.set_database(self.db)
+        self.music21_service.set_chord_trainer(self.chord_trainer)
         
         self.evaluation_engine = EvaluationService(self.db, project_root)
         self.evaluation_engine.setParent(self)

@@ -169,6 +169,47 @@ class DatabaseManager:
             
             conn.commit()
 
+    def get_song_masteries(self, ids: list) -> dict:
+        """
+        Bulk mastery lookup keyed by song id, for the library view.
+
+        Plays are recorded per difficulty variant (`<id>::L<n>`), so each
+        requested id also matches its level variants: mastery is the best score
+        across them, play_count the sum and last_played the most recent.
+        Ids with no rows are simply absent from the result, so callers can treat
+        a missing key as "never played".
+        """
+        wanted = [str(i) for i in (ids or []) if i]
+        if not wanted:
+            return {}
+
+        placeholders = ",".join("?" * len(wanted))
+        like_clauses = " OR ".join(["filepath LIKE ?"] * len(wanted))
+        params = wanted + [f"{i}::L%" for i in wanted]
+
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                SELECT filepath, mastery_score, play_count, last_played
+                FROM songs
+                WHERE filepath IN ({placeholders}) OR {like_clauses}
+            ''', params)
+            rows = cursor.fetchall()
+
+        result = {}
+        for row in rows:
+            base = str(row["filepath"]).split("::L")[0]
+            if base not in wanted:
+                continue
+            agg = result.setdefault(base, {"mastery": 0.0, "play_count": 0, "last_played": None})
+            agg["mastery"] = max(agg["mastery"], float(row["mastery_score"] or 0.0))
+            agg["play_count"] += int(row["play_count"] or 0)
+            last = row["last_played"]
+            if last and (agg["last_played"] is None or str(last) > str(agg["last_played"])):
+                agg["last_played"] = last
+        return result
+
     # ── Generic App Settings ─────────────────────────────────────────
 
     def get_app_setting(self, key: str, default: str = "") -> str:

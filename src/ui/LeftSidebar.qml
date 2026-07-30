@@ -9,6 +9,7 @@ Rectangle {
     
     signal openSettings()
     signal openOnboarding()
+    signal openLibrary()
 
     signal goHome()
 
@@ -268,7 +269,42 @@ Rectangle {
             Rectangle { Layout.fillWidth: true; height: 1 * mainWindow.uiScale; color: "#2a2a2a" }
             
             Item { Layout.preferredHeight: 12 * mainWindow.uiScale }
-            
+
+            // Library button
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 42 * mainWindow.uiScale
+                color: libraryMA.containsMouse ? "#2a2a2a" : "transparent"
+                radius: 8 * mainWindow.uiScale
+
+                MouseArea {
+                    id: libraryMA
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openLibrary()
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12 * mainWindow.uiScale
+                    anchors.rightMargin: 12 * mainWindow.uiScale
+                    spacing: 10 * mainWindow.uiScale
+
+                    Text {
+                        text: "📚"
+                        font.pixelSize: 16 * mainWindow.uiScale
+                    }
+                    Text {
+                        text: "Library"
+                        color: "#888888"
+                        font.pixelSize: 13 * mainWindow.uiScale
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+
             // Settings button
             Rectangle {
                 Layout.fillWidth: true
@@ -352,6 +388,28 @@ Rectangle {
             visible: root.collapsed
 
             Item { Layout.fillHeight: true }
+
+            // Compact Library
+            Rectangle {
+                Layout.preferredWidth: 44 * mainWindow.uiScale
+                Layout.preferredHeight: 44 * mainWindow.uiScale
+                Layout.alignment: Qt.AlignHCenter
+                color: libraryCollMA.containsMouse ? "#2a2a2a" : "transparent"
+                radius: 8
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "📚"
+                    font.pixelSize: 22 * mainWindow.uiScale
+                }
+                MouseArea {
+                    id: libraryCollMA
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openLibrary()
+                }
+            }
 
             // Compact Settings
             Rectangle {
