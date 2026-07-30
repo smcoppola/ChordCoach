@@ -1052,10 +1052,16 @@ class NotationView(QQuickPaintedItem):
             color = self._get_finger_color(note_data.get('finger', 0))
             opacity = 1.0
 
-            if self._display_mode == "evaluation":
-                state = "pending"
-                if orig_i < len(self._eval_note_states):
-                    state = self._eval_note_states[orig_i]
+            # Per-note state colouring. Onboarding drives it via displayMode
+            # "evaluation"; song practice in rhythm mode drives it by supplying a
+            # non-empty states array. Self-paced play supplies an empty array and
+            # so keeps the original trainer colouring, unchanged.
+            state = self._eval_note_states[orig_i] if orig_i < len(self._eval_note_states) else ""
+            use_note_states = self._display_mode == "evaluation" or state != ""
+
+            if use_note_states:
+                if state == "":
+                    state = "pending"
 
                 if state == "hit":
                     color = QColor("#888888")

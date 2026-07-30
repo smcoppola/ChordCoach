@@ -30,7 +30,15 @@ Rectangle {
     // Song Metadata
     property string songTitle: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songTitle : ""
     property string songComposer: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songComposer : ""
-    
+
+    // Phase 4 — pacing mode ("self_paced" | "rhythm") and practice hand
+    property string pacingMode: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.pacingMode : "self_paced"
+    property string practiceHands: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.practiceHands : "both"
+    property var songResult: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songResult : ({})
+    property bool isSongMode: root.exerciseType === "song_application"
+    property int troubleSpotMeasure: 0
+
+
     // UI Modal States for Blurring
     property bool isReconnecting: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
     property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isSongCompleted || isLoading || isReconnecting
@@ -40,6 +48,11 @@ Rectangle {
         console.log("[TIMING " + new Date().toISOString() + "] QML root.isPausedForSpeech is now: " + root.isPausedForSpeech)
     }
     
+    onIsSongCompletedChanged: {
+        // Each completion starts a fresh trouble-spot suggestion.
+        if (!root.isSongCompleted) root.troubleSpotMeasure = 0;
+    }
+
     onIsActiveChanged: {
         if (!root.isActive) {
             console.log("ChordTrainerView: Session became inactive. Auto-returning to dashboard.");
@@ -250,7 +263,145 @@ Rectangle {
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
         }
-        
+
+        // ── Pacing mode + practice hand (song mode only) ──────────────────
+        RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 20 * mainWindow.uiScale
+            visible: root.isSongMode && root.isActive && !root.isLoading
+
+            // Self-paced ⟷ Rhythm
+            RowLayout {
+                spacing: 8 * mainWindow.uiScale
+
+                Text {
+                    text: "PACING"
+                    color: "#666666"
+                    font.pixelSize: 10 * mainWindow.uiScale
+                    font.bold: true
+                    font.letterSpacing: 1.5 * mainWindow.uiScale
+                }
+
+                Row {
+                    spacing: 2 * mainWindow.uiScale
+
+                    Repeater {
+                        model: [
+                            { tag: "self_paced", label: "Self-paced" },
+                            { tag: "rhythm", label: "Rhythm" }
+                        ]
+
+                        delegate: Button {
+                            id: pacingBtn
+                            width: 92 * mainWindow.uiScale
+                            height: 30 * mainWindow.uiScale
+
+                            background: Rectangle {
+                                color: root.pacingMode === modelData.tag ? "#00838f" : (pacingBtn.hovered ? "#333344" : "#2a2a35")
+                                radius: 4 * mainWindow.uiScale
+                                border.color: root.pacingMode === modelData.tag ? "#00bcd4" : "#444455"
+                            }
+
+                            contentItem: Text {
+                                text: modelData.label
+                                color: "#ffffff"
+                                font.pixelSize: 11 * mainWindow.uiScale
+                                font.bold: root.pacingMode === modelData.tag
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: {
+                                if (appState && appState.chordTrainer) {
+                                    appState.chordTrainer.set_pacing_mode(modelData.tag);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Which hand the student plays (distinct from PlaybackBar's
+            // handFilter, which selects what the app plays back).
+            RowLayout {
+                spacing: 8 * mainWindow.uiScale
+
+                Text {
+                    text: "YOU PLAY"
+                    color: "#666666"
+                    font.pixelSize: 10 * mainWindow.uiScale
+                    font.bold: true
+                    font.letterSpacing: 1.5 * mainWindow.uiScale
+                }
+
+                Row {
+                    spacing: 2 * mainWindow.uiScale
+
+                    Repeater {
+                        model: [
+                            { tag: "both", label: "Both" },
+                            { tag: "right", label: "RH" },
+                            { tag: "left", label: "LH" }
+                        ]
+
+                        delegate: Button {
+                            id: practiceHandBtn
+                            width: 44 * mainWindow.uiScale
+                            height: 30 * mainWindow.uiScale
+
+                            background: Rectangle {
+                                color: root.practiceHands === modelData.tag ? "#7b1fa2" : (practiceHandBtn.hovered ? "#333344" : "#2a2a35")
+                                radius: 4 * mainWindow.uiScale
+                                border.color: root.practiceHands === modelData.tag ? "#ab47bc" : "#444455"
+                            }
+
+                            contentItem: Text {
+                                text: modelData.label
+                                color: "#ffffff"
+                                font.pixelSize: 11 * mainWindow.uiScale
+                                font.bold: root.practiceHands === modelData.tag
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: {
+                                if (appState && appState.chordTrainer) {
+                                    appState.chordTrainer.set_practice_hands(modelData.tag);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Rhythm-mode transport: the only way a loop-only run ever ends.
+            Button {
+                id: endRunBtn
+                visible: root.pacingMode === "rhythm"
+                Layout.preferredHeight: 30 * mainWindow.uiScale
+
+                background: Rectangle {
+                    implicitWidth: 96 * mainWindow.uiScale
+                    color: endRunBtn.hovered ? "#d32f2f" : "#442222"
+                    radius: 4 * mainWindow.uiScale
+                    border.color: "#663333"
+                }
+
+                contentItem: Text {
+                    text: "End run"
+                    color: "#ffffff"
+                    font.pixelSize: 11 * mainWindow.uiScale
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                onClicked: {
+                    if (appState && appState.chordTrainer) appState.chordTrainer.stop_rhythm_run();
+                }
+            }
+        }
+
+
         // AI Coach Presenter
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
@@ -550,7 +701,7 @@ Rectangle {
             // Piece Playback Sequencer Toolbar (Song Mode)
             Components.PlaybackBar {
                 isSongMode: root.exerciseType === "song_application" || root.exerciseType === "song"
-                baseBpm: 120.0
+                baseBpm: (appState && appState.playback) ? appState.playback.baseBpm : 100.0
             }
 
             // Sheet Music Pane
@@ -563,11 +714,19 @@ Rectangle {
                     anchors.fill: parent
                     targetChordName: root.currentTarget
                     
-                    // Dynamic playhead binding: use playbackBeat during playback, chordTrainer.scrollBeat otherwise
-                    evalBeat: (appState && appState.playback && appState.playback.isPlaying) ? appState.playback.playbackBeat : (appState && appState.chordTrainer ? appState.chordTrainer.scrollBeat : 0.0)
+                    // Dynamic playhead binding: use playbackBeat during playback, chordTrainer.scrollBeat otherwise.
+                    // NOTE: song mode renders via scrollBeat (displayMode "trainer"), so this must override
+                    // scrollBeat — binding evalBeat here would have no visible effect.
+                    scrollBeat: (appState && appState.playback && appState.playback.isPlaying) ? appState.playback.playbackBeat : (appState && appState.chordTrainer ? appState.chordTrainer.scrollBeat : 0.0)
                     loopStartBeat: appState && appState.playback ? appState.playback.loopStartBeat : -1.0
                     loopEndBeat: appState && appState.playback ? appState.playback.loopEndBeat : -1.0
-                    
+
+                    // Per-note hit/miss colouring. Populated only in rhythm mode;
+                    // self-paced play supplies an empty array, which the renderer
+                    // treats as "colour exactly as before".
+                    evalNoteStates: (appState && appState.chordTrainer) ? appState.chordTrainer.songNoteStates : []
+
+
                     // Subtle dimming if a mistake is currently being held
                     opacity: (appState && appState.chordTrainer && appState.chordTrainer.mistakeActive) ? 0.85 : 1.0
                     Behavior on opacity { NumberAnimation { duration: 200 } }
@@ -800,7 +959,7 @@ Rectangle {
         id: songCompleteOverlay
         anchors.centerIn: parent
         width: Math.min(700 * mainWindow.uiScale, parent.width * 0.9)
-        height: Math.min(300 * mainWindow.uiScale, parent.height * 0.7)
+        height: Math.min(420 * mainWindow.uiScale, parent.height * 0.8)
         color: "#1c1c1e"
         border.color: "#4CAF50"
         border.width: Math.max(1, 1 * mainWindow.uiScale)
@@ -840,11 +999,172 @@ Rectangle {
 
             Item { Layout.preferredHeight: 8 * mainWindow.uiScale }
 
+            // Rhythm-mode scorecard
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 36 * mainWindow.uiScale
+                visible: root.songResult && root.songResult.mode === "rhythm"
+
+                ColumnLayout {
+                    spacing: 2 * mainWindow.uiScale
+                    Text {
+                        text: root.songResult && root.songResult.accuracy !== undefined
+                              ? Math.round(root.songResult.accuracy * 100) + "%" : "—"
+                        font.pixelSize: 34 * mainWindow.uiScale
+                        font.bold: true
+                        color: {
+                            if (!root.songResult || root.songResult.accuracy === undefined) return "#888888";
+                            if (root.songResult.accuracy >= 0.85) return "#4CAF50";
+                            if (root.songResult.accuracy >= 0.60) return "#FFC107";
+                            return "#F44336";
+                        }
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                    Text {
+                        text: "ACCURACY"
+                        font.pixelSize: 10 * mainWindow.uiScale
+                        font.letterSpacing: 1.5 * mainWindow.uiScale
+                        color: "#666666"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+
+                ColumnLayout {
+                    spacing: 2 * mainWindow.uiScale
+                    Text {
+                        text: (root.songResult ? (root.songResult.hits || 0) : 0) + " / "
+                              + (root.songResult ? (root.songResult.misses || 0) : 0)
+                        font.pixelSize: 34 * mainWindow.uiScale
+                        font.bold: true
+                        color: "#ffffff"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                    Text {
+                        text: "HITS / MISSES"
+                        font.pixelSize: 10 * mainWindow.uiScale
+                        font.letterSpacing: 1.5 * mainWindow.uiScale
+                        color: "#666666"
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                visible: root.songResult && root.songResult.masteryGained !== undefined
+                text: "+" + (root.songResult ? Number(root.songResult.masteryGained).toFixed(1) : "0")
+                      + " mastery" + ((root.songResult && root.songResult.loopOnly) ? "  (loop only — halved)" : "")
+                font.pixelSize: 15 * mainWindow.uiScale
+                font.bold: true
+                color: "#4CAF50"
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                visible: root.songResult && root.songResult.mode === "self_paced"
+                text: (root.songResult && root.songResult.wrongNotes)
+                      ? root.songResult.wrongNotes + " wrong notes along the way"
+                      : "Clean run — no wrong notes!"
+                font.pixelSize: 14 * mainWindow.uiScale
+                color: "#aaaaaa"
+            }
+
+            // Sets an A/B loop around the measure with the most misses.
+            Button {
+                id: troubleBtn
+                Layout.alignment: Qt.AlignHCenter
+                visible: root.songResult && root.songResult.mode === "rhythm"
+                          && (root.songResult.misses || 0) > 0
+
+                background: Rectangle {
+                    implicitWidth: 230 * mainWindow.uiScale
+                    implicitHeight: 42 * mainWindow.uiScale
+                    color: troubleBtn.down ? "#00838f" : (troubleBtn.hovered ? "#0097a7" : "#2a2a35")
+                    radius: 8 * mainWindow.uiScale
+                    border.color: "#00bcd4"
+                }
+
+                contentItem: Text {
+                    text: root.troubleSpotMeasure > 0
+                          ? "Looping measure " + root.troubleSpotMeasure
+                          : "Practice trouble spots"
+                    color: "#ffffff"
+                    font.pixelSize: 13 * mainWindow.uiScale
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                onClicked: {
+                    if (appState && appState.chordTrainer) {
+                        root.troubleSpotMeasure = appState.chordTrainer.practice_trouble_spots();
+                        if (root.troubleSpotMeasure > 0 && appState.playback) {
+                            appState.playback.seek(appState.playback.loopStartBeat);
+                            appState.playback.play();
+                        }
+                    }
+                }
+            }
+
+            // Free-play rhythm runs keep the scorecard up until dismissed, so
+            // they need their own way out. Lesson songs still auto-continue.
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 12 * mainWindow.uiScale
+                visible: !root.isLessonMode && root.songResult && root.songResult.mode === "rhythm"
+
+                Button {
+                    id: playAgainBtn
+                    background: Rectangle {
+                        implicitWidth: 130 * mainWindow.uiScale
+                        implicitHeight: 40 * mainWindow.uiScale
+                        color: playAgainBtn.down ? "#333333" : (playAgainBtn.hovered ? "#444444" : "#2a2a2a")
+                        radius: 8 * mainWindow.uiScale
+                        border.color: "#4CAF50"
+                    }
+                    contentItem: Text {
+                        text: "PLAY AGAIN"
+                        color: "#ffffff"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (appState && appState.chordTrainer) appState.chordTrainer.restart_song();
+                    }
+                }
+
+                Button {
+                    id: doneBtn
+                    background: Rectangle {
+                        implicitWidth: 130 * mainWindow.uiScale
+                        implicitHeight: 40 * mainWindow.uiScale
+                        color: doneBtn.down ? "#333333" : (doneBtn.hovered ? "#444444" : "#2a2a2a")
+                        radius: 8 * mainWindow.uiScale
+                        border.color: "#333333"
+                    }
+                    contentItem: Text {
+                        text: "DONE"
+                        color: "#ffffff"
+                        font.pixelSize: 12 * mainWindow.uiScale
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (appState && appState.chordTrainer) appState.chordTrainer.stop_session();
+                        root.returnToDashboard();
+                    }
+                }
+            }
+
             Text {
                 text: "Great work! Getting your feedback…"
                 font.pixelSize: 14 * mainWindow.uiScale
                 color: "#666666"
                 Layout.alignment: Qt.AlignHCenter
+                visible: root.isLessonMode
             }
         }
     }

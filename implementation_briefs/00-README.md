@@ -26,9 +26,9 @@ Song selection flows through a global signal relay: `Music21Service.songRequeste
 | # | Brief | Delivers | Size | Depends on | Status |
 |---|-------|----------|------|------------|--------|
 | 1 | `phase-1-import-core.md` | MusicXML import, MIDI fidelity fixes, Step Schema v2, dedupe groundwork | L | — | ✅ Code complete 2026-07-27 (after one repair pass; human acceptance gates still pending) |
-| 2 | `phase-2-measure-notation.md` | Time signatures, dotted notes, tuplets, dynamics, renderer perf | L | 1 | Pending |
-| 3 | `phase-3-playback-sequencer.md` | Piece playback, tempo scale, A/B loop, hand filter, metronome | M | 1 | Pending |
-| 4 | `phase-4-dual-pacing.md` | Opt-in rhythm scoring beside untouched self-paced play; mastery recording | L | 1 (better after 3) | Pending |
+| 2 | `phase-2-measure-notation.md` | Time signatures, dotted notes, tuplets, dynamics, renderer perf | L | 1 | ✅ Code complete 2026-07-27 (one blocker fixed post-review; human gates pending) |
+| 3 | `phase-3-playback-sequencer.md` | Piece playback, tempo scale, A/B loop, hand filter, metronome | M | 1 | ✅ Code complete 2026-07-27 (four defects fixed post-review; **human gates pending — this phase's value is audible, so the manual pass is mandatory**) |
+| 4 | `phase-4-dual-pacing.md` | Opt-in rhythm scoring beside untouched self-paced play; mastery recording | L | 1 (better after 3) | ✅ Code complete 2026-07-30 (human gates pending — **gate 1, the self-paced regression, and gate 6, onboarding end-to-end, are the mandatory ones**) |
 | 5 | `phase-5-library-view.md` | Library screen: drag-and-drop, rename/delete, dedupe UI | M | 1 (may run before 3/4) | Pending |
 | 6 | `phase-6-ai-progress.md` | Gemini library awareness, repertoire binding, mastery surfacing | S–M | 4, 5 | Pending |
 
@@ -51,7 +51,7 @@ Phase 1 was first implemented by **regenerating `music21_service.py` from scratc
 1. **One phase per working session.** Do not start a phase until the previous one's acceptance gates have passed.
 2. **Line numbers are hints, not addresses.** Briefs cite symbols with approximate line numbers from a July 2026 snapshot (and `music21_service.py` shifted substantially in Phase 1). Always locate code by searching for the symbol name; never edit by line number alone.
 3. **Write the phase's unit tests first.** All specified tests are pure Python (no Qt event loop needed) and are the objective completion gate. Run the **canonical suite** and append your phase's files to it:
-   `python -m pytest tests/test_step_schema.py tests/test_midi_ingestor.py tests/test_simplify.py tests/test_musicxml_import.py tests/test_catalog_and_pickup.py -q`
+   `python -m pytest tests/test_step_schema.py tests/test_midi_ingestor.py tests/test_simplify.py tests/test_musicxml_import.py tests/test_catalog_and_pickup.py tests/test_playback_compile.py tests/test_rhythm_engine.py tests/test_evaluation_regression.py tests/test_mastery.py -q`
    Do **not** run bare `pytest tests/` — three legacy files (`test_lesson_timing.py`, `test_full_lesson_timing.py`, `test_onboarding_flow.py`) fail at collection on a pre-existing PySide6 stub issue unrelated to this work.
 4. **Human acceptance gates are mandatory.** Each brief ends with manual checks a human performs by running `python src/app.py`. The phase is not done until a human signs off — especially Phase 2, whose output is visual.
 5. **Respect every "Do NOT touch" list.** These protect working behavior (the self-paced play path, onboarding evaluation, v1 saved-song compatibility, corpus loading).
@@ -70,9 +70,21 @@ Use **Gemini 3.6 Flash for every phase** — on published benchmarks it outperfo
 
 Consult Gemini 3.1 Pro only as a second opinion on a stuck design puzzle — its edge is deep abstract reasoning, not coding. Sanity-check Phase 1's output quality before relying on the cheaper settings in later phases.
 
-## Carry-over punch list from the Phase 1 repair
+## Carry-over punch list
 
-Small known issues, none blocking. Fold each into whichever later session next touches the relevant file:
+Small known issues, none blocking. Fold each into whichever later session next touches the relevant file.
+
+From Phase 4:
+
+- Rhythm mode and `PlaybackService` run independent clocks, so a duet (app plays LH while the engine scores your RH in rhythm mode) will drift — they start at different times because only the engine has a count-in. Self-paced duet, which is what the brief's acceptance gate covers, is unaffected. Sharing one transport is the fix; fold it into whichever phase next touches `playback_service.py`.
+- `_on_trainer_metronome` in `app_coordinator.py` derives its beat number from `_pentascale_beat_count`, an attribute `ChordTrainerService` does not define, so it always clicks beat 1. Rhythm mode sidesteps it with its own `rhythmCountInTick` signal, but the pentascale/steady-pulse click is still wrong.
+
+From Phase 2 (`notation_view.py`):
+- The rest branch in `_render_scrolling_array` calls `_duration_to_glyph` and discards the result, keeping its own threshold chain — so dotted rests don't render, and there's a dead call to remove.
+- `_render_scrolling_array` rebuilds the `beats_only` list from `_scrolling_beats_index` on every paint (O(n) per frame) — cache it alongside the index to complete the O(visible) goal.
+- Culling margin is a fixed ±8 beats rather than beam/tuplet-group-aware widening.
+
+From Phase 1:
 
 - `Music21Service._on_simplify_failed` only logs — QML's `isLoadingSong` spinner is never cleared when async level regeneration fails. Emit a failure signal QML can handle. (Any phase touching `music21_service.py` or the picker; latest Phase 5.)
 - `request_song_level` calls `worker.wait()` on the UI thread when a previous regeneration is still running — brief UI freeze on rapid difficulty switching. Queue instead of blocking.

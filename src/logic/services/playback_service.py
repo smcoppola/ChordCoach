@@ -9,7 +9,7 @@ Description: Piece Playback Sequencer service for ChordCoach Companion.
 """
 import math
 import time
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple, Set, Optional
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt  # type: ignore
 
 
@@ -130,6 +130,8 @@ class PlaybackService(QObject):
     loopEndBeatChanged = Signal(float)
     handFilterChanged = Signal(str)
     metronomeEnabledChanged = Signal(bool)
+    baseBpmChanged = Signal(float)
+    playbackFinished = Signal()
 
     def __init__(self, hw_service=None, parent=None):
         super().__init__(parent)
@@ -158,6 +160,8 @@ class PlaybackService(QObject):
         self._last_tick_time = 0.0
         self._last_beat_signal_time = 0.0
         self._last_metronome_beat = -1
+        self._base_bpm = 100.0
+        self._end_beat = 0.0
 
         # Precise Timer
         self._timer = QTimer(self)
@@ -206,6 +210,11 @@ class PlaybackService(QObject):
             self._hand_filter = val
             self.handFilterChanged.emit(self._hand_filter)
 
+    @Property(float, notify=baseBpmChanged)
+    def baseBpm(self) -> float:
+        """The piece's unscaled starting tempo, for UI tempo readouts."""
+        return self._base_bpm
+
     @Property(bool, notify=metronomeEnabledChanged)
     def metronomeEnabled(self) -> bool:
         return self._metronome_enabled
@@ -219,8 +228,9 @@ class PlaybackService(QObject):
 
     # ── Public Load & Control Slots ───────────────────────────────────────────
 
-    def load(self, steps: List[Dict[str, Any]], tempo_map: List[Dict[str, Any]] = None,
-             time_signatures: List[Dict[str, Any]] = None, pedal_events: List[Dict[str, Any]] = None):
+    def load(self, steps: List[Dict[str, Any]], tempo_map: Optional[List[Dict[str, Any]]] = None,
+             time_signatures: Optional[List[Dict[str, Any]]] = None,
+             pedal_events: Optional[List[Dict[str, Any]]] = None):
         """Loads a piece definition and pre-compiles the flat event list."""
         self.stop()
         self._steps = steps or []
@@ -232,6 +242,15 @@ class PlaybackService(QObject):
         self._playback_beat = 0.0
         self._cursor = 0
         self._last_metronome_beat = -1
+
+        # Last event beat marks the end of the piece (used to stop the transport).
+        self._end_beat = float(self._events[-1][0]) if self._events else 0.0
+
+        new_base = bpm_at(self._tempo_map, 0.0)
+        if new_base != self._base_bpm:
+            self._base_bpm = new_base
+            self.baseBpmChanged.emit(self._base_bpm)
+
         self.playbackBeatChanged.emit(0.0)
 
     @Slot()
@@ -280,6 +299,9 @@ class PlaybackService(QObject):
         while self._cursor < len(self._events) and self._events[self._cursor][0] < target_beat:
             self._cursor += 1
 
+        # Re-arm the metronome so ticks resume after a backward seek.
+        self._last_metronome_beat = math.floor(target_beat) - 1
+
         self.playbackBeatChanged.emit(self._playback_beat)
 
     @Slot()
@@ -292,6 +314,18 @@ class PlaybackService(QObject):
     def setLoopB(self):
         """Sets loop end to current playback position."""
         self._loop_end_beat = round(self._playback_beat, 2)
+        self.loopEndBeatChanged.emit(self._loop_end_beat)
+
+    @Slot(float, float)
+    def setLoop(self, start_beat: float, end_beat: float):
+        """
+        Sets both loop bounds directly, for callers that know the region they
+        want (e.g. ChordTrainer's "practice trouble spots" measure targeting)
+        rather than marking it from the playhead.
+        """
+        self._loop_start_beat = round(max(0.0, float(start_beat)), 2)
+        self._loop_end_beat = round(float(end_beat), 2)
+        self.loopStartBeatChanged.emit(self._loop_start_beat)
         self.loopEndBeatChanged.emit(self._loop_end_beat)
 
     @Slot()
@@ -336,6 +370,9 @@ class PlaybackService(QObject):
             self._cursor = 0
             while self._cursor < len(self._events) and self._events[self._cursor][0] < self._loop_start_beat:
                 self._cursor += 1
+            # Re-arm the metronome; without this it stays silent after the first wrap
+            # because int_beat can never again exceed the pre-wrap value inside the loop.
+            self._last_metronome_beat = math.floor(self._loop_start_beat) - 1
             self.playbackBeatChanged.emit(self._playback_beat)
             return
 
@@ -369,6 +406,14 @@ class PlaybackService(QObject):
                 self._hw_service.play_metronome_tick(beat_num)
 
         self._playback_beat = next_beat
+
+        # End of piece: every event dispatched and the playhead has passed the final
+        # event. Without this the transport would run forever with isPlaying stuck true.
+        is_looping = self._loop_end_beat > self._loop_start_beat >= 0
+        if not is_looping and self._cursor >= len(self._events) and next_beat >= self._end_beat:
+            self.stop()
+            self.playbackFinished.emit()
+            return
 
         # Emit playbackBeatChanged throttled to ~30 Hz (every 33 ms)
         if (now - self._last_beat_signal_time) >= 0.033:

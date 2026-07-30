@@ -169,8 +169,28 @@ class DatabaseManager:
             
             conn.commit()
 
+    # ── Generic App Settings ─────────────────────────────────────────
+
+    def get_app_setting(self, key: str, default: str = "") -> str:
+        """Reads a value from the key/value app_settings table."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT value FROM app_settings WHERE key = ?', (key,))
+            row = cursor.fetchone()
+            return row[0] if row else default
+
+    def set_app_setting(self, key: str, value: str):
+        """Writes a value to the key/value app_settings table."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)',
+                (key, str(value))
+            )
+            conn.commit()
+
     # ── Technical Terms ──────────────────────────────────────────────
-    
+
     def record_learned_term(self, term: str, explanation: str = ""):
         """Records that the coach has explained a technical term to the user."""
         now = datetime.now().isoformat()

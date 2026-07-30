@@ -1125,6 +1125,37 @@ class Music21Service(QObject):
         with open(self._user_song_path(record["id"]), "w") as f:
             json.dump(record, f, indent=2)
 
+    @Slot(str, str, result=str)
+    @Slot(str, str, str, result=str)
+    def get_user_song_pref(self, song_id: str, key: str, default: str = "") -> str:
+        """Reads a free-form per-song preference (e.g. practice_mode) from its JSON record."""
+        try:
+            with open(self._user_song_path(song_id), "r") as f:
+                return str(json.load(f).get(key, default))
+        except Exception:
+            return default
+
+    @Slot(str, str, str)
+    def set_user_song_pref(self, song_id: str, key: str, value: str):
+        """
+        Stores a free-form per-song preference on the song's JSON record.
+
+        Unlike set_user_song_hand_mode this never rebuilds the score — these
+        preferences (practice_mode, practice_hands) only affect how the piece is
+        practised, not how it is notated, so no cache invalidation is needed.
+        """
+        try:
+            path = self._user_song_path(song_id)
+            with open(path, "r") as f:
+                record = json.load(f)
+            if str(record.get(key, "")) == str(value):
+                return
+            record[key] = value
+            self._save_user_song_record(record)
+            print(f"Music21Service: Pref '{key}' for '{record.get('title')}' set to '{value}'")
+        except Exception as e:
+            print(f"Music21Service: Failed to set pref '{key}': {e}")
+
     @Slot(str, result=str)
     def get_user_song_hand_mode(self, song_id: str) -> str:
         try:

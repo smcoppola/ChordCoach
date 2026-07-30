@@ -7,6 +7,7 @@ Description: Pure Python unit tests for PlaybackService event compiler, tempo ma
 ===============================================================================
 """
 import math
+import time
 import pytest
 from logic.services.playback_service import compile_events, bpm_at, beat_to_measure_info
 
@@ -144,23 +145,105 @@ def test_metronome_accent_pattern():
     assert (m_idx, b_num, is_down) == (1, 1, True)
 
 
-def test_hand_filter_flush_on_change():
-    """Simulate mid-playback hand filter state change flushing sounding notes."""
-    sounding_notes = {(60, "left"), (72, "right")}
+class FakeHardware:
+    """Minimal stand-in for MidiHardwareService, recording what the sequencer sends."""
 
-    # Switch handFilter from "both" to "right"
-    new_filter = "right"
-    flushed_messages = []
-    to_remove = set()
+    def __init__(self):
+        self.sent = []
+        self.metronome_beats = []
 
-    for item in sounding_notes:
-        pitch, hand = item
-        if new_filter != "both" and hand != new_filter:
-            flushed_messages.append([0x80, pitch, 0])
-            to_remove.add(item)
+    def _safe_bulk_send(self, messages):
+        self.sent.extend(messages)
 
-    sounding_notes -= to_remove
+    def play_metronome_tick(self, beat_num):
+        self.metronome_beats.append(beat_num)
 
-    # Left hand note (60) must be flushed and removed from sounding set
-    assert flushed_messages == [[0x80, 60, 0]]
-    assert sounding_notes == {(72, "right")}
+
+def _make_service(steps=None, tempo_map=None, time_signatures=None):
+    """Builds a PlaybackService wired to FakeHardware. QObject works headlessly."""
+    from logic.services.playback_service import PlaybackService
+    hw = FakeHardware()
+    svc = PlaybackService(hw)
+    if steps is not None:
+        svc.load(steps, tempo_map or [{"offset": 0.0, "bpm": 120.0}],
+                 time_signatures or [{"offset": 0.0, "numerator": 4, "denominator": 4}], [])
+    return svc, hw
+
+
+def _tick_with_elapsed(svc, seconds):
+    """Drives one _on_tick as though `seconds` of wall-clock had passed."""
+    svc._last_tick_time = time.perf_counter() - seconds
+    svc._on_tick()
+
+
+def test_hand_filter_change_flushes_excluded_hand():
+    """Switching hands mid-playback must send note-offs for the newly excluded hand."""
+    svc, hw = _make_service()
+    svc._sounding_notes = {(60, "left"), (72, "right")}
+
+    svc.handFilter = "right"
+
+    assert [0x80, 60, 0] in hw.sent, "left-hand note should have been flushed"
+    assert not any(m[1] == 72 for m in hw.sent), "right-hand note must keep sounding"
+    assert svc._sounding_notes == {(72, "right")}
+
+
+def test_metronome_rearms_after_loop_wrap():
+    """Regression: metronome went permanently silent after the first A/B loop wrap."""
+    steps = [{"offset": float(i), "pitches": [60], "durations": [1.0],
+              "hands": ["right"], "velocities": [80]} for i in range(12)]
+    svc, hw = _make_service(steps)
+
+    svc._loop_start_beat = 4.0
+    svc._loop_end_beat = 8.0
+    svc.metronomeEnabled = True
+    svc._playback_beat = 7.9
+    svc._last_metronome_beat = 7  # as if ticks had advanced to beat 7
+    svc._is_playing = True
+
+    _tick_with_elapsed(svc, 0.5)  # enough to cross loop end
+
+    assert svc._playback_beat == 4.0, "should have wrapped to loop start"
+    assert svc._last_metronome_beat < 4, "metronome must be re-armed below loop start"
+
+    # Ticks must actually resume inside the loop.
+    hw.metronome_beats.clear()
+    for _ in range(6):
+        _tick_with_elapsed(svc, 0.3)
+    assert hw.metronome_beats, "metronome should tick again after wrapping"
+
+
+def test_metronome_rearms_after_backward_seek():
+    """A backward seek must also re-arm the metronome."""
+    svc, _ = _make_service()
+    svc._last_metronome_beat = 40
+    svc.seek(8.0)
+    assert svc._last_metronome_beat < 8
+
+
+def test_playback_stops_at_end_of_piece():
+    """Regression: transport ran forever with isPlaying stuck true past the last event."""
+    steps = [{"offset": 0.0, "pitches": [60], "durations": [1.0],
+              "hands": ["right"], "velocities": [80]}]
+    svc, _ = _make_service(steps)
+
+    finished = []
+    svc.playbackFinished.connect(lambda: finished.append(True))
+
+    svc._is_playing = True
+    for _ in range(10):
+        _tick_with_elapsed(svc, 0.5)
+        if not svc.isPlaying:
+            break
+
+    assert not svc.isPlaying, "playback should stop once the piece ends"
+    assert finished == [True], "playbackFinished should fire exactly once"
+
+
+def test_base_bpm_derived_from_tempo_map():
+    """baseBpm must reflect the piece's starting tempo for the UI readout."""
+    steps = [{"offset": 0.0, "pitches": [60], "durations": [1.0],
+              "hands": ["right"], "velocities": [80]}]
+    svc, _ = _make_service(steps, tempo_map=[{"offset": 0.0, "bpm": 76.0},
+                                             {"offset": 8.0, "bpm": 120.0}])
+    assert svc.baseBpm == 76.0

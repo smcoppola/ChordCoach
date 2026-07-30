@@ -15,7 +15,7 @@ class AppCoordinator(QObject):
     def stopSession(self):
         """Stops whatever is currently active: Evaluation or Lesson."""
         if self.evaluation.isRunning:
-            self.evaluation.stop()
+            self.evaluation.stopEvaluation()
         if self.chord_trainer.isActive:
             self.chord_trainer.stop_session()
         
@@ -79,6 +79,9 @@ class AppCoordinator(QObject):
         self.evaluation.metronomeTick.connect(self.hw_service.play_metronome_tick)
         self.chord_trainer.midiOutRequested.connect(self.hw_service.play_chord_preview)
         self.chord_trainer.metronomeTick.connect(self._on_trainer_metronome)
+        # Rhythm-mode count-in click (Phase 4). Its beat number is already 1..4,
+        # so unlike _on_trainer_metronome it needs no remapping.
+        self.chord_trainer.rhythmCountInTick.connect(self._on_rhythm_count_in)
         self.evaluation.evaluationFinished.connect(self._on_evaluation_finished)
 
     @Property(bool, notify=evalIntroPendingChanged) # type: ignore
@@ -232,6 +235,11 @@ class AppCoordinator(QObject):
         else:
             logical_beat = (beat_num % 4) + 1
         self.hw_service.play_metronome_tick(logical_beat)
+
+    @Slot(int, bool)
+    def _on_rhythm_count_in(self, beat_num: int, _accent: bool):
+        """Plays the audible click for a rhythm-mode count-in beat."""
+        self.hw_service.play_metronome_tick(beat_num)
 
     @Slot()
     def _on_evaluation_finished(self):
