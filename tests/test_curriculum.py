@@ -30,17 +30,35 @@ mock_qt.QtCore.Signal = MockSignal
 mock_qt.QtCore.Property = MockProperty
 mock_qt.QtCore.Slot = MockSlot
 
+# Add src to path
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root / "src"))
+
+# The Qt mock is installed only for the duration of these two imports, then
+# removed. Leaving it in sys.modules poisoned every test module collected after
+# this one — anything importing the real PySide6 got the MagicMock instead and
+# failed collection with "'PySide6' is not a package".
+_MOCKED = ('PySide6', 'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtQml')
+_saved = {name: sys.modules.get(name) for name in _MOCKED}
+
 sys.modules['PySide6'] = mock_qt
 sys.modules['PySide6.QtCore'] = mock_qt.QtCore
 sys.modules['PySide6.QtGui'] = mock_qt
 sys.modules['PySide6.QtQml'] = mock_qt
 
-# Add src to path
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root / "src"))
-
-from logic.services.database_manager import DatabaseManager
-from logic.services.curriculum_service import CurriculumService
+try:
+    from logic.services.database_manager import DatabaseManager
+    from logic.services.curriculum_service import CurriculumService
+finally:
+    for name, original in _saved.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
+    # Drop the modules built against the mock so later tests importing them
+    # get a copy bound to the real Qt.
+    for name in ('logic.services.curriculum_service', 'logic.services.database_manager'):
+        sys.modules.pop(name, None)
 
 class TestCurriculumService(unittest.TestCase):
     def setUp(self):

@@ -38,7 +38,17 @@ pyinstaller chordcoach.spec --clean --noconfirm
 create-dmg --volname "ChordCoach Companion" ChordCoachCompanion-macOS.dmg dist/
 ```
 
-No test suite exists in this project.
+### Tests
+
+```bash
+pytest tests/ -q
+```
+
+Tests run headless — `tests/conftest.py` creates a single offscreen
+`QGuiApplication` at import time. Qt allows only one application object per
+process and a `QCoreApplication` cannot be promoted to a `QGuiApplication`, so
+never construct one inside a test; depend on the `qapp` fixture instead.
+Use `notation_fonts` when a test needs the bundled Bravura/Inter metrics.
 
 ## Architecture
 

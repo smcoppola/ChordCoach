@@ -8,6 +8,55 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 
+def _create_qt_app():
+    """
+    Creates the process-wide Qt application at conftest import time.
+
+    This must happen before any test module runs. Qt permits exactly one
+    application object per process and a QCoreApplication cannot be promoted to
+    a QGuiApplication, so if a test creates a bare QCoreApplication first (as
+    test_evaluation_regression does for QTimer), any later font or paint call
+    crashes with an access violation. Creating the GUI application up front
+    satisfies both: QGuiApplication is a QCoreApplication, so
+    QCoreApplication.instance() finds it and reuses it.
+    """
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    try:
+        from PySide6.QtGui import QGuiApplication
+    except ImportError:  # pragma: no cover - PySide6 always present in dev
+        return None
+
+    existing = QGuiApplication.instance()
+    if existing is not None:
+        return existing
+    return QGuiApplication([])
+
+
+_QT_APP = _create_qt_app()
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """The headless Qt application shared by every test that touches Qt."""
+    if _QT_APP is None:
+        pytest.skip("PySide6 is unavailable")
+    return _QT_APP
+
+
+@pytest.fixture(scope="session")
+def notation_fonts(qapp):
+    """Registers the bundled fonts so label metrics match what the app renders."""
+    from pathlib import Path
+    from PySide6.QtGui import QFontDatabase
+
+    font_dir = Path(src_path) / "resources" / "fonts"
+    if font_dir.exists():
+        for pattern in ("*.ttf", "*.otf"):
+            for font_file in font_dir.glob(pattern):
+                QFontDatabase.addApplicationFont(os.fspath(font_file))
+    return qapp
+
+
 @pytest.fixture
 def tmp_user_songs_dir(tmp_path, monkeypatch):
     """Fixture that isolates user_songs directory for tests to avoid writing to live user database."""
