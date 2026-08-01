@@ -27,11 +27,15 @@ Rectangle {
     property var evalNoteStates: []          // Array of "pending"/"hit"/"miss"
     property real pixelsPerBeat: width * 0.10
     
-    // Geometry Constants for Grand Staff mapping (inherited by native engine)
-    // Professional screen-reading proportion: s = 3.5% of height, Treble at 35%, Bass at 65%
-    property real lineSpacing: height * 0.035
-    property real trebleCenterY: height * 0.35
-    property real bassCenterY: height * 0.65
+    // Geometry Constants for Grand Staff mapping.
+    // These MIRROR STAFF_SPACE_RATIO / STAFF_SEPARATION_SPACES in notation_view.py,
+    // which is what actually paints the staff. They exist here only so the QML
+    // overlays below (playhead, tap-to-seek, pedal marking) can line up with the
+    // painted ink — change them in both places or the overlays desync.
+    // s = 5.25% of height; staves sit 8 staff spaces apart, centred on the pane.
+    property real lineSpacing: height * 0.0525
+    property real trebleCenterY: (height * 0.5) - (lineSpacing * 4.0)
+    property real bassCenterY: (height * 0.5) + (lineSpacing * 4.0)
     // Note Start Position (Aligned with native NotationView)
     property real noteStartX: width * 0.28
 
@@ -194,7 +198,9 @@ Rectangle {
     // 1. Draw the Staff Title
     Text {
         anchors.top: parent.top
-        anchors.topMargin: 20 * mainWindow.uiScale
+        // Tight against the top edge: the taller staff space raises the treble
+        // staff, so this margin is now ledger-line headroom.
+        anchors.topMargin: 8 * mainWindow.uiScale
         anchors.horizontalCenter: parent.horizontalCenter
         width: parent.width * 0.9
         text: {
@@ -283,7 +289,9 @@ Rectangle {
         anchors.left: parent.left
         anchors.leftMargin: root.noteStartX - (20 * mainWindow.uiScale)
         anchors.right: parent.right
-        y: root.bassCenterY + (root.lineSpacing * 3.5)
+        // 0.6 spaces below the bottom staff line. Was 3.5 spaces from the
+        // centre, which at the current staff space runs off the pane bottom.
+        y: root.bassCenterY + (root.lineSpacing * 2.6)
         height: root.lineSpacing * 2
         visible: root.displayMode === "trainer" && root.exerciseType === "sustain_pedal"
         

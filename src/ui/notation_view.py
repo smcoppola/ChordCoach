@@ -25,8 +25,8 @@ log = logging.getLogger(__name__)
 # constants are the contract that makes that guarantee provable; see
 # tests/test_notation_labels.py.
 
-MIN_LABEL_PX = 8.0          # absolute floor for a legible Inter Bold glyph
-LABEL_TARGET_RATIO = 0.70   # preferred label pixel size as a fraction of capsule height
+MIN_LABEL_PX = 10.0         # absolute floor for a legible Inter Bold glyph
+LABEL_TARGET_RATIO = 0.92   # preferred label pixel size as a fraction of capsule height
 LABEL_PX_QUANTUM = 0.5      # rounding step, bounds the font/metrics cache size
 DARK_LABEL = "#14181F"
 LIGHT_LABEL = "#FFFFFF"
@@ -34,6 +34,25 @@ LUMINANCE_THRESHOLD = 0.179  # WCAG crossover between dark-on-light and light-on
 PAPER_COLOR = "#fcfcfc"      # matches EnhancedSheetMusic.qml background
 LABEL_FONT_FAMILY = "Inter"
 OUTSIDE_LABEL_MAX_ROWS = 4   # after this many collision bumps we draw anyway
+
+# --- Grand staff geometry --------------------------------------------------
+# Every dimension in this renderer is a multiple of one staff space, so these
+# three numbers scale the entire engraving. EnhancedSheetMusic.qml keeps a
+# hand-maintained mirror of them for its overlays (playhead, tap-to-seek,
+# pedal marking) — change them together or the overlays desync from the ink.
+
+STAFF_SPACE_RATIO = 0.0525   # one staff space as a fraction of the pane height
+CAPSULE_HEIGHT_RATIO = 0.92  # enhanced duration capsule height, in staff spaces
+
+# Treble-to-bass centre distance, deliberately expressed in staff spaces rather
+# than as a fraction of the pane height. With fixed fractions the two staves
+# stay put while the staff space grows, and past roughly s = 0.045 * height the
+# treble's middle C (treble_cy + 3s) drops *below* the bass's (bass_cy - 3s) —
+# the grand staff turns inside out. 6.0 is the engraving minimum (treble E4
+# exactly two spaces above bass A3); 8.0 keeps a full space of air between the
+# two middle-C ledger positions and leaves ~3.5 spaces of ledger headroom
+# above and below the system.
+STAFF_SEPARATION_SPACES = 8.0
 
 
 def _srgb_to_linear(c: float) -> float:
@@ -512,23 +531,29 @@ class NotationView(QQuickPaintedItem):
 
         font_family = self._get_smufl_family()
         ts_font = QFont(font_family)
-        ts_font.setPointSizeF(s * 2.8)
+        # Pixels, not points, like every other SMuFL font here: a point size is
+        # resolved against the paint device's DPI, so on a scaled display the
+        # time signature would stop tracking the staff it is drawn on. SMuFL
+        # sets 1 em = 4 staff spaces, which makes the digits 2 spaces tall.
+        ts_font.setPixelSize(max(1, int(s * 4.0)))
         painter.setFont(ts_font)
 
-        num_str = str(num)
-        den_str = str(den)
+        num_glyph = "".join(self.GLYPH_TIME_SIG[int(d)] if d.isdigit() else d for d in str(num))
+        den_glyph = "".join(self.GLYPH_TIME_SIG[int(d)] if d.isdigit() else d for d in str(den))
 
+        # Centred on the glyph ink rather than by aligning inside a box: the
+        # SMuFL em box is twice the height of the two-space slot each digit
+        # occupies, so a box-aligned digit is positioned by the font's
+        # ascent/descent and drifts off the staff whenever the size changes.
+        fm = QFontMetricsF(ts_font)
         for ref_y in (treble_y, bass_y):
-            top_y = ref_y - s * 1.0
-            bot_y = ref_y + s * 1.0
-
-            num_glyph = "".join(self.GLYPH_TIME_SIG[int(d)] if d.isdigit() else d for d in num_str)
-            num_rect = QRectF(x - s * 1.5, top_y - s * 1.5, s * 3.0, s * 2.0)
-            painter.drawText(num_rect, Qt.AlignCenter, num_glyph)
-
-            den_glyph = "".join(self.GLYPH_TIME_SIG[int(d)] if d.isdigit() else d for d in den_str)
-            den_rect = QRectF(x - s * 1.5, bot_y - s * 1.5, s * 3.0, s * 2.0)
-            painter.drawText(den_rect, Qt.AlignCenter, den_glyph)
+            # Numerator fills the upper half of the staff, denominator the lower.
+            for glyph, cy in ((num_glyph, ref_y - s), (den_glyph, ref_y + s)):
+                tight = fm.tightBoundingRect(glyph)
+                painter.drawText(QPointF(
+                    x - tight.width() / 2.0 - tight.x(),
+                    cy - tight.height() / 2.0 - tight.y(),
+                ), glyph)
 
         painter.setFont(old_font)
         painter.setPen(old_pen)
@@ -771,7 +796,10 @@ class NotationView(QQuickPaintedItem):
                         if note.get("is_rest") and note.get("duration_beats", 1) >= 4.0:
                             y = ref_y - (s / 2.0)
                         elif note.get("is_dynamic"):
-                            y = ref_y + (s * 4.5)
+                            # 1.5 spaces below the bottom staff line. Was 4.5,
+                            # which at the current staff space lands within a
+                            # few pixels of the pane's bottom edge.
+                            y = ref_y + (s * 3.5)
 
                         bar_offset = -s * 1.5 if note.get('is_barline') else 0.0
 
@@ -863,12 +891,16 @@ class NotationView(QQuickPaintedItem):
         width = rect.width()
         height = rect.height()
 
-        # Step 1: Initialize optical constants matching standard screen proportions
-        s = height * 0.035
-        treble_cy = height * 0.35
-        bass_cy = height * 0.65
+        # Step 1: Initialize optical constants matching standard screen proportions.
+        # The staves are placed a fixed number of staff spaces apart rather than
+        # at fixed height fractions, so the system stays a valid grand staff at
+        # any STAFF_SPACE_RATIO (see the constant's note on middle C).
+        s = height * STAFF_SPACE_RATIO
+        half_sep = (s * STAFF_SEPARATION_SPACES) / 2.0
+        treble_cy = (height * 0.5) - half_sep
+        bass_cy = (height * 0.5) + half_sep
         note_start_x = width * 0.28
-        ppb = width * 0.10 
+        ppb = width * 0.10
         
         # Step 2: Establish the 5-line staff foundations
         self._draw_staff_lines(painter, width, treble_cy, s)
@@ -897,7 +929,12 @@ class NotationView(QQuickPaintedItem):
                 header_ts = (item.get("numerator", 4), item.get("denominator", 4))
                 break
         key_count = abs(self._song_key_sharps) if (self._song_key_sharps != 0 and self._notation_style == "traditional") else 0
-        ts_x = note_start_x - (s * 5.0) + (key_count * s * 0.8) + (s * 1.5 if key_count > 0 else 0)
+        # The signature block hangs a fixed number of staff spaces left of the
+        # first note. On a tall, narrow pane that offset outgrows the gap and
+        # would put the signature on top of the clef and outside content_rect,
+        # so it is floored just right of both.
+        sig_x = max(width * 0.16, note_start_x - (s * 5.0))
+        ts_x = sig_x + (key_count * s * 0.8) + (s * 1.5 if key_count > 0 else 0)
         self._draw_time_signature(painter, ts_x, header_ts[0], header_ts[1], treble_cy, bass_cy, s, QColor("#222222"))
 
         # Draw translucent loop shading behind staff/notes if A/B loop bounds are active
@@ -919,13 +956,13 @@ class NotationView(QQuickPaintedItem):
                 note_start_x, ppb, treble_cy, bass_cy, s
             )
         elif self._is_scrolling_mode:
-            self._draw_key_signature(painter, note_start_x - (s*5), treble_cy, bass_cy, s)
+            self._draw_key_signature(painter, sig_x, treble_cy, bass_cy, s)
             self._render_scrolling_array(
                 painter, self._scrolling_notes, self._scroll_beat, 
                 note_start_x, ppb, treble_cy, bass_cy, s
             )
         else:
-            self._draw_key_signature(painter, note_start_x - (s*5), treble_cy, bass_cy, s)
+            self._draw_key_signature(painter, sig_x, treble_cy, bass_cy, s)
             self._render_static_targets(
                 painter, note_start_x, treble_cy, bass_cy, s
             )
@@ -1560,7 +1597,7 @@ class NotationView(QQuickPaintedItem):
         antialiasing enabled in paint(); the previous implementation cast to int
         and produced visibly jagged caps.
         """
-        h = spacing * 0.92
+        h = spacing * CAPSULE_HEIGHT_RATIO
         rect = QRectF(x, y - h / 2.0, width, h)
         radius = min(h / 2.0, width / 2.0)
 
@@ -1651,7 +1688,7 @@ class NotationView(QQuickPaintedItem):
         "REST"/"Z" text read as noise at ~11px and competed with the notes for
         attention.
         """
-        h = spacing * 0.92
+        h = spacing * CAPSULE_HEIGHT_RATIO
         bar_h = max(2.5, h * 0.38)
         rect = QRectF(x, y - bar_h / 2.0, width, bar_h)
         radius = min(bar_h / 2.0, width / 2.0)

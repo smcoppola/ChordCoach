@@ -675,18 +675,48 @@ Rectangle {
             spacing: 20 * mainWindow.uiScale
             visible: root.isActive && !root.isLessonComplete && root.exerciseType !== "listen"
 
-            // Professional Visual Hand Guides (Image-based) - Above the staff
+            // Transport row: the finger-colour hand guides flank the tempo bar,
+            // collapsing what used to be two stacked bands into one so the
+            // sheet music pane below gets the reclaimed height.
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.fillWidth: true
-                spacing: 80 * mainWindow.uiScale // spacing between hands
+                spacing: 24 * mainWindow.uiScale
 
-                Item { Layout.fillWidth: true } // spacer to keep hands centered
+                Item { Layout.fillWidth: true } // spacer to keep the row centered
 
                 Components.HandGuide {
                     handType: "left"
                     Layout.alignment: Qt.AlignVCenter
                     opacity: 0.8
+                }
+
+                // Piece Playback Sequencer Toolbar (Song Mode)
+                Components.PlaybackBar {
+                    id: playbackBar
+                    // Required: PlaybackBar's own Layout.alignment is AlignHCenter,
+                    // and with no vertical flag a RowLayout stretches it to the
+                    // row height (the hands' 110) and ignores its preferredHeight.
+                    Layout.alignment: Qt.AlignVCenter
+                    // Also required: PlaybackBar sets Layout.fillWidth itself,
+                    // which worked when it was the only filler in a ColumnLayout.
+                    // Here it would split the row's spare width three ways with
+                    // the centring spacers and land near 360 — too narrow for the
+                    // transport controls. Ask for its full width instead and let
+                    // the spacers absorb the remainder.
+                    Layout.fillWidth: false
+                    Layout.preferredWidth: 800 * mainWindow.uiScale
+                    isSongMode: root.exerciseType === "song_application" || root.exerciseType === "song"
+                    baseBpm: (appState && appState.playback) ? appState.playback.baseBpm : 100.0
+                }
+
+                // Holds the hands apart in lesson mode, where the bar is hidden.
+                // Qt layouts skip invisible items including their spacing, so
+                // without this the hands would close to `spacing` apart.
+                // 24 + 32 + 24 reproduces the 80 gap they have today.
+                Item {
+                    Layout.preferredWidth: 32 * mainWindow.uiScale
+                    visible: !playbackBar.visible
                 }
 
                 Components.HandGuide {
@@ -696,12 +726,6 @@ Rectangle {
                 }
 
                 Item { Layout.fillWidth: true } // spacer
-            }
-
-            // Piece Playback Sequencer Toolbar (Song Mode)
-            Components.PlaybackBar {
-                isSongMode: root.exerciseType === "song_application" || root.exerciseType === "song"
-                baseBpm: (appState && appState.playback) ? appState.playback.baseBpm : 100.0
             }
 
             // Sheet Music Pane

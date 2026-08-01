@@ -10,8 +10,11 @@ placed and always legible, across pane sizes and note durations.
 import pytest
 
 from ui.notation_view import (
+    CAPSULE_HEIGHT_RATIO,
     MIN_LABEL_PX,
     NotationView,
+    STAFF_SEPARATION_SPACES,
+    STAFF_SPACE_RATIO,
     contrast_ratio,
     label_color_for,
     relative_luminance,
@@ -37,10 +40,23 @@ def view(notation_fonts):
 
 
 def _geometry(width, height):
-    """Mirrors the optical constants paint() derives from the item's size."""
-    s = height * 0.035
+    """
+    Mirrors the optical constants paint() derives from the item's size.
+
+    Imports the ratios rather than restating them: a local copy would keep
+    these tests passing against the old geometry while the app renders the
+    new one, which is exactly the drift they exist to catch.
+    """
+    s = height * STAFF_SPACE_RATIO
     ppb = width * 0.10
     return s, ppb
+
+
+def _staff_centers(height):
+    """Treble and bass centre lines, as paint() places them."""
+    s = height * STAFF_SPACE_RATIO
+    half_sep = (s * STAFF_SEPARATION_SPACES) / 2.0
+    return (height * 0.5) - half_sep, (height * 0.5) + half_sep
 
 
 # --- The core invariant ----------------------------------------------------
@@ -53,7 +69,7 @@ def test_label_is_always_placed(view, width, height, duration, text):
     """No combination of pane size and duration may yield an unlabelled note."""
     s, ppb = _geometry(width, height)
     cap_w = view._capsule_width({"duration_beats": duration}, ppb, s, text)
-    h = s * 0.92
+    h = s * CAPSULE_HEIGHT_RATIO
 
     plan = view._plan_note_label(text, cap_w, h, s)
 
@@ -72,7 +88,7 @@ def test_inside_labels_actually_fit(view, width, height, duration, text):
     """When the planner says 'inside', the glyphs must genuinely fit the capsule."""
     s, ppb = _geometry(width, height)
     cap_w = view._capsule_width({"duration_beats": duration}, ppb, s, text)
-    h = s * 0.92
+    h = s * CAPSULE_HEIGHT_RATIO
 
     plan = view._plan_note_label(text, cap_w, h, s)
     if not plan["inside"]:
@@ -96,8 +112,59 @@ def test_tall_panes_keep_labels_inside(view, height):
         pytest.skip("short pane legitimately uses outside placement")
     s, ppb = _geometry(1400, height)
     cap_w = view._capsule_width({"duration_beats": 1.0}, ppb, s, "C")
-    plan = view._plan_note_label("C", cap_w, s * 0.92, s)
+    plan = view._plan_note_label("C", cap_w, s * CAPSULE_HEIGHT_RATIO, s)
     assert plan["inside"]
+
+
+def test_note_labels_are_legible_at_a_normal_pane(view):
+    """
+    Readability is the point of the display, so the letter on an ordinary
+    quarter note at an ordinary pane size has to be genuinely large — not
+    merely "placed somewhere at the legibility floor".
+    """
+    s, ppb = _geometry(1400, 450)
+    cap_w = view._capsule_width({"duration_beats": 1.0}, ppb, s, "C")
+    plan = view._plan_note_label("C", cap_w, s * CAPSULE_HEIGHT_RATIO, s)
+
+    assert plan["inside"]
+    assert plan["px"] >= 18.0, f"quarter-note label is only {plan['px']}px"
+
+
+# --- Grand staff geometry --------------------------------------------------
+
+@pytest.mark.parametrize("height", PANE_HEIGHTS)
+def test_middle_c_positions_do_not_cross(height):
+    """
+    The two staves are placed a fixed number of staff spaces apart precisely so
+    this holds. With centres pinned to height fractions instead, raising
+    STAFF_SPACE_RATIO eventually pushes the treble's middle C *below* the
+    bass's and the grand staff turns inside out.
+    """
+    s = height * STAFF_SPACE_RATIO
+    treble_cy, bass_cy = _staff_centers(height)
+
+    treble_middle_c = treble_cy + 3 * s   # 6 diatonic steps below B4
+    bass_middle_c = bass_cy - 3 * s       # 6 diatonic steps above D3
+
+    assert bass_middle_c - treble_middle_c >= s, (
+        "middle C must read unambiguously on each staff: "
+        f"treble at {treble_middle_c}, bass at {bass_middle_c}"
+    )
+
+
+@pytest.mark.parametrize("height", PANE_HEIGHTS)
+def test_grand_staff_leaves_ledger_headroom(height):
+    """The system must fit the pane with room for ledger lines above and below."""
+    s = height * STAFF_SPACE_RATIO
+    treble_cy, bass_cy = _staff_centers(height)
+
+    top_line = treble_cy - 2 * s
+    bottom_line = bass_cy + 2 * s
+
+    assert top_line >= 3 * s, f"only {top_line / s:.1f} spaces above the treble staff"
+    assert height - bottom_line >= 3 * s, (
+        f"only {(height - bottom_line) / s:.1f} spaces below the bass staff"
+    )
 
 
 # --- Capsule width ---------------------------------------------------------
