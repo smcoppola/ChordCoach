@@ -211,6 +211,68 @@ def test_steps_with_no_notes_for_the_practised_hand_are_skipped(trainer):
     assert offsets == [0.0, 1.0, 3.0]
 
 
+def test_rest_only_steps_never_become_self_paced_targets(trainer):
+    """
+    Both loaders emit a pitchless step wherever a rest starts with nothing
+    sounding under it. Self-paced mode used to stop dead on one: _check_chord
+    bails on an empty target, so no key the student could press would advance
+    the song.
+    """
+    song = sample_song()
+    song["steps"].insert(2, {
+        "offset": 1.5, "duration": 0.5,
+        "pitches": [], "hands": [], "fingers": [], "durations": [],
+        "rests": [{"duration": 0.5, "hand": "right"}],
+    })
+    trainer.music21_spy.song_data = song
+
+    trainer.start_song("user::rest-gap")
+
+    assert all(s["pitches"] for s in trainer._song_steps)
+    assert 1.5 not in [s["offset"] for s in trainer._song_steps]
+    # The rest still draws — only the input gate skips it.
+    assert any(n.get("is_rest") for n in trainer.scrollingNotes)
+
+
+def test_a_rest_step_does_not_stall_playing_the_song_through(trainer):
+    song = sample_song()
+    song["steps"].insert(2, {
+        "offset": 1.5, "duration": 0.5,
+        "pitches": [], "hands": [], "fingers": [], "durations": [],
+        "rests": [{"duration": 0.5, "hand": "right"}],
+    })
+    trainer.music21_spy.song_data = song
+    trainer.start_song("user::rest-playthrough")
+
+    for i in range(4):
+        assert trainer._target_pitches, f"stalled before step {i}"
+        for pitch in list(trainer._target_pitches):
+            trainer.handle_midi_note(pitch, True)
+        for pitch in [60 + i, 48 + i]:
+            trainer.handle_midi_note(pitch, False)
+
+    assert trainer.isSongCompleted
+
+
+def test_a_song_with_nothing_playable_reports_instead_of_hanging(trainer):
+    song = sample_song()
+    song["steps"] = [{
+        "offset": 0.0, "duration": 1.0,
+        "pitches": [], "hands": [], "fingers": [], "durations": [],
+        "rests": [{"duration": 1.0, "hand": "right"}],
+    }]
+    trainer.music21_spy.song_data = song
+
+    messages = []
+    trainer.statusMessageRequested.connect(lambda kind, text: messages.append((kind, text)))
+
+    trainer.start_song("user::all-rests")
+
+    assert trainer._song_steps == []
+    assert not trainer._target_pitches
+    assert messages, "the student was left with no feedback"
+
+
 def test_playback_keeps_the_unfiltered_steps_for_duet(trainer):
     trainer.start_song("user::duet")
     trainer.set_practice_hands("right")

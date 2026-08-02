@@ -1769,6 +1769,15 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         # app can still play the other hand for a duet.
         self._song_steps = self._filter_steps_for_practice_hands(self._song_steps)
 
+        # The filter can empty the list outright — a hand that never plays, or a
+        # section that is all rests. Say so instead of leaving the student in
+        # front of a sheet that will never accept a note.
+        if not self._song_steps:
+            print(f"ChordTrainer: '{self._song_title}' has nothing to play for hands='{self._practice_hands}'")
+            self.statusMessageRequested.emit(
+                "info", "Nothing to play here — try the other hand or 'both'.")
+            return
+
         if self._pacing_mode == "rhythm":
             self._start_rhythm_run()
         else:
@@ -1832,17 +1841,34 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     def _filter_steps_for_practice_hands(self, steps):
         """
-        Narrows each step to the hand the student is practising. Steps that end
-        up empty are dropped, which is how "LH-only steps are auto-skipped"
-        falls out for free — the self-paced advance never sees them.
-        """
-        if self._practice_hands not in ("right", "left"):
-            return list(steps or [])
+        Narrows each step to the hand the student is practising and drops every
+        step that leaves the student nothing to play.
 
-        want = self._practice_hands
+        Steps go empty two ways. A step whose notes all belong to the other hand
+        is how "LH-only steps are auto-skipped" falls out for free. A step that
+        never had pitches at all is a rest-only offset: both song loaders emit
+        one wherever a rest starts with no note sounding under it, and the
+        self-paced advance would otherwise park on it forever waiting for a
+        chord the keyboard cannot produce.
+
+        Dropping both here rather than in _advance_song_chord keeps _song_index
+        arithmetic — including end-of-song detection — over a list in which
+        every entry is playable. PlaybackService and _song_end_beat are
+        computed upstream from the unfiltered steps, so the accompaniment and
+        the notation still show the silence.
+        """
+        want = self._practice_hands if self._practice_hands in ("right", "left") else None
+
         out = []
         for step in steps or []:
-            pitches = step.get("pitches", [])
+            pitches = step.get("pitches") or []
+            if not pitches:
+                continue
+
+            if want is None:
+                out.append(step)
+                continue
+
             hands = step.get("hands", [])
             keep = [i for i in range(len(pitches))
                     if (hands[i] if i < len(hands) else "right") == want]
