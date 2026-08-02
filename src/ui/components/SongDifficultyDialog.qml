@@ -12,6 +12,11 @@ Popup {
     property string handMode: "auto"
     property real uiScale: (typeof mainWindow !== "undefined" && mainWindow) ? mainWindow.uiScale : 1.0
 
+    // QML reads an 8-digit hex as #AARRGGBB, so "#4CAF5030" is a brown at 19%
+    // alpha rather than a translucent green. Build tints from the accent instead.
+    readonly property color accent: "#4CAF50"
+    function tint(a) { return Qt.rgba(dialog.accent.r, dialog.accent.g, dialog.accent.b, a); }
+
     // Emitted once a song has actually been requested — hosts use it to raise
     // their own "Loading Song…" state.
     signal playStarted(string songId, int level)
@@ -70,18 +75,29 @@ Popup {
             spacing: 6 * dialog.uiScale
 
             Repeater {
+                // "Manual" is set by the note editor, not picked here — it is
+                // shown so the state is visible, and clicking any other chip
+                // re-infers every hand and discards those edits.
                 model: [
                     { mode: "auto",  label: "Auto" },
                     { mode: "split", label: "Split C4" },
                     { mode: "right", label: "RH only" },
-                    { mode: "left",  label: "LH only" }
+                    { mode: "left",  label: "LH only" },
+                    { mode: "manual", label: "Manual" }
                 ]
                 delegate: Rectangle {
+                    // The Manual chip only exists while the song is in that
+                    // state, and is a status readout rather than a control —
+                    // picking it would rebuild the score from the coarser
+                    // grouped form and flatten the per-note durations the
+                    // editor just set.
+                    readonly property bool isStatusOnly: modelData.mode === "manual"
+                    visible: !isStatusOnly || dialog.handMode === "manual"
                     property bool isActive: dialog.handMode === modelData.mode
                     Layout.preferredWidth: handChipLabel.implicitWidth + 16 * dialog.uiScale
                     Layout.preferredHeight: 24 * dialog.uiScale
                     radius: 12 * dialog.uiScale
-                    color: isActive ? "#4CAF5030" : (handChipMouse.containsMouse ? "#333333" : "#2a2a2a")
+                    color: isActive ? dialog.tint(0.19) : (handChipMouse.containsMouse ? "#333333" : "#2a2a2a")
                     border.color: isActive ? "#4CAF50" : "#444444"
 
                     Text {
@@ -96,7 +112,8 @@ Popup {
                     MouseArea {
                         id: handChipMouse
                         anchors.fill: parent
-                        hoverEnabled: true
+                        enabled: !isStatusOnly
+                        hoverEnabled: !isStatusOnly
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             dialog.handMode = modelData.mode;
@@ -122,7 +139,7 @@ Popup {
                 Layout.leftMargin: 8 * dialog.uiScale
                 Layout.rightMargin: 8 * dialog.uiScale
                 radius: 8 * dialog.uiScale
-                color: levelMouse.containsMouse ? "#4CAF5020" : "#2a2a2a"
+                color: levelMouse.containsMouse ? dialog.tint(0.13) : "#2a2a2a"
                 border.color: levelMouse.containsMouse ? "#4CAF50" : "#444444"
 
                 ColumnLayout {

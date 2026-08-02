@@ -646,6 +646,11 @@ Rectangle {
                             difficultyPicker.open();
                         }
                     }
+                    PillButton {
+                        text: "✎  EDIT"
+                        accent: "#FF9800"
+                        onClicked: noteEditor.show(card.modelData)
+                    }
                     Item { Layout.fillWidth: true }
                     PillButton {
                         text: "RENAME"
@@ -719,6 +724,13 @@ Rectangle {
         id: difficultyPicker
         anchors.centerIn: parent
         onPlayStarted: root.isLoadingSong = true
+    }
+
+    // ── Per-note editor (beat / duration / hand) ─────────────────────
+    SongNoteEditor {
+        id: noteEditor
+        anchors.centerIn: parent
+        onSaved: root.statusMessage = "Saved your note edits."
     }
 
     // ── Rename dialog ────────────────────────────────────────────────

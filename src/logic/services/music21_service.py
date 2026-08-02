@@ -1115,6 +1115,12 @@ class Music21Service(QObject):
         return self._user_songs_dir() / (base_id.replace(self.USER_SONG_PREFIX, "") + ".json")
 
     def _apply_hand_mode(self, groups, mode: str, record: dict = None):
+        if mode == "manual":
+            # Hands were set note by note in the editor. Every other branch here
+            # re-infers them, and "auto" in particular restores them wholesale
+            # from pristine_groups — which would silently revert the edits on the
+            # next level regeneration. Leave them exactly as stored.
+            return groups
         if mode in ("right", "left"):
             for g in groups:
                 g["notes"] = [(p, mode) for p, _h in g["notes"]]
@@ -1203,7 +1209,7 @@ class Music21Service(QObject):
     @Slot(str, str)
     def set_user_song_hand_mode(self, song_id: str, mode: str):
         from logic.services.midi_ingestor import HAND_ALGO_VERSION
-        if mode not in ("auto", "split", "right", "left"):
+        if mode not in ("auto", "split", "right", "left", "manual"):
             print(f"Music21Service: Unknown hand mode '{mode}' ignored")
             return
         try:
@@ -1227,6 +1233,230 @@ class Music21Service(QObject):
             print(f"Music21Service: Hand mode for '{record.get('title')}' set to '{mode}'")
         except Exception as e:
             print(f"Music21Service: Failed to set hand mode: {e}")
+
+    # ── Per-note editing ─────────────────────────────────────────────
+    # Imported MIDI is guessed at: onsets are quantized, durations rounded and
+    # hands inferred by track or by a Viterbi pass. These two slots let the
+    # library fix a note the guess got wrong.
+    #
+    # They edit `steps`, not `quantized_groups`. A group carries ONE duration
+    # for every note in it, and _build_score_from_groups walks groups
+    # sequentially per hand — two groups sharing an offset get concatenated and
+    # the second one's offset is discarded. Steps carry per-note `durations[]`
+    # and `hands[]`, so beat, duration and hand are all natively expressible,
+    # and steps are what _setup_song_target renders AND what it hands to
+    # PlaybackService.load(), so one edit fixes notation and playback together.
+
+    # Per-note parallel arrays that must survive an edit round trip.
+    STEP_NOTE_ARRAYS = (
+        "pitches", "spellings", "hands", "fingers", "durations",
+        "ties", "beams", "tuplets", "articulations", "velocities",
+    )
+    _STEP_ARRAY_DEFAULTS = {
+        "pitches": 60, "spellings": None, "hands": "right", "fingers": 1,
+        "durations": 1.0, "ties": None, "beams": None, "tuplets": None,
+        "articulations": (), "velocities": None,
+    }
+
+    @staticmethod
+    def _snap_to_grid(value, grid: float, minimum: float) -> float:
+        """Quantizes a beat or duration to the grid, never below `minimum`."""
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            v = minimum
+        return round(max(minimum, round(v / grid) * grid), 4)
+
+    @staticmethod
+    def _measure_for_offset(barlines: list, offset: float) -> int:
+        """1-based measure number for a beat offset, from the record's barlines."""
+        import bisect
+        return bisect.bisect_right(barlines, float(offset) + 1e-6) + 1
+
+    @Slot(str, result="QVariantList")
+    def get_user_song_notes(self, song_id: str):
+        """
+        Flattens a song's steps into one row per note for the editor table.
+
+        `step_index`/`note_index` are provenance: save_user_song_notes uses them
+        to carry every attribute the table does not show (spelling, finger,
+        velocity, articulations) back onto the rebuilt step.
+        """
+        from logic.utils.pitch_names import pitch_name_with_octave
+        try:
+            with open(self._user_song_path(song_id), "r") as f:
+                record = migrate_record(json.load(f))
+        except Exception as e:
+            print(f"Music21Service: Could not read notes for {song_id}: {e}")
+            return []
+
+        barlines = record.get("barlines") or []
+        rows = []
+        for si, step in enumerate(record.get("steps", [])):
+            offset = float(step.get("offset", 0.0))
+            measure = self._measure_for_offset(barlines, offset)
+            pitches = step.get("pitches", [])
+            hands = step.get("hands", [])
+            durations = step.get("durations", [])
+            for ni, pitch in enumerate(pitches):
+                rows.append({
+                    "beat": round(offset, 4),
+                    "duration": round(float(durations[ni]) if ni < len(durations)
+                                      else float(step.get("duration", 1.0)), 4),
+                    "hand": hands[ni] if ni < len(hands) else "right",
+                    "pitch": int(pitch),
+                    "name": pitch_name_with_octave(pitch),
+                    "measure": measure,
+                    "step_index": si,
+                    "note_index": ni,
+                })
+
+        rows.sort(key=lambda r: (r["beat"], r["pitch"]))
+        return rows
+
+    @Slot(str, result="QVariantList")
+    def get_user_song_barlines(self, song_id: str):
+        """
+        The song's barline offsets, so the editor can renumber a note's measure
+        the moment its beat changes instead of showing a stale one until reload.
+        """
+        try:
+            with open(self._user_song_path(song_id), "r") as f:
+                return [float(b) for b in (json.load(f).get("barlines") or [])]
+        except Exception:
+            return []
+
+    @Slot(str, "QVariantList", result=str)
+    def save_user_song_notes(self, song_id: str, notes) -> str:
+        """
+        Rebuilds a song's steps from the editor's flat note list.
+
+        Returns "" on success, or a human-readable reason it was refused.
+        """
+        from logic.services.midi_ingestor import GRID
+
+        base_id = self._base_song_id(song_id)
+
+        trainer = self._chord_trainer
+        if trainer is not None:
+            try:
+                if bool(trainer.isActive) and self._base_song_id(str(getattr(trainer, "_song_id", "") or "")) == base_id:
+                    return "Stop practising this song before editing it."
+            except Exception as e:
+                print(f"Music21Service: Could not check the active song: {e}")
+
+        try:
+            with open(self._user_song_path(base_id), "r") as f:
+                record = migrate_record(json.load(f))
+        except Exception as e:
+            return f"Could not read the song file: {e}"
+
+        orig_steps = record.get("steps", [])
+        expected = sum(len(s.get("pitches", [])) for s in orig_steps)
+        if not expected:
+            return "That song has no notes to edit."
+
+        buckets: dict = {}
+        seen: set = set()
+        hand_changed = False
+
+        for row in (notes or []):
+            try:
+                si = int(row.get("step_index", -1))
+                ni = int(row.get("note_index", -1))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if not (0 <= si < len(orig_steps)):
+                continue
+            src = orig_steps[si]
+            if not (0 <= ni < len(src.get("pitches", []))):
+                continue
+            if (si, ni) in seen:
+                continue
+            seen.add((si, ni))
+
+            beat = self._snap_to_grid(row.get("beat"), GRID, 0.0)
+            duration = self._snap_to_grid(row.get("duration"), GRID, GRID)
+            hand = "left" if str(row.get("hand", "")).lower().startswith("l") else "right"
+
+            # Carry every per-note attribute across, then overwrite the three
+            # the editor owns. Everything the table does not show — spelling,
+            # finger, velocity, articulations — rides along untouched.
+            entry = {}
+            for arr in self.STEP_NOTE_ARRAYS:
+                values = src.get(arr) or []
+                entry[arr] = values[ni] if ni < len(values) else self._STEP_ARRAY_DEFAULTS[arr]
+
+            orig_beat = round(float(src.get("offset", 0.0)), 4)
+            orig_dur = round(float(entry["durations"]), 4)
+            orig_hand = entry["hands"]
+
+            entry["durations"] = duration
+            entry["hands"] = hand
+            if hand != orig_hand:
+                hand_changed = True
+
+            if beat != orig_beat or duration != orig_dur:
+                # Ties, beams and tuplets encode a relationship to neighbouring
+                # notes that moving or resizing invalidates. The renderer treats
+                # None as a plain note.
+                entry["ties"] = None
+                entry["beams"] = None
+                entry["tuplets"] = None
+
+            buckets.setdefault(beat, []).append(entry)
+
+        # Editing is modify-only, so a count mismatch means the list is not the
+        # one we handed out. Refuse rather than silently dropping notes.
+        if len(seen) != expected:
+            return (f"That edit doesn't match the song "
+                    f"({expected} notes expected, {len(seen)} received). Nothing was saved.")
+
+        # Rests hang off the step's offset rather than off any note, so they are
+        # reattached by offset — including to offsets whose notes all moved away,
+        # which keeps the silence where the arrangement put it.
+        rests_by_offset: dict = {}
+        for step in orig_steps:
+            rests = step.get("rests") or []
+            if rests:
+                rests_by_offset.setdefault(round(float(step.get("offset", 0.0)), 4), []).extend(rests)
+
+        new_steps = []
+        for offset in sorted(set(buckets) | set(rests_by_offset)):
+            entries = sorted(buckets.get(offset, []), key=lambda e: e["pitches"])
+            step = {"offset": offset}
+            for arr in self.STEP_NOTE_ARRAYS:
+                step[arr] = [e[arr] for e in entries]
+            step["duration"] = max(step["durations"]) if step["durations"] else GRID
+            step["rests"] = rests_by_offset.get(offset, [])
+            new_steps.append(step)
+
+        end_beat = max(
+            (s["offset"] + (max(s["durations"]) if s["durations"] else 0.0) for s in new_steps),
+            default=0.0,
+        )
+
+        record["steps"] = new_steps
+        # Keeps difficulty levels and hand modes working off the edited material.
+        # Per-note durations flatten to max() here — the same trade-off levels
+        # >= 1 already make; level 0 keeps the full-fidelity steps above.
+        record["quantized_groups"] = groups_from_steps(new_steps)
+        record["barlines"] = compute_barlines(record.get("time_signatures") or [], end_beat)
+        if hand_changed:
+            record["hand_mode"] = "manual"
+
+        try:
+            self._save_user_song_record(record)
+        except Exception as e:
+            return f"Could not save the song file: {e}"
+
+        # Also covers _load_user_song_steps, which reads the same _level_cache.
+        self._invalidate_level_cache(base_id)
+        if hand_changed:
+            self._update_user_song_entry(base_id, hand_mode="manual")
+        self.userSongsChanged.emit()
+        print(f"Music21Service: Saved {expected} edited notes for '{record.get('title')}'")
+        return ""
 
     # ── Phase 5: library management ──────────────────────────────────
 

@@ -18,6 +18,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtQuick import QQuickPaintedItem
 
+from logic.utils.pitch_names import PITCH_CLASS_NAMES
+
 log = logging.getLogger(__name__)
 
 # --- Pedagogical label constants -------------------------------------------
@@ -193,11 +195,8 @@ class NotationView(QQuickPaintedItem):
         
         # Map 12 MIDI notes to 0-6 diatonic steps
         self._diatonic_map = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6]
-        self._pitch_names = [
-            "C", "C♯", "D", "E♭", 
-            "E", "F", "F♯", "G", "A♭", 
-            "A", "B♭", "B"
-        ]
+        # Shared with the song-note editor so both name a pitch the same way.
+        self._pitch_names = PITCH_CLASS_NAMES
         self._smufl_family_cached = None
 
     def _get_smufl_family(self) -> str:
