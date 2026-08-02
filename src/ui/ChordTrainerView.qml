@@ -184,10 +184,9 @@ Rectangle {
         }
 
         function onStatusMessageRequested(type, message) {
-            if (type === "error") {
-                errorToastText.text = message;
-                errorToastAnim.restart();
-            }
+            errorToast.toastType = type;
+            errorToastText.text = message;
+            errorToastAnim.restart();
         }
     }
 
@@ -1433,26 +1432,34 @@ Rectangle {
         }
     }
 
-    // --- Error Toast Notification ---
+    // --- Status Toast Notification ---
     Rectangle {
         id: errorToast
+        // One of the three types statusMessageRequested declares. Anything
+        // unrecognised falls back to the error styling this toast shipped with.
+        property string toastType: "error"
+
         anchors.top: parent.top
         anchors.topMargin: 20 * mainWindow.uiScale
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(600 * mainWindow.uiScale, parent.width * 0.8)
         height: 60 * mainWindow.uiScale
         radius: 8 * mainWindow.uiScale
-        color: "#f44336"
+        color: toastType === "info" ? "#2196f3"
+             : toastType === "success" ? "#4caf50"
+             : "#f44336"
         opacity: 0.0
         z: 999
-        
+
         RowLayout {
             anchors.fill: parent
             anchors.margins: 15 * mainWindow.uiScale
             spacing: 12 * mainWindow.uiScale
-            
+
             Text {
-                text: "⚠"
+                text: errorToast.toastType === "info" ? "ℹ"
+                    : errorToast.toastType === "success" ? "✓"
+                    : "⚠"
                 color: "white"
                 font.pixelSize: 24 * mainWindow.uiScale
                 font.bold: true

@@ -887,7 +887,11 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         
         self._active_pitches.clear()
         self._session_stats.clear()
-        
+        # A new song never inherits an input block from the last one. Only the
+        # AI-lesson path clears this otherwise, so without it a free-play
+        # replay could start with a dead keyboard.
+        self._ignore_midi_until = 0.0
+
         self._apply_step({
             "exercise_type": "song_application",
             "piece_name": piece_name
@@ -1254,6 +1258,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._is_lesson_complete = False
             
             self._require_key_release_before_eval = False
+            self._ignore_midi_until = 0.0
             if self.metronome:
                 self.metronome.stop()
 
@@ -3302,7 +3307,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 self.scrollBeatChanged.emit(self._scroll_beat)
                 self._song_completed = True
                 self.songCompletedChanged.emit()
-                self._ignore_midi_until = time.time() + 99.0  # block input until AI responds
+                # Only a lesson has an AI turn worth blocking for, and only
+                # _apply_exercise clears this window. In free play nothing ever
+                # would, so the block outlived the song and deafened the next
+                # one. Mirrors the same guard on the rhythm path.
+                if self._is_lesson_mode:
+                    self._ignore_midi_until = time.time() + 99.0  # until the AI responds
                 print(f"ChordTrainer: Song complete — '{self._song_title}'")
                 QTimer.singleShot(1500, self._on_song_finished)
                 return

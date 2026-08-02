@@ -5,6 +5,8 @@ Covers the two mastery formulas, that `record_song_play` is called exactly once
 per completion with the song id, and the pacing/hand-filter plumbing around it.
 The DB is a stub throughout — nothing here touches live user data.
 """
+import time
+
 import pytest
 
 from logic.services.chord_trainer import ChordTrainerService
@@ -101,6 +103,20 @@ def sample_song():
         "pedal_events": [],
         "dynamics": [],
     }
+
+
+def play_through(trainer):
+    """
+    Plays every step of `sample_song()` to the end, releasing both keys between
+    steps. Asserts a live target before each one, so a stalled advance fails
+    here rather than at whatever the caller checks afterwards.
+    """
+    for i in range(4):
+        assert trainer._target_pitches, f"stalled with no target before step {i}"
+        for pitch in list(trainer._target_pitches):
+            trainer.handle_midi_note(pitch, True)
+        for pitch in (60 + i, 48 + i):
+            trainer.handle_midi_note(pitch, False)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -244,13 +260,7 @@ def test_a_rest_step_does_not_stall_playing_the_song_through(trainer):
     trainer.music21_spy.song_data = song
     trainer.start_song("user::rest-playthrough")
 
-    for i in range(4):
-        assert trainer._target_pitches, f"stalled before step {i}"
-        for pitch in list(trainer._target_pitches):
-            trainer.handle_midi_note(pitch, True)
-        for pitch in [60 + i, 48 + i]:
-            trainer.handle_midi_note(pitch, False)
-
+    play_through(trainer)
     assert trainer.isSongCompleted
 
 
@@ -280,6 +290,54 @@ def test_playback_keeps_the_unfiltered_steps_for_duet(trainer):
     # The app still has both hands available to play the accompaniment.
     loaded = trainer._playback_service.loaded["steps"]
     assert any("left" in s.get("hands", []) for s in loaded)
+
+
+# ── Input gating across songs ───────────────────────────────────────────────
+
+def test_finishing_a_free_play_song_leaves_the_keyboard_live(trainer):
+    """
+    _complete_chord used to arm a 99-second MIDI block on every song completion
+    "until the AI responds". Free play has no AI, and only the lesson path ever
+    cleared it, so the block outlived the song.
+    """
+    trainer.start_song("user::freeplay-done")
+    assert not trainer._is_lesson_mode
+
+    play_through(trainer)
+
+    assert trainer.isSongCompleted
+    assert trainer._ignore_midi_until == 0.0
+
+
+def test_a_lesson_song_still_blocks_input_until_the_coach_replies(trainer):
+    trainer.start_song("user::lesson-done")
+    trainer._is_lesson_mode = True
+
+    play_through(trainer)
+
+    assert trainer._ignore_midi_until > time.time()
+
+
+def test_starting_a_song_clears_a_stale_input_block(trainer):
+    trainer.start_song("user::stale-block")
+    trainer._ignore_midi_until = time.time() + 99.0
+
+    # Whatever armed the block, picking a song is the student asking to play.
+    trainer.start_song("user::stale-block")
+
+    assert trainer._ignore_midi_until == 0.0
+    for pitch in list(trainer._target_pitches):
+        trainer.handle_midi_note(pitch, True)
+    assert trainer._song_index == 1, "the first chord of the replay was swallowed"
+
+
+def test_leaving_a_session_clears_a_stale_input_block(trainer):
+    trainer.start_song("user::stop-block")
+    trainer._ignore_midi_until = time.time() + 99.0
+
+    trainer.stop_session()
+
+    assert trainer._ignore_midi_until == 0.0
 
 
 # ── Rhythm mode wiring ──────────────────────────────────────────────────────

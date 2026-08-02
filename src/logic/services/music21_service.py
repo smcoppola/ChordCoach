@@ -966,6 +966,12 @@ class Music21Service(QObject):
         return score, key_name, key_sharps
 
     def _score_difficulty(self, steps: list) -> int:
+        # Rest-only steps are notation, not events the hands have to execute, and
+        # every term below reads them as one: a 0-note chord, a step with no hands,
+        # and an onset that splits one real gap into two shorter ones. Score
+        # extraction is rest-dense (_build_score_from_groups fills gaps per hand
+        # and makeNotation completes measures), so this is not a rounding matter.
+        steps = [s for s in steps if s.get('pitches')]
         if not steps:
             return 1
         onset_diffs = []
