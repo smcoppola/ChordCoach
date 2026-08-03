@@ -133,8 +133,16 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=not is_mac,
+    # Windowed on every platform. A console build put a black terminal next to
+    # the UI on Windows for no user-facing benefit: nothing reads stdin, and
+    # bootstrap.setup_logging tees all output to
+    # <user data>/logs/chordcoach.log, which is where frozen-build
+    # troubleshooting should look anyway. Do not set this back to True to debug
+    # a build — read the log.
+    console=False,
     icon=app_icon,
+    # Keep False: it is what still raises a dialog for an unhandled exception in
+    # a windowed build, instead of the process vanishing silently.
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch='arm64' if is_mac else None,

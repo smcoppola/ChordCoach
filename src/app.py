@@ -17,13 +17,22 @@ from pathlib import Path
 from typing import cast
 
 # --- Environment Bootstrap ---
-# Diagnostic path logging for frozen build troubleshooting
+# Diagnostic path logging for frozen build troubleshooting.
+#
+# Buffered rather than printed. This runs only in a frozen build, which is
+# windowed on every platform now (see chordcoach.spec), so there is no console
+# for a print() here to reach — and it cannot simply be moved below
+# setup_logging, because repairing sys.path is what makes `import core.bootstrap`
+# work at all. So collect the lines and replay them into the log once logging
+# exists, a few statements later.
+_boot_diagnostics: list[str] = []
+
 if getattr(sys, 'frozen', False):
-    print(f"--- FROZEN DIAGNOSTICS ---")
+    _boot_diagnostics.append("--- FROZEN DIAGNOSTICS ---")
     meipass = getattr(sys, '_MEIPASS', '')
-    print(f"sys.executable: {sys.executable}")
-    print(f"sys._MEIPASS: {meipass}")
-    
+    _boot_diagnostics.append(f"sys.executable: {sys.executable}")
+    _boot_diagnostics.append(f"sys._MEIPASS: {meipass}")
+
     # In PyInstaller 6+, _MEIPASS often points directly to the _internal folder
     # We ensure either the root or the _internal folder (whichever contains our packages) is in path
     if meipass:
@@ -37,10 +46,10 @@ if getattr(sys, 'frozen', False):
             internal_dir = os.path.join(meipass, '_internal')
             if os.path.exists(internal_dir) and internal_dir not in sys.path:
                 sys.path.insert(0, internal_dir)
-                print(f"Added to sys.path: {internal_dir}")
-                
-    print(f"sys.path: {sys.path}")
-    print(f"--------------------------")
+                _boot_diagnostics.append(f"Added to sys.path: {internal_dir}")
+
+    _boot_diagnostics.append(f"sys.path: {sys.path}")
+    _boot_diagnostics.append("--------------------------")
 
 # This must happen before we try to import chordcoach_hw or load the UI
 import core.bootstrap as bootstrap
@@ -48,9 +57,14 @@ import core.bootstrap as bootstrap
 project_root, hw_bin_path, user_data_path, is_frozen = bootstrap.setup_env()
 
 # --- Persistent Logging ---
-# Redirect stdout/stderr to a log file so frozen macOS builds produce
-# inspectable output even without a terminal attached.
+# Redirect stdout/stderr to a log file. Frozen builds are windowed on every
+# platform, so this file is the only record of what happened at startup.
 bootstrap.setup_logging(user_data_path)
+
+# Replay anything gathered before the log existed.
+for _line in _boot_diagnostics:
+    print(_line)
+
 print(f"ChordCoach starting — root={project_root}, frozen={is_frozen}")
 print(f"sys.path[0]: {sys.path[0]}")
 
