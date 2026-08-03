@@ -57,6 +57,15 @@ def notation_fonts(qapp):
     return qapp
 
 
+@pytest.fixture(scope="session")
+def qml_dir():
+    """The components directory the app loads QML from."""
+    from pathlib import Path
+    d = Path(src_path) / "ui" / "components"
+    assert d.is_dir(), f"QML component directory not found: {d}"
+    return d
+
+
 @pytest.fixture
 def tmp_user_songs_dir(tmp_path, monkeypatch):
     """Fixture that isolates user_songs directory for tests to avoid writing to live user database."""

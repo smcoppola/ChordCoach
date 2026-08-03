@@ -125,6 +125,7 @@ class PlaybackService(QObject):
 
     isPlayingChanged = Signal(bool)
     playbackBeatChanged = Signal(float)
+    scrollAnchorChanged = Signal()
     tempoScaleChanged = Signal(float)
     loopStartBeatChanged = Signal(float)
     loopEndBeatChanged = Signal(float)
@@ -163,6 +164,17 @@ class PlaybackService(QObject):
         self._base_bpm = 100.0
         self._end_beat = 0.0
 
+        # Scroll anchor. The notation does not consume playbackBeat: sampling a
+        # moving position on a timer and pushing it into the UI is what made
+        # scrolling judder. Instead the view is told where the playhead is and
+        # how fast it is moving, and extrapolates on the display's frame clock.
+        # See ScrollClock.qml.
+        self._scroll_anchor: Dict[str, Any] = {
+            "beat": 0.0, "bps": 0.0, "snap": True, "active": False, "seq": 0,
+        }
+        self._last_anchor_time = 0.0
+        self._last_anchor_bps = 0.0
+
         # Precise Timer
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -179,6 +191,37 @@ class PlaybackService(QObject):
     def playbackBeat(self) -> float:
         return self._playback_beat
 
+    @Property("QVariantMap", notify=scrollAnchorChanged)
+    def scrollAnchor(self) -> Dict[str, Any]:
+        """
+        Where the playhead is and how fast it is moving, for ScrollClock.qml.
+
+        `snap` marks a genuine discontinuity (start, seek, loop wrap) that the
+        view must land on rather than slide into. Anchors without it are drift
+        corrections and are absorbed smoothly.
+        """
+        return self._scroll_anchor
+
+    def _beats_per_second(self) -> float:
+        """Current playhead speed in beats/sec, honouring the tempo map and scale."""
+        if not self._is_playing:
+            return 0.0
+        return bpm_at(self._tempo_map, self._playback_beat) / 60.0 * self._tempo_scale
+
+    def _emit_scroll_anchor(self, snap: bool = False, now: Optional[float] = None):
+        """Publishes a new scroll anchor. Cheap enough to call on any state change."""
+        bps = self._beats_per_second()
+        self._scroll_anchor = {
+            "beat": float(self._playback_beat),
+            "bps": float(bps),
+            "snap": bool(snap),
+            "active": bool(self._is_playing),
+            "seq": int(self._scroll_anchor["seq"]) + 1,
+        }
+        self._last_anchor_time = now if now is not None else time.perf_counter()
+        self._last_anchor_bps = bps
+        self.scrollAnchorChanged.emit()
+
     @Property(float, notify=tempoScaleChanged)
     def tempoScale(self) -> float:
         return self._tempo_scale
@@ -189,6 +232,9 @@ class PlaybackService(QObject):
         if abs(self._tempo_scale - clamped) > 1e-4:
             self._tempo_scale = clamped
             self.tempoScaleChanged.emit(self._tempo_scale)
+            # Speed changed, so the view's extrapolation is now wrong. Not a
+            # snap: the position is still correct, only the rate has changed.
+            self._emit_scroll_anchor()
 
     @Property(float, notify=loopStartBeatChanged)
     def loopStartBeat(self) -> float:
@@ -262,6 +308,7 @@ class PlaybackService(QObject):
         self._last_tick_time = time.perf_counter()
         self._timer.start()
         self.isPlayingChanged.emit(True)
+        self._emit_scroll_anchor(snap=True, now=self._last_tick_time)
 
     @Slot()
     def pause(self):
@@ -272,6 +319,8 @@ class PlaybackService(QObject):
         self._is_playing = False
         self._flush_sounding_notes()
         self.isPlayingChanged.emit(False)
+        # bps drops to 0, which parks the view exactly where the audio stopped.
+        self._emit_scroll_anchor(snap=True)
 
     @Slot()
     def stop(self):
@@ -286,6 +335,7 @@ class PlaybackService(QObject):
         self._cursor = 0
         self._last_metronome_beat = -1
         self.playbackBeatChanged.emit(0.0)
+        self._emit_scroll_anchor(snap=True)
 
     @Slot(float)
     def seek(self, beat: float):
@@ -303,6 +353,7 @@ class PlaybackService(QObject):
         self._last_metronome_beat = math.floor(target_beat) - 1
 
         self.playbackBeatChanged.emit(self._playback_beat)
+        self._emit_scroll_anchor(snap=True)
 
     @Slot()
     def setLoopA(self):
@@ -374,6 +425,8 @@ class PlaybackService(QObject):
             # because int_beat can never again exceed the pre-wrap value inside the loop.
             self._last_metronome_beat = math.floor(self._loop_start_beat) - 1
             self.playbackBeatChanged.emit(self._playback_beat)
+            # A wrap is a jump backwards; the view must cut, not rewind.
+            self._emit_scroll_anchor(snap=True, now=now)
             return
 
         # Dispatch events up to next_beat
@@ -415,10 +468,20 @@ class PlaybackService(QObject):
             self.playbackFinished.emit()
             return
 
-        # Emit playbackBeatChanged throttled to ~30 Hz (every 33 ms)
-        if (now - self._last_beat_signal_time) >= 0.033:
+        # playbackBeatChanged drives progress readouts, not the notation, so it
+        # runs at ~10 Hz. It used to run at 30 Hz to animate the scroll, which
+        # cost a QML binding pass three times as often for no visible gain.
+        if (now - self._last_beat_signal_time) >= 0.1:
             self._last_beat_signal_time = now
             self.playbackBeatChanged.emit(self._playback_beat)
+
+        # Re-anchor the view when its extrapolation would have gone stale:
+        # either the tempo map changed the speed, or enough time has passed that
+        # frame-clock drift could show. Four times a second is ample — the view
+        # is computing its own position in between, not waiting on us.
+        bps = self._beats_per_second()
+        if abs(bps - self._last_anchor_bps) > 1e-6 or (now - self._last_anchor_time) >= 0.25:
+            self._emit_scroll_anchor(now=now)
 
     def _flush_sounding_notes(self, excluded_hand_only: Tuple[bool, str] = (False, "")):
         """Flushes active sounding notes by transmitting explicit Note Off messages."""

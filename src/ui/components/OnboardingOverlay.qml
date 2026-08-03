@@ -468,7 +468,10 @@ Rectangle {
                 displayMode: "evaluation"
                 visible: !root.waitingForVoice
                 evalNotes: root.evalEngine ? root.evalEngine.sequenceNotes : []
-                evalBeat: root.evalEngine ? root.evalEngine.currentBeat : 0
+                // The anchor drives the playhead while the clock runs; the raw
+                // beat is the fallback for the paused and finished states.
+                evalAnchor: root.evalEngine ? root.evalEngine.scrollAnchor : null
+                evalSteppedBeat: root.evalEngine ? root.evalEngine.currentBeat : 0
                 evalNoteStates: root.evalEngine ? root.evalEngine.noteStates : []
             }
 

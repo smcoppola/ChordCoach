@@ -134,6 +134,16 @@ class RhythmEngine(QObject):
     def tempoBpm(self) -> float:
         return self._tempo_bpm
 
+    @property
+    def beatsPerSecond(self) -> float:
+        """
+        The clock's current rate, scale included.
+
+        This is what a view needs to extrapolate the playhead between updates
+        rather than waiting to be told each new position.
+        """
+        return (self._tempo_bpm * self._tempo_scale) / 60.0
+
     def set_tempo(self, bpm: float):
         """Changes the clock rate mid-run (e.g. the user moved the tempo slider)."""
         if bpm and bpm > 0:

@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from typing import List, Dict, Any
 from PySide6.QtCore import QObject, Signal, Slot, Property # type: ignore
@@ -25,6 +26,7 @@ class EvaluationService(QObject):
     metronomeTick = Signal(int)  # Beat number (1-4) during lead-in
     noteStateChanged = Signal()  # Emitted when a note is hit or missed
     pausedChanged = Signal()
+    scrollAnchorChanged = Signal()
 
     def __init__(self, db: DatabaseManager, project_root: Path):
         super().__init__()
@@ -40,9 +42,17 @@ class EvaluationService(QObject):
         # Current sequence data
         self._sequence_notes: List[Dict[str, Any]] = []
 
-        # Timing / scoring engine. beat_signal_interval=0.0 keeps the 100 Hz
-        # beatChanged cadence the onboarding scroll was tuned against; the
-        # engine's 30 Hz default is for the song renderer.
+        # Scroll anchor for the onboarding playhead. The view extrapolates from
+        # this on its own frame clock rather than consuming beat samples; see
+        # ScrollClock.qml.
+        self._scroll_anchor: Dict[str, Any] = {
+            "beat": 0.0, "bps": 0.0, "snap": True, "active": False, "seq": 0,
+        }
+        self._last_anchor_time = 0.0
+
+        # Timing / scoring engine. beat_signal_interval=0.0 keeps beatChanged on
+        # the engine's own 100 Hz tick. That no longer drives the scroll — the
+        # anchor does — but miss detection and the count-in still read it.
         self._engine = RhythmEngine(self, beat_signal_interval=0.0)
         self._engine.beatChanged.connect(self._on_engine_beat)
         self._engine.noteStateChanged.connect(self._on_engine_note_state)
@@ -77,6 +87,11 @@ class EvaluationService(QObject):
     @Property(float, notify=beatChanged)
     def currentBeat(self) -> float:
         return self._engine.currentBeat
+
+    @Property("QVariantMap", notify=scrollAnchorChanged)
+    def scrollAnchor(self) -> Dict[str, Any]:
+        """Playhead position and rate for ScrollClock.qml. See _emit_scroll_anchor."""
+        return self._scroll_anchor
 
     @Property(int, notify=levelChanged)
     def currentLevel(self) -> int:
@@ -193,6 +208,9 @@ class EvaluationService(QObject):
         print(f"EvaluationService: Beat timer starting at beat {self._engine.currentBeat}")
 
         self._engine.start(paused=paused)
+        # snap: the level begins at the count-in, a jump from wherever the
+        # previous level left the playhead.
+        self._emit_scroll_anchor(self._engine.currentBeat, active=not paused, snap=True)
         if paused:
             print(f"EvaluationService: Starting level {level} in PAUSED mode")
 
@@ -234,8 +252,35 @@ class EvaluationService(QObject):
     # were moved into RhythmEngine. These handlers translate the engine's
     # parameterised signals into this service's parameterless QML signals.
 
-    def _on_engine_beat(self, _beat: float):
+    def _on_engine_beat(self, beat: float):
         self.beatChanged.emit()
+        self._emit_scroll_anchor(beat, active=self._is_running and not self._paused)
+
+    def _emit_scroll_anchor(self, beat: float, active: bool,
+                            snap: bool = False, force: bool = False):
+        """
+        Publishes a scroll anchor, rate-limited to 4 Hz for drift corrections.
+
+        Safe to call from the engine's 100 Hz tick: only real changes and the
+        periodic correction get through. The view extrapolates in between.
+        """
+        bps = self._engine.beatsPerSecond if active else 0.0
+        now = time.monotonic()
+        speed_changed = abs(bps - float(self._scroll_anchor.get("bps", 0.0))) > 1e-6
+        state_changed = active != bool(self._scroll_anchor.get("active", False))
+        if not (snap or force or speed_changed or state_changed
+                or (now - self._last_anchor_time) >= 0.25):
+            return
+
+        self._last_anchor_time = now
+        self._scroll_anchor = {
+            "beat": float(beat),
+            "bps": float(bps),
+            "snap": bool(snap),
+            "active": bool(active),
+            "seq": int(self._scroll_anchor["seq"]) + 1,
+        }
+        self.scrollAnchorChanged.emit()
 
     def _on_engine_note_state(self, _index: int, _state: str):
         self._accuracy = self._engine.accuracy
@@ -251,6 +296,8 @@ class EvaluationService(QObject):
     def _end_level(self, accuracy: float, hits: int, total: int):
         """Evaluate accuracy for this level and decide what to do next."""
         self._engine.stop()
+        # The clock has stopped; park the view rather than let it keep scrolling.
+        self._emit_scroll_anchor(self._engine.currentBeat, active=False, snap=True)
 
         self._accuracy = accuracy
 

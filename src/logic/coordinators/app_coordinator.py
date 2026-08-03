@@ -72,6 +72,7 @@ class AppCoordinator(QObject):
         self.gemini.reconnecting.connect(self._on_ai_reconnecting)
         self.gemini.audioDataReceived.connect(self._on_ai_audio_received)
         
+        self.chord_trainer.coachNeededChanged.connect(self._on_coach_needed_changed)
         self.chord_trainer.isCircleOfFifthsModeChanged.connect(self._on_circle_mode_changed)
         self.chord_trainer.theoryVisualDirect.connect(self._on_theory_visual_received)
         
@@ -218,10 +219,36 @@ class AppCoordinator(QObject):
     
     @Slot(int, int)
     def _on_ai_reconnecting(self, attempt: int, max_attempts: int):
+        # Free play released the coach on purpose, so a late retry from a socket
+        # that was already closing must not raise the overlay over the music.
+        if not self.chord_trainer.coachNeeded:
+            return
+
         self._is_reconnecting = True
         self.isReconnectingChanged.emit(True)
         print(f"Coordinator: Gemini is reconnecting ({attempt}/{max_attempts})...")
         self.hw_service.play_reconnect_ping()
+
+    @Slot(bool)
+    def _on_coach_needed_changed(self, needed: bool):
+        """
+        Releases or restores the coach session as modes change.
+
+        Free play is self-paced and never consults the coach, so keeping a
+        session open through a piece spends quota on nothing and — because a
+        dropped socket arms the retry loop — drops a full-screen "reconnecting"
+        overlay over the notation mid-performance.
+        """
+        if needed:
+            self.gemini.resume_service()
+            return
+
+        # Clear any retry already in flight, so entering free play takes the
+        # overlay down rather than leaving it up over the first bars.
+        if self._is_reconnecting:
+            self._is_reconnecting = False
+            self.isReconnectingChanged.emit(False)
+        self.gemini.release_service()
 
     @Slot()
     def _on_trainer_metronome(self):

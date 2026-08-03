@@ -1,4 +1,6 @@
-import QtQuick 2.15
+// Unversioned QtQuick import: FrameAnimation, which ScrollClock is built on,
+// arrived in Qt 6.4 and is not reachable through the QtQuick 2.x version scheme.
+import QtQuick
 import QtQuick.Layouts 1.15
 import Qt5Compat.GraphicalEffects
 import ChordCoach 1.0
@@ -21,7 +23,14 @@ Rectangle {
     // Evaluation / scrolling mode properties (generic - reusable for MIDI playback)
     property string displayMode: "trainer"  // "trainer" or "evaluation"
     property var evalNotes: []               // Array of {pitch, start_beat, duration_beats, hand}
-    property real evalBeat: 0                // Current beat position from service
+
+    // Evaluation playhead. Same two regimes as scrollBeat: an anchor drives it
+    // when the onboarding clock is running, otherwise the raw value is used.
+    property var evalAnchor: null
+    property real evalSteppedBeat: 0
+    property bool evalClockDriven: evalAnchor ? evalAnchor.active === true : false
+    property real evalBeat: evalClockDriven ? evalClock.beat : evalSteppedBeat
+
     property real loopStartBeat: -1.0
     property real loopEndBeat: -1.0
     property var evalNoteStates: []          // Array of "pending"/"hit"/"miss"
@@ -131,11 +140,50 @@ Rectangle {
         return "";
     }
 
-    property real scrollBeat: {
+    // The playhead position, from whichever of the two regimes is driving.
+    //
+    // A clocked transport (piece playback, rhythm mode, the metronome) publishes
+    // an anchor and scrollClock extrapolates it on the display's frame clock —
+    // uniform velocity, one update per frame, no easing.
+    //
+    // Self-paced play has no clock: the playhead jumps a step at a time as the
+    // user plays, so it goes through steppedBeat and keeps the 150 ms ease that
+    // makes each jump readable. Easing the clocked regime is what made it
+    // judder, so the two must not share a path.
+    property real steppedBeat: {
         if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
             return appState.chordTrainer.scrollBeat || 0.0;
         }
         return 0.0;
+    }
+
+    property var scrollAnchor: {
+        if (typeof appState !== "undefined" && appState && appState.chordTrainer) {
+            return appState.chordTrainer.scrollAnchor || null;
+        }
+        return null;
+    }
+
+    // Set by a parent that owns a different transport (ChordTrainerView routes
+    // piece playback in here), overriding the chordTrainer anchor.
+    property var scrollAnchorOverride: null
+    property var activeAnchor: scrollAnchorOverride ? scrollAnchorOverride : scrollAnchor
+    property bool clockDriven: activeAnchor ? activeAnchor.active === true : false
+
+    property real scrollBeat: clockDriven ? scrollClock.beat : steppedBeat
+
+    // The two frame-locked playhead clocks. Each runs only while its own
+    // transport is active, so neither keeps the render loop awake otherwise.
+    ScrollClock {
+        id: scrollClock
+        anchor: root.activeAnchor
+        active: root.clockDriven
+    }
+
+    ScrollClock {
+        id: evalClock
+        anchor: root.evalAnchor
+        active: root.evalClockDriven
     }
 
     property var scrollingNotes: {
@@ -173,9 +221,12 @@ Rectangle {
         return 0;
     }
 
-    // ADDED: Interpolators to catch backend property snaps and force smooth sliding
-    Behavior on scrollBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-    Behavior on evalBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+    // Eases the discrete step-to-step jumps of self-paced play. Deliberately NOT
+    // on scrollBeat: a Behavior retargeted before it finishes restarts its
+    // easing curve, so against a continuously moving playhead it produced a
+    // sawtooth velocity — the judder this whole path exists to avoid — plus
+    // 150 ms of lag behind the audio.
+    Behavior on steppedBeat { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
     property bool isScrollingMode: {
         return (exerciseType === "pentascale" || exerciseType === "steady_pulse" || exerciseType === "progression" || exerciseType === "song_application");

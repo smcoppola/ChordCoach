@@ -46,6 +46,11 @@ class ChordTrainerService(QObject):
     pentascaleNotesChanged = Signal()
     currentNoteIndexChanged = Signal()
     scrollBeatChanged = Signal(float)
+    scrollAnchorChanged = Signal()
+    # True when the current mode wants a live coach, False when it does not.
+    # Free play does not: the coordinator releases the session on False so a
+    # dropped socket cannot raise the reconnect overlay mid-piece.
+    coachNeededChanged = Signal(bool)
     scrollingNotesChanged = Signal()
     scrollBpmChanged = Signal()
     songTitleChanged = Signal()
@@ -97,6 +102,17 @@ class ChordTrainerService(QObject):
         self._is_simultaneous = False
 
         self._scroll_beat: float = 0.0
+
+        # Whether the current mode wants a live coach. Starts True: everything
+        # except free play does.
+        self._coach_needed: bool = True
+
+        # Scroll anchor for the continuously clocked exercises. See the
+        # scrollAnchor property; self-paced play deliberately does not use it.
+        self._scroll_anchor: dict = {
+            "beat": 0.0, "bps": 0.0, "snap": True, "active": False, "seq": 0,
+        }
+        self._last_anchor_time: float = 0.0
         self._scrolling_notes: list = []
         self._scroll_bpm: int = 0
         self._song_title: str = ""
@@ -273,6 +289,18 @@ class ChordTrainerService(QObject):
         if self.metronome:
             self.metronome.tick.connect(self._on_metronome_tick)
             self.metronome.beatPositionChanged.connect(self._on_metronome_beat_position)
+            self.metronome.runningChanged.connect(self._on_metronome_running_changed)
+
+    def _on_metronome_running_changed(self, running: bool):
+        """
+        Drops the scroll anchor when the metronome stops.
+
+        stop() halts the beat clock, so no further position arrives. Without
+        this the view would keep extrapolating along the last known tempo and
+        scroll away on its own.
+        """
+        if not running:
+            self._emit_scroll_anchor(self._scroll_beat, 0.0, active=False, snap=True)
 
     def _on_metronome_tick(self, beat_count):
         # Forward to QML (keeping existing signal for compatibility)
@@ -283,9 +311,51 @@ class ChordTrainerService(QObject):
             if beat_count >= 1: # Start counting hits once real beats begin
                 self._check_steady_pulse_beat(beat_count)
 
+    def _emit_scroll_anchor(self, beat: float, bps: float, active: bool,
+                            snap: bool = False, force: bool = False):
+        """
+        Publishes a scroll anchor, rate-limited to 4 Hz for drift corrections.
+
+        Callers on a 100 Hz clock can call this every tick; only genuine changes
+        (`snap`/`force`) and the periodic correction get through. The view is
+        extrapolating between anchors, so this is a correction channel, not a
+        position feed.
+        """
+        now = time.monotonic()
+        speed_changed = abs(bps - float(self._scroll_anchor.get("bps", 0.0))) > 1e-6
+        state_changed = active != bool(self._scroll_anchor.get("active", False))
+        if not (snap or force or speed_changed or state_changed
+                or (now - self._last_anchor_time) >= 0.25):
+            return
+
+        self._last_anchor_time = now
+        self._scroll_anchor = {
+            "beat": float(beat),
+            "bps": float(bps),
+            "snap": bool(snap),
+            "active": bool(active),
+            "seq": int(self._scroll_anchor["seq"]) + 1,
+        }
+        self.scrollAnchorChanged.emit()
+
+    def _set_stepped_scroll_beat(self, beat: float):
+        """
+        Moves the playhead a discrete step, as self-paced play does.
+
+        Deactivates the scroll anchor so the view stops extrapolating and eases
+        into the new position instead. Self-paced play is driven by the user's
+        keypresses, not a clock — there is no rate to extrapolate along, and the
+        150 ms ease between steps is the intended feel.
+        """
+        self._scroll_beat = float(beat)
+        self.scrollBeatChanged.emit(self._scroll_beat)
+        self._emit_scroll_anchor(self._scroll_beat, 0.0, active=False)
+
     def _on_metronome_beat_position(self, pos: float):
         self._scroll_beat = pos
         self.scrollBeatChanged.emit(pos)
+        bpm = float(self.metronome.bpm) if self.metronome else 0.0
+        self._emit_scroll_anchor(pos, bpm / 60.0, active=bpm > 0)
 
     def _on_song_finished(self):
         """Called 1.5 s after the last song note is played."""
@@ -372,6 +442,19 @@ class ChordTrainerService(QObject):
     @Property(float, notify=scrollBeatChanged)
     def scrollBeat(self) -> float:  # type: ignore[reportRedeclaration]
         return self._scroll_beat
+
+    @Property("QVariantMap", notify=scrollAnchorChanged)
+    def scrollAnchor(self) -> dict:  # type: ignore[reportRedeclaration]
+        """
+        Where the playhead is and how fast it moves, for ScrollClock.qml.
+
+        Only the continuously clocked exercises publish an active anchor: the
+        metronome-driven ones and rhythm mode. Self-paced play advances the
+        playhead a step at a time on the user's own input, which is not a clock
+        and must keep being eased through scrollBeat instead — see the
+        steppedBeat branch in EnhancedSheetMusic.qml.
+        """
+        return self._scroll_anchor
 
     @Property(list, notify=scrollingNotesChanged)
     def scrollingNotes(self) -> list:  # type: ignore[reportRedeclaration]
@@ -483,6 +566,17 @@ class ChordTrainerService(QObject):
     def isLessonMode(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._is_lesson_mode
 
+    @Property(bool, notify=coachNeededChanged)
+    def coachNeeded(self) -> bool:  # type: ignore[reportRedeclaration]
+        """
+        Whether the current mode wants a live coach session.
+
+        False during free play, which is self-paced and never consults the
+        coach. The UI reads this to keep coach-connection chrome off the screen
+        while a piece is being played.
+        """
+        return self._coach_needed
+
     @Property(str, notify=lessonStateChanged)
     def exerciseType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercise_type
@@ -585,9 +679,23 @@ class ChordTrainerService(QObject):
                     return True
         return False
 
+    def _set_coach_needed(self, needed: bool):
+        """
+        Declares whether the current mode wants a live coach.
+
+        Only announces changes: start_song runs on every replay of a piece, and
+        re-releasing an already-released session would churn the websocket.
+        """
+        if self._coach_needed == needed:
+            return
+        self._coach_needed = needed
+        self.coachNeededChanged.emit(needed)
+
     @Slot()
     def start_session(self):
-        # Free Practice Mode
+        # Free Practice Mode. Unlike free play this is coach-driven — it asks
+        # for a chord and reacts to what is played — so the session stays up.
+        self._set_coach_needed(True)
         self._is_lesson_mode = False
         self._exercise_name = "Free Practice"
         self._lesson_progress = 0
@@ -613,6 +721,11 @@ class ChordTrainerService(QObject):
         """
         if self.isLoading:
             return
+
+        # Defensive: a lesson is entirely coach-driven, so make sure the session
+        # is on its way back even if we reached here without passing through
+        # stop_session.
+        self._set_coach_needed(True)
 
         self._is_lesson_mode = True
         self._is_lesson_complete = False
@@ -727,6 +840,7 @@ Start the lesson now by calling set_exercise and speaking.
         if self.isLoading:
             return
 
+        self._set_coach_needed(True)
         self._is_lesson_mode = True
         self._is_lesson_complete = False
         self._lesson_progress = 0
@@ -884,7 +998,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._is_lesson_mode = False
         self._is_lesson_complete = False
         self._set_state(LessonState.LOADING)
-        
+
+        # Free play never talks to the coach, so release it for the duration.
+        # Announced before the song loads rather than after, so a socket that is
+        # already dropping cannot get a reconnect overlay up over the music.
+        self._set_coach_needed(False)
+
         self._active_pitches.clear()
         self._session_stats.clear()
         # A new song never inherits an input block from the last one. Only the
@@ -1252,6 +1371,11 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     @Slot()
     def stop_session(self):
         """Stops the current exercise or lesson and returns the trainer to IDLE state."""
+        # Unconditional, and outside the isActive guard: leaving free play must
+        # restore the coach even when the trainer is already idle, or the next
+        # lesson starts with no session.
+        self._set_coach_needed(True)
+
         if self.isActive or self.isWaitingToBegin:
             print("ChordTrainer: stop_session called. Returning to IDLE.")
             self._set_state(LessonState.IDLE)
@@ -1503,6 +1627,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self.scrollBpmChanged.emit()
         self._scroll_beat = 0.0 if bpm == 0 else (self.metronome.currentBeatPosition if self.metronome else 0.0)
         self.scrollBeatChanged.emit(self._scroll_beat)
+        self._emit_scroll_anchor(self._scroll_beat, bpm / 60.0, active=bpm > 0, snap=True)
         
         self.lessonStateChanged.emit()
         self.targetChordChanged.emit(self._target_chord_name)
@@ -1576,8 +1701,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         self._scrolling_notes = sn
         self.scrollingNotesChanged.emit()
-        self._scroll_beat = 0.0
-        self.scrollBeatChanged.emit(self._scroll_beat)
+        self._set_stepped_scroll_beat(0.0)
         
         # User-driven pacing (no metronome by default for progressions)
         self._scroll_bpm = 0
@@ -1749,8 +1873,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._song_completed = False
         self.songCompletedChanged.emit()
 
-        self._scroll_beat = 0.0
-        self.scrollBeatChanged.emit(self._scroll_beat)
+        self._set_stepped_scroll_beat(0.0)
 
         # User-driven pacing (no metronome)
         self._scroll_bpm = 0
@@ -1959,6 +2082,11 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         self._scroll_beat = self._rhythm_engine.currentBeat
         self.scrollBeatChanged.emit(self._scroll_beat)
+        # snap: the run begins at the count-in, which is a jump from wherever
+        # the playhead was parked.
+        self._emit_scroll_anchor(
+            self._scroll_beat, self._rhythm_tempo() / 60.0, active=True, snap=True
+        )
 
         self._rhythm_engine.start()
         print(f"ChordTrainer: Rhythm run started — {len(notes)} notes at "
@@ -1967,6 +2095,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     def _on_rhythm_beat(self, beat: float):
         self._scroll_beat = beat
         self.scrollBeatChanged.emit(beat)
+        self._emit_scroll_anchor(beat, self._rhythm_tempo() / 60.0, active=True)
 
     def _on_rhythm_note_state(self, index: int, state: str):
         if 0 <= index < len(self._rhythm_sn_index):
@@ -1983,6 +2112,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     def _on_rhythm_finished(self, accuracy: float, hits: int, misses: int):
         """Scores the run, banks mastery and raises the completion overlay."""
+        # The clock has stopped, so stop the view extrapolating along it —
+        # otherwise the notation keeps scrolling past the end of the run.
+        self._emit_scroll_anchor(self._scroll_beat, 0.0, active=False, snap=True)
+
         mastery = (accuracy ** 2) * 10.0
         if self._rhythm_loop_only:
             mastery /= 2.0
@@ -2849,8 +2982,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._target_intervals = set()
         
         # Advance the playhead in the UI
-        self._scroll_beat = float(step['offset'])
-        self.scrollBeatChanged.emit(self._scroll_beat)
+        self._set_stepped_scroll_beat(float(step['offset']))
         
         # Reset tracking state
         self._hold_progress = 0.0
@@ -3033,8 +3165,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._pentascale_index += 1
             self.currentNoteIndexChanged.emit()
             if self._scroll_bpm == 0:
-                self._scroll_beat = float(self._pentascale_index)
-                self.scrollBeatChanged.emit(self._scroll_beat)
+                self._set_stepped_scroll_beat(float(self._pentascale_index))
 
             if self._pentascale_index >= len(self._pentascale_sequence):
                 # All 5 notes played correctly — complete the step
@@ -3286,8 +3417,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         if self._exercise_type == "progression":
             self._progression_index += 1
             if self._scroll_bpm == 0:
-                self._scroll_beat = float(self._progression_index)
-                self.scrollBeatChanged.emit(self._scroll_beat)
+                self._set_stepped_scroll_beat(float(self._progression_index))
                 
             if self._progression_index < len(self._progression_steps):
                 print(f"ChordTrainer: Advancing to next progression chord immediately...")
@@ -3303,8 +3433,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 return
             else:
                 # Last note played — advance beat past song end so all notes render gray
-                self._scroll_beat = self._song_end_beat + 0.5
-                self.scrollBeatChanged.emit(self._scroll_beat)
+                self._set_stepped_scroll_beat(self._song_end_beat + 0.5)
                 self._song_completed = True
                 self.songCompletedChanged.emit()
                 # Only a lesson has an AI turn worth blocking for, and only
@@ -3362,6 +3491,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self.scrollBpmChanged.emit()
         self._scroll_beat = 0.0 if bpm == 0 else (self.metronome.currentBeatPosition if self.metronome else 0.0)
         self.scrollBeatChanged.emit(self._scroll_beat)
+        self._emit_scroll_anchor(self._scroll_beat, bpm / 60.0, active=bpm > 0, snap=True)
         if self.metronome:
             if self._ai_is_currently_speaking:
                 self.metronome.defer_start(bpm)

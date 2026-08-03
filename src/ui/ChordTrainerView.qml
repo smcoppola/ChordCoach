@@ -40,7 +40,15 @@ Rectangle {
 
 
     // UI Modal States for Blurring
-    property bool isReconnecting: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+    //
+    // Free play releases the coach on purpose, so no coach-connection chrome
+    // belongs on screen there — a reconnect overlay dropping over the notation
+    // mid-piece is exactly what a player cannot read around. This is the last
+    // line of defence; the session is already released in AppCoordinator.
+    property bool coachNeeded: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer)
+        ? appState.chordTrainer.coachNeeded : true
+    property bool isReconnecting: coachNeeded
+        && ((typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false)
     property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isSongCompleted || isLoading || isReconnecting
 
     
@@ -737,10 +745,14 @@ Rectangle {
                     anchors.fill: parent
                     targetChordName: root.currentTarget
                     
-                    // Dynamic playhead binding: use playbackBeat during playback, chordTrainer.scrollBeat otherwise.
+                    // Dynamic playhead source: piece playback owns the playhead while
+                    // its transport runs, otherwise the trainer's own clock does.
                     // NOTE: song mode renders via scrollBeat (displayMode "trainer"), so this must override
                     // scrollBeat — binding evalBeat here would have no visible effect.
-                    scrollBeat: (appState && appState.playback && appState.playback.isPlaying) ? appState.playback.playbackBeat : (appState && appState.chordTrainer ? appState.chordTrainer.scrollBeat : 0.0)
+                    // The override is an *anchor*, not a position: EnhancedSheetMusic
+                    // extrapolates it on the frame clock rather than being fed samples.
+                    scrollAnchorOverride: (appState && appState.playback && appState.playback.isPlaying)
+                        ? appState.playback.scrollAnchor : null
                     loopStartBeat: appState && appState.playback ? appState.playback.loopStartBeat : -1.0
                     loopEndBeat: appState && appState.playback ? appState.playback.loopEndBeat : -1.0
 
@@ -869,7 +881,7 @@ Rectangle {
         anchors.fill: parent
         z: 100
         color: Qt.rgba(0.11, 0.11, 0.12, 0.5)
-        visible: root.isOverlayVisible && !root.isLessonComplete && !root.isLoading && !appState.isReconnecting
+        visible: root.isOverlayVisible && !root.isLessonComplete && !root.isLoading && !root.isReconnecting
 
         onVisibleChanged: {
             var d = new Date();
@@ -1323,11 +1335,12 @@ Rectangle {
         }
     }
 
-    // Reconnecting Overlay — appears over exercise content when AI drops mid-lesson
+    // Reconnecting Overlay — appears over exercise content when AI drops mid-lesson.
+    // Never in free play, which does not use the coach at all.
     Rectangle {
         anchors.fill: parent
         color: "#CC111111"
-        visible: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+        visible: root.isReconnecting
         z: 200
         onVisibleChanged: {
             var d = new Date();
@@ -1351,12 +1364,12 @@ Rectangle {
 
                 SequentialAnimation on scale {
                     loops: Animation.Infinite
-                    running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                    running: root.isReconnecting
                     NumberAnimation { from: 0.6; to: 1.4; duration: 1500; easing.type: Easing.OutCubic }
                 }
                 SequentialAnimation on opacity {
                     loops: Animation.Infinite
-                    running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                    running: root.isReconnecting
                     NumberAnimation { from: 1.0; to: 0.0; duration: 1500; easing.type: Easing.OutCubic }
                 }
 
@@ -1370,7 +1383,7 @@ Rectangle {
 
                     SequentialAnimation on scale {
                         loops: Animation.Infinite
-                        running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                        running: root.isReconnecting
                         NumberAnimation { from: 0.8; to: 1.2; duration: 750; easing.type: Easing.InOutSine }
                         NumberAnimation { from: 1.2; to: 0.8; duration: 750; easing.type: Easing.InOutSine }
                     }
@@ -1387,7 +1400,7 @@ Rectangle {
 
                 SequentialAnimation on opacity {
                     loops: Animation.Infinite
-                    running: (typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false
+                    running: root.isReconnecting
                     NumberAnimation { from: 0.4; to: 1.0; duration: 1000; easing.type: Easing.InOutSine }
                     NumberAnimation { from: 1.0; to: 0.4; duration: 1000; easing.type: Easing.InOutSine }
                 }

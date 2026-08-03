@@ -27,6 +27,18 @@ Rectangle {
     property bool midiConnected: (typeof appState !== "undefined" && appState) ? appState.midiConnected : false
     property string midiDevice: midiConnected ? appState.midiDeviceName : "No MIDI device"
     property bool aiConnected: (typeof appState !== "undefined" && appState) ? appState.aiConnected : false
+
+    // Free play releases the coach deliberately. Reporting that as "Offline" in
+    // red would read as a fault the user should do something about, so the
+    // released state gets its own neutral wording and colour.
+    property bool coachReleased: (typeof appState !== "undefined" && appState && appState.chordTrainer)
+        ? !appState.chordTrainer.coachNeeded : false
+    property string coachStatusText: coachReleased
+        ? "AI Coach Paused"
+        : (aiConnected ? "AI Coach Connected" : "AI Coach Offline")
+    property color coachStatusColor: coachReleased
+        ? "#888888"
+        : (aiConnected ? "#4CAF50" : "#F44336")
     property bool isLessonActive: (typeof appState !== "undefined" && appState && appState.chordTrainer) ? appState.chordTrainer.isActive : false
     property bool isLessonMode: isLessonActive && appState.chordTrainer.isLessonMode
     property int lessonProgress: isLessonMode ? appState.chordTrainer.lessonProgress : 0
@@ -92,10 +104,10 @@ Rectangle {
                 
                 Rectangle {
                     width: 10 * mainWindow.uiScale; height: 10 * mainWindow.uiScale; radius: 5 * mainWindow.uiScale
-                    color: root.aiConnected ? "#4CAF50" : "#F44336"
-                    
+                    color: root.coachStatusColor
+
                     SequentialAnimation on opacity {
-                        running: root.aiConnected
+                        running: root.aiConnected && !root.coachReleased
                         loops: Animation.Infinite
                         NumberAnimation { to: 0.4; duration: 1500; easing.type: Easing.InOutSine }
                         NumberAnimation { to: 1.0; duration: 1500; easing.type: Easing.InOutSine }
@@ -103,8 +115,8 @@ Rectangle {
                 }
                 
                 Text {
-                    text: root.aiConnected ? "AI Coach Connected" : "AI Coach Offline"
-                    color: root.aiConnected ? "#4CAF50" : "#F44336"
+                    text: root.coachStatusText
+                    color: root.coachStatusColor
                     font.pixelSize: 13 * mainWindow.uiScale
                     font.bold: true
                     Layout.fillWidth: true

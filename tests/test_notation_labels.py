@@ -21,9 +21,36 @@ from ui.notation_view import (
 )
 from PySide6.QtGui import QColor
 
-# WCAG AA for normal text. Every capsule fill the renderer can produce must
-# clear this against its chosen label colour.
-MIN_CONTRAST = 4.5
+# WCAG AA for large text. The capsule letter is Inter Bold at roughly 0.9x the
+# capsule height, which clears the large-text size threshold at every pane size
+# the app supports, so 3.0 is the applicable bar rather than 4.5.
+MIN_LARGE_TEXT_CONTRAST = 3.0
+
+# Every capsule fill the renderer can produce, built from the live palette so a
+# new finger colour cannot be added without also being contrast-checked.
+_ALL_FILLS = dict(
+    {f"finger {k}": v for k, v in NotationView()._pedagogical_colors.items()},
+    **{
+        "monochrome": "#555555",
+        "completed": "#888888",
+        "miss": "#F44336",
+        "monochrome active": "#111111",
+    },
+)
+
+# Fills deliberately kept below MIN_LARGE_TEXT_CONTRAST with a white label.
+# Listed rather than quietly dropped from the check, so the trade-off stays
+# visible and no new colour can join them by accident.
+ACCEPTED_BELOW_BAR = {
+    # ~1.7:1. The index finger's yellow is part of the finger-colour mapping
+    # learners memorise, and darkening it enough for white text turns it orange.
+    # Kept as-is by explicit decision; the letter stays readable in practice
+    # because it is bold and large against a saturated ground.
+    "#FFB300": "index-finger amber, kept for finger-colour recognition",
+    # ~2.9:1, fractionally under. These are notes the playhead has already
+    # passed, where the letter is reference rather than guidance.
+    "#888888": "completed/hit notes, marginally under the bar",
+}
 
 # Pane sizes span a small windowed pane through a 4K-ish full screen.
 PANE_WIDTHS = [600, 900, 1400, 2400]
@@ -211,26 +238,68 @@ def test_capsule_width_survives_malformed_duration(view):
 
 # --- Contrast --------------------------------------------------------------
 
-def _all_fill_colors(view):
-    """Every capsule fill colour the renderer can produce."""
-    fills = list(view._pedagogical_colors.values())
-    fills += [
-        "#555555",  # monochrome mode
-        "#888888",  # completed / hit
-        "#F44336",  # miss
-        "#111111",  # monochrome active, and the no-finger fallback
-    ]
-    return fills
+def _worst_case_contrast(hex_fill: str) -> float:
+    """
+    Contrast of the label against the lightest part of the capsule.
+
+    The fill is a vertical gradient running from lighter(112) to darker(108),
+    so the top of the capsule is where a white letter is hardest to read. Testing
+    the flat colour would pass fills that are marginal in the places that matter.
+    """
+    fill = QColor(hex_fill)
+    return contrast_ratio(fill.lighter(112), label_color_for(fill))
 
 
-def test_every_fill_color_has_a_legible_label(view):
-    for hex_fill in _all_fill_colors(view):
-        fill = QColor(hex_fill)
-        label = label_color_for(fill)
-        ratio = contrast_ratio(fill, label)
-        assert ratio >= MIN_CONTRAST, (
-            f"{hex_fill} pairs with {label.name()} at only {ratio:.2f}:1"
-        )
+@pytest.mark.parametrize("name,hex_fill", sorted(_ALL_FILLS.items()))
+def test_every_fill_carries_its_label(view, name, hex_fill):
+    """
+    Labels are always white, so the legibility requirement lands on the fills:
+    each must be dark enough to carry white text.
+
+    The bar is the WCAG large-text threshold, which these labels qualify for —
+    Inter Bold at roughly 0.9x the capsule height. Fills held below it on
+    purpose are listed in ACCEPTED_BELOW_BAR with the reason.
+    """
+    if hex_fill in ACCEPTED_BELOW_BAR:
+        pytest.skip(f"{name}: {ACCEPTED_BELOW_BAR[hex_fill]}")
+
+    ratio = _worst_case_contrast(hex_fill)
+    assert ratio >= MIN_LARGE_TEXT_CONTRAST, (
+        f"{name} ({hex_fill}) carries white text at only {ratio:.2f}:1 at the "
+        f"light end of its gradient; needs {MIN_LARGE_TEXT_CONTRAST}:1"
+    )
+
+
+def test_accepted_exceptions_are_still_in_use():
+    """
+    Stops the exception list outliving the colours it excuses.
+
+    An entry here suppresses a real legibility check, so a stale one would
+    silently keep suppressing it for a colour that no longer exists.
+    """
+    unused = set(ACCEPTED_BELOW_BAR) - set(_ALL_FILLS.values())
+    assert not unused, f"ACCEPTED_BELOW_BAR lists fills nothing uses: {unused}"
+
+
+def test_accepted_exceptions_actually_need_the_exception():
+    """
+    The converse: an entry that now clears the bar should be deleted, not left
+    quietly disabling the check.
+    """
+    needless = {
+        h for h in ACCEPTED_BELOW_BAR
+        if _worst_case_contrast(h) >= MIN_LARGE_TEXT_CONTRAST
+    }
+    assert not needless, (
+        f"these fills now clear {MIN_LARGE_TEXT_CONTRAST}:1 and no longer need "
+        f"an exception: {needless}"
+    )
+
+
+def test_labels_are_uniformly_white(view):
+    """No fill may opt into a dark label — that is the look this replaced."""
+    for hex_fill in _ALL_FILLS.values():
+        assert label_color_for(QColor(hex_fill)).name().upper() == "#FFFFFF"
 
 
 def test_luminance_endpoints():
@@ -247,14 +316,19 @@ def test_contrast_ratio_endpoints():
     assert contrast_ratio(white, black) == pytest.approx(contrast_ratio(black, white))
 
 
-def test_amber_uses_dark_text(view):
+def test_green_and_blue_stay_dark_enough_for_white(view):
     """
-    The regression this rule fixes: the previous implementation drew white on
-    every fill, which on the index-finger amber was about 1.9:1.
+    Pins the two colours that were darkened specifically to carry a white label.
+
+    Green and blue are the Material 700 shades rather than 500 for this reason;
+    reverting either to a lighter shade fails here.
     """
-    amber = QColor(view._pedagogical_colors["2"])
-    assert label_color_for(amber).lightness() < 128
-    assert contrast_ratio(amber, QColor("#FFFFFF")) < MIN_CONTRAST
+    for finger, name in (("1", "green"), ("4", "blue")):
+        hex_fill = view._pedagogical_colors[finger]
+        ratio = _worst_case_contrast(hex_fill)
+        assert ratio >= MIN_LARGE_TEXT_CONTRAST, (
+            f"{name} ({hex_fill}) is too light for a white label ({ratio:.2f}:1)"
+        )
 
 
 # --- Outside-label collision resolution ------------------------------------

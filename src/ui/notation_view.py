@@ -32,6 +32,8 @@ LABEL_TARGET_RATIO = 0.92   # preferred label pixel size as a fraction of capsul
 LABEL_PX_QUANTUM = 0.5      # rounding step, bounds the font/metrics cache size
 DARK_LABEL = "#14181F"
 LIGHT_LABEL = "#FFFFFF"
+# Fill for a note the playhead has passed, and for a hit note in rhythm mode.
+DONE_GREY = "#888888"
 LUMINANCE_THRESHOLD = 0.179  # WCAG crossover between dark-on-light and light-on-dark
 PAPER_COLOR = "#fcfcfc"      # matches EnhancedSheetMusic.qml background
 LABEL_FONT_FAMILY = "Inter"
@@ -80,12 +82,21 @@ def contrast_ratio(a: QColor, b: QColor) -> float:
 
 def label_color_for(fill: QColor) -> QColor:
     """
-    Picks the label colour that maximises contrast against a capsule fill.
+    The colour of the letter inside a capsule: always white.
 
-    Every colour this renderer can produce (the five finger colours, the
-    completed/hit grey, and the monochrome grey) clears 4.5:1 under this rule.
+    This used to switch to a dark letter on light fills so every fill cleared
+    4.5:1. Uniform white reads as one system rather than a palette of two label
+    styles, so the requirement moved from the label onto the fills: a capsule
+    colour must now be dark enough to carry white text.
+
+    The labels are Inter Bold at roughly 0.9x the capsule height — large text by
+    WCAG, so the bar is 3.0:1. tests/test_notation_labels.py enforces it against
+    the lightest end of the capsule gradient, which is the worst case.
+
+    `fill` is kept in the signature: it is the seam this decision lives behind,
+    and the contrast tests call through it.
     """
-    return QColor(DARK_LABEL) if relative_luminance(fill) > LUMINANCE_THRESHOLD else QColor(LIGHT_LABEL)
+    return QColor(LIGHT_LABEL)
 
 
 class NotationView(QQuickPaintedItem):
@@ -126,7 +137,6 @@ class NotationView(QQuickPaintedItem):
         self._eval_beat = 0.0
         self._loop_start_beat = -1.0
         self._loop_end_beat = -1.0
-        self._last_scroll_update_ms = 0.0
         
         self._eval_notes = []
         self._scrolling_notes = []
@@ -135,21 +145,42 @@ class NotationView(QQuickPaintedItem):
         self._eval_note_states = []
 
         # Label rendering caches. Metrics construction is expensive relative to
-        # a 30fps repaint with hundreds of notes on screen, so fonts, metrics
-        # and text advances are all memoised by quantised pixel size.
+        # a 60fps repaint with hundreds of notes on screen, so fonts, metrics,
+        # text advances and glyph bounds are all memoised by quantised pixel
+        # size. tightBoundingRect in particular measures the real glyph outline
+        # and was the single hottest call in the frame before it was cached.
         self._label_font_cache: dict[float, QFont] = {}
         self._label_metrics_cache: dict[float, QFontMetricsF] = {}
         self._label_advance_cache: dict[tuple[str, float], float] = {}
+        self._label_tight_cache: dict[tuple[str, float], QRectF] = {}
+        self._smufl_font_cache: dict[int, QFont] = {}
+        self._glyph_path_cache: dict[tuple[str, int], QPainterPath] = {}
+        self._capsule_path_cache: dict[tuple[int, int], tuple[QPainterPath, QPainterPath | None]] = {}
+        self._shade_cache: dict[tuple[int, int], QColor] = {}
+        self._capsule_brush_cache: dict[tuple[int, int, bool], QBrush] = {}
         self._label_accidentals_ok: bool | None = None
+
+        # Beat-space layout caches, one per scrolling array. See _ensure_layout:
+        # everything the engraver computes is invariant in current_beat except a
+        # single horizontal translation, so it is computed once per piece rather
+        # than once per frame.
+        self._layout_caches: dict[str, dict] = {}
+        self._scrolling_version = 0
+        self._eval_version = 0
         self._paint_error_count = 0
         self._last_paint_error_log = 0.0
 
+        # Finger colours for the enhanced capsules. Every label on these is
+        # white, so each one has to be dark enough to carry white text at 3.0:1
+        # measured against the light end of the capsule gradient — see
+        # label_color_for. Green and blue are the Material 700 shades rather
+        # than 500 for exactly that reason.
         self._pedagogical_colors = {
-            "1": "#4CAF50", 
-            "2": "#FFB300", 
-            "3": "#9C27B0", 
-            "4": "#2196F3", 
-            "5": "#F44336"  
+            "1": "#388E3C",  # thumb  — green 700
+            "2": "#FFB300",  # index  — amber 600
+            "3": "#9C27B0",  # middle — purple 500
+            "4": "#1976D2",  # ring   — blue 700
+            "5": "#F44336",  # little — red 500
         }
         
         # SMuFL Codepoints (Bravura)
@@ -219,6 +250,64 @@ class NotationView(QQuickPaintedItem):
         self._smufl_family_cached = "Bravura"
         return "Bravura"
 
+    def _smufl_glyph_path(self, glyph: str, px: float) -> QPainterPath:
+        """
+        Returns the outline of a SMuFL glyph, cached, with its baseline origin
+        at (0, 0) — the same anchor drawText uses.
+        """
+        key = (glyph, max(1, int(px)))
+        path = self._glyph_path_cache.get(key)
+        if path is None:
+            path = QPainterPath()
+            path.addText(QPointF(0.0, 0.0), self._smufl_font(px), glyph)
+            self._glyph_path_cache[key] = path
+        return path
+
+    def _draw_smufl_glyph(self, painter: QPainter, glyph: str, px: float,
+                          color: QColor, x: float, y: float):
+        """
+        Draws a SMuFL glyph by filling its cached outline.
+
+        Two reasons this is not drawText. First, notation glyphs are sized at
+        4 staff spaces to the em — around 105px on a normal pane — which is far
+        above the size Qt's raster glyph cache will hold, so every drawText was
+        re-deriving the outline from the font. Filling a cached path instead is
+        roughly 2.7x faster and is the dominant cost in a traditional-style
+        frame.
+
+        Second, and more importantly for scrolling: the call sites this replaces
+        passed int(x). Noteheads therefore snapped to whole pixels while the
+        staff and capsules around them moved smoothly, so the glyphs visibly
+        stepped as the music scrolled. A path fills at the exact fractional
+        position it is given.
+        """
+        painter.save()
+        try:
+            painter.translate(x, y)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(color))
+            painter.drawPath(self._smufl_glyph_path(glyph, px))
+        finally:
+            painter.restore()
+
+    def _smufl_font(self, px: float) -> QFont:
+        """
+        Returns a cached SMuFL font at the given pixel size.
+
+        Every glyph draw needs one of these, and the traditional style builds one
+        per notehead. Constructing a QFont is not free and a fresh instance also
+        gives Qt's glyph cache nothing to hold on to, which made note glyphs the
+        single most expensive thing in a traditional-style frame.
+        """
+        key = max(1, int(px))
+        font = self._smufl_font_cache.get(key)
+        if font is None:
+            font = QFont(self._get_smufl_family())
+            font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
+            font.setPixelSize(key)
+            self._smufl_font_cache[key] = font
+        return font
+
     # --- QML Properties ---
     @Property(list, notify=targetPitchesChanged)
     def targetPitches(self):  # type: ignore[reportRedeclaration]
@@ -250,13 +339,15 @@ class NotationView(QQuickPaintedItem):
     @scrollBeat.setter
     def scrollBeat(self, value):  # type: ignore[reportRedeclaration]
         if self._scroll_beat != value:
-            old_val = self._scroll_beat
             self._scroll_beat = value
             self.scrollBeatChanged.emit()
-            now = time.time() * 1000.0
-            if (now - self._last_scroll_update_ms >= 33.0) or abs(value - old_val) > 0.1:
-                self._last_scroll_update_ms = now
-                self.update()
+            # No throttle. ScrollClock writes this exactly once per displayed
+            # frame, so update() here schedules exactly one repaint per frame.
+            # The old 33 ms wall-clock throttle predates that: it existed to
+            # damp a 100 Hz push from the backend, but 33 ms against a 16.67 ms
+            # frame period aliases into an irregular 2-2-1 cadence, which is
+            # visible as judder no matter how smooth the incoming values are.
+            self.update()
 
     @Property(float, notify=evalBeatChanged)
     def evalBeat(self):  # type: ignore[reportRedeclaration]
@@ -310,6 +401,7 @@ class NotationView(QQuickPaintedItem):
     def evalNotes(self, value):  # type: ignore[reportRedeclaration]
         if self._eval_notes != value:
             self._eval_notes = value
+            self._eval_version += 1
             self.evalNotesChanged.emit()
             self.update()
 
@@ -321,6 +413,7 @@ class NotationView(QQuickPaintedItem):
     def scrollingNotes(self, value):  # type: ignore[reportRedeclaration]
         if self._scrolling_notes != value:
             self._scrolling_notes = value
+            self._scrolling_version += 1
             notes_list = value or []
             self._scrolling_beats_index = [
                 (float(item.get('start_beat', item.get('startBeat', 0.0))), i)
@@ -457,6 +550,14 @@ class NotationView(QQuickPaintedItem):
         """
         try:
             return int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _as_float(value, default: float = 0.0) -> float:
+        """Normalises a note dict field to a float, degrading rather than raising."""
+        try:
+            return float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return default
 
@@ -614,6 +715,22 @@ class NotationView(QQuickPaintedItem):
             self._label_advance_cache[key] = adv
         return adv
 
+    def _text_tight_rect(self, text: str, px: float) -> QRectF:
+        """
+        Cached ink bounds of a label string at a given pixel size.
+
+        Callers only read the geometry, never mutate it, so one shared QRectF
+        per (text, size) is safe. Both the label fit search and every centred
+        draw go through here; measuring the outline afresh each time cost more
+        than any other single call in the frame.
+        """
+        key = (text, px)
+        rect = self._label_tight_cache.get(key)
+        if rect is None:
+            rect = QRectF(self._label_metrics(px).tightBoundingRect(text))
+            self._label_tight_cache[key] = rect
+        return rect
+
     def _accidentals_renderable(self) -> bool:
         """
         Probes once whether the label font actually contains U+266F/U+266D.
@@ -641,6 +758,72 @@ class NotationView(QQuickPaintedItem):
         if not self._accidentals_renderable():
             name = name.replace("♯", "#").replace("♭", "b")
         return name
+
+    # --- Capsule shape and shade caches --------------------------------------
+    # A scrolling frame draws the same handful of capsule sizes over and over,
+    # in the same handful of finger colours. Rebuilding the rounded-rect path and
+    # re-deriving every shade per note per frame was pure repetition.
+
+    def _capsule_paths(self, width: float, h: float, spacing: float):
+        """
+        Returns (capsule_path, accent_path) for a capsule of this size, anchored
+        at the origin so the caller positions them with a translate.
+
+        accent_path is the onset band already intersected with the capsule, or
+        None when the capsule is too narrow to carry one.
+        """
+        key = (round(width * 4.0), round(h * 4.0))
+        entry = self._capsule_path_cache.get(key)
+        if entry is None:
+            radius = min(h / 2.0, width / 2.0)
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(0.0, 0.0, width, h), radius, radius)
+
+            accent = None
+            if width > spacing * 0.6:
+                accent_w = max(2.0, min(width * 0.15, spacing * 0.7))
+                band = QPainterPath()
+                band.addRect(QRectF(0.0, 0.0, accent_w, h))
+                # Intersecting up front replaces a per-note setClipPath, which
+                # also forced a save/restore pair around every capsule.
+                accent = path.intersected(band)
+
+            entry = (path, accent)
+            self._capsule_path_cache[key] = entry
+        return entry
+
+    def _shade(self, color: QColor, factor: int) -> QColor:
+        """Cached QColor.lighter/darker. factor > 100 lightens, < 100 darkens."""
+        key = (color.rgba(), factor)
+        shaded = self._shade_cache.get(key)
+        if shaded is None:
+            shaded = color.lighter(factor) if factor >= 100 else color.darker(factor)
+            # Bounded: monochrome mode blends toward black continuously and would
+            # otherwise grow this without limit over a long session.
+            if len(self._shade_cache) > 512:
+                self._shade_cache.clear()
+            self._shade_cache[key] = shaded
+        return shaded
+
+    def _capsule_brush(self, color: QColor, h: float, is_done: bool) -> QBrush:
+        """
+        Cached fill for a capsule: a flat brush when the note is done, otherwise
+        the subtle vertical gradient that makes it read as a physical block.
+        """
+        key = (color.rgba(), round(h * 4.0), is_done)
+        brush = self._capsule_brush_cache.get(key)
+        if brush is None:
+            if is_done:
+                brush = QBrush(color)
+            else:
+                grad = QLinearGradient(0.0, 0.0, 0.0, h)
+                grad.setColorAt(0.0, self._shade(color, 112))
+                grad.setColorAt(1.0, self._shade(color, 108))
+                brush = QBrush(grad)
+            if len(self._capsule_brush_cache) > 512:
+                self._capsule_brush_cache.clear()
+            self._capsule_brush_cache[key] = brush
+        return brush
 
     def _capsule_width(self, note: dict, ppb: float, s: float, label_text: str | None = None) -> float:
         """
@@ -687,7 +870,7 @@ class NotationView(QQuickPaintedItem):
             # so an em-based estimate rejects sizes that would fit comfortably.
             if self._text_advance(text, px) > avail_w:
                 return False
-            return self._label_metrics(px).tightBoundingRect(text).height() <= avail_h
+            return self._text_tight_rect(text, px).height() <= avail_h
 
         px = self._quantize_px(h * LABEL_TARGET_RATIO)
         if not fits(px):
@@ -712,12 +895,10 @@ class NotationView(QQuickPaintedItem):
         caps with no descenders, so alignment based on ascent/descent sits them
         visibly low inside the capsule.
         """
-        font = self._label_font(px)
-        fm = self._label_metrics(px)
-        painter.setFont(font)
+        painter.setFont(self._label_font(px))
         painter.setPen(QPen(color))
 
-        tight = fm.tightBoundingRect(text)
+        tight = self._text_tight_rect(text, px)
         tx = cx - tight.width() / 2.0 - tight.x()
         ty = cy - tight.height() / 2.0 - tight.y()
         painter.drawText(QPointF(tx, ty), text)
@@ -727,11 +908,9 @@ class NotationView(QQuickPaintedItem):
         Draws a label outside the capsule with a paper-coloured halo so it stays
         readable over staff lines, ledger lines and neighbouring capsules.
         """
-        font = self._label_font(px)
-        fm = self._label_metrics(px)
-        painter.setFont(font)
+        painter.setFont(self._label_font(px))
 
-        tight = fm.tightBoundingRect(text)
+        tight = self._text_tight_rect(text, px)
         tx = cx - tight.width() / 2.0 - tight.x()
         ty = cy - tight.height() / 2.0 - tight.y()
 
@@ -874,6 +1053,89 @@ class NotationView(QQuickPaintedItem):
 
         return layout_results
 
+    # --- Beat-space layout cache --------------------------------------------
+    # Scrolling is a pure horizontal translation: of everything the engraver
+    # derives, only base_x depends on current_beat, and it depends on it through
+    # the single term -(current_beat * ppb). So the whole engraving is computed
+    # once at current_beat = 0 and each frame just translates it.
+    #
+    # This is what makes 60fps possible. Before it, every frame re-ran the
+    # O(n^2) accidental-column search, the notehead stagger, a capsule-width
+    # computation and a label fit search for every note in a 23-beat window, to
+    # display 7 beats of music.
+
+    def _ensure_layout(self, kind: str, notes: list, version: int,
+                       ppb: float, treble_y: float, bass_y: float, s: float) -> dict:
+        """
+        Returns the cached beat-space layout for `notes`, rebuilding it if the
+        notes or the geometry that shapes them has changed.
+
+        The cached x is the note's position at current_beat = 0, so a frame's
+        real x is `start_x + beat_x - current_beat * ppb`.
+        """
+        geom_key = (
+            version, round(ppb, 4), round(treble_y, 4), round(bass_y, 4), round(s, 4),
+            self._notation_style, self._song_key_sharps,
+        )
+        cached = self._layout_caches.get(kind)
+        if cached is not None and cached['key'] == geom_key:
+            return cached
+
+        # current_beat = 0 and start_x = 0, so layout['x'] lands in beat space.
+        layout = self._get_layout_for_notes(notes, 0.0, 0.0, ppb, treble_y, bass_y, s)
+
+        traditional = self._notation_style == "traditional"
+        capsule_h = s * CAPSULE_HEIGHT_RATIO
+        max_span = 0.0
+
+        for entry in layout:
+            if entry is None:
+                continue
+            note = entry['note']
+
+            if traditional:
+                cap_w = s * 1.1
+                plan = None
+            else:
+                is_glyph = (note.get('is_rest') or note.get('is_barline')
+                            or note.get('is_time_sig') or note.get('is_dynamic'))
+                label = None if is_glyph else self._note_label_text(note.get('pitch', 60))
+                cap_w = self._capsule_width(note, ppb, s, label)
+                plan = None if label is None else self._plan_note_label(label, cap_w, capsule_h, s)
+
+            entry['cap_w'] = cap_w
+            entry['label_plan'] = plan
+            entry['beat_x'] = entry['x']
+
+            # Resolved once here so the per-frame loop never re-parses the
+            # start_beat/startBeat and duration_beats/durationBeats aliases.
+            entry['start_beat'] = self._as_float(
+                note.get('start_beat', note.get('startBeat', 0.0)), 0.0)
+            span = self._as_float(
+                note.get('duration_beats', note.get('durationBeats', 1)), 1.0)
+            entry['duration'] = span
+            if span > max_span:
+                max_span = span
+
+        cached = {
+            'key': geom_key,
+            'layout': layout,
+            # A note is still on screen until its *end* has passed the left edge.
+            # The window's left margin was previously a hardcoded 8 beats, which
+            # silently dropped anything longer than that (a tied whole note in a
+            # slow piece) the moment its onset left the window.
+            'max_span': max_span,
+        }
+        self._layout_caches[kind] = cached
+        return cached
+
+    def _invalidate_layout(self, kind: str | None = None):
+        """Drops cached layout so the next paint re-engraves. Cheap; the rebuild is lazy."""
+        if kind is None:
+            self._layout_caches.clear()
+        else:
+            self._layout_caches.pop(kind, None)
+
     # --- Render Engine ---
 
     def paint(self, painter: QPainter):
@@ -906,9 +1168,7 @@ class NotationView(QQuickPaintedItem):
         self._draw_staff_lines(painter, width, bass_cy, s)
         
         # Step 3: Instantiate Clefs using strictly scaled QFont metrics
-        clef_font = QFont(self._get_smufl_family())
-        clef_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        clef_font.setPixelSize(int(s * 4.0))  # SMuFL: 1 em = 4 staff spaces
+        clef_font = self._smufl_font(int(s * 4.0))
         painter.setFont(clef_font)
         painter.setPen(QPen(QColor("#222222")))
         g4_y = treble_cy + s 
@@ -1208,7 +1468,7 @@ class NotationView(QQuickPaintedItem):
             dur        = st['dur']
 
             is_done = _stem_done(st['beat'], dur, current_beat)
-            stem_color = QColor("#888888") if is_done else QColor("#111111")
+            stem_color = QColor(DONE_GREY) if is_done else QColor("#111111")
             painter.setPen(QPen(stem_color, stem_weight, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
             painter.drawLine(int(stem_x), int(notehead_y), int(stem_x), int(tip_y))
 
@@ -1218,12 +1478,9 @@ class NotationView(QQuickPaintedItem):
                     if dur <= 0.25:
                         flag_glyph = self.GLYPH_FLAG_16TH_UP if stem_up else self.GLYPH_FLAG_16TH_DOWN
 
-                    flag_font = QFont(self._get_smufl_family())
-                    flag_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-                    flag_font.setPixelSize(int(s * 4.0))
-                    painter.setFont(flag_font)
-                    painter.setPen(QPen(stem_color))
-                    painter.drawText(int(stem_x), int(tip_y), flag_glyph)
+                    self._draw_smufl_glyph(
+                        painter, flag_glyph, int(s * 4.0), stem_color, stem_x, tip_y
+                    )
 
         # ── PASS 4: draw beam polygons ────────────────────────────────────────
         for group in beam_groups:
@@ -1237,7 +1494,7 @@ class NotationView(QQuickPaintedItem):
             y_last   = group[-1]['tip_y']
 
             group_done = all(_stem_done(st['beat'], st['dur'], current_beat) for st in group)
-            beam_color = QColor("#888888") if group_done else QColor("#111111")
+            beam_color = QColor(DONE_GREY) if group_done else QColor("#111111")
 
             beam_poly = QPolygonF()
             if stem_up:
@@ -1363,57 +1620,62 @@ class NotationView(QQuickPaintedItem):
         """
         Engine pipeline for dynamic/scrolling notation layouts with bisect window culling.
         """
-        window_right_beats = (self.width() - start_x) / ppb if ppb > 0 else 20.0
-        min_beat = current_beat - 8.0
+        width = self.width()
+
+        use_index = note_array is self._scrolling_notes and bool(self._scrolling_beats_index)
+        if note_array is self._scrolling_notes:
+            kind, version = 'scrolling', self._scrolling_version
+        else:
+            kind, version = 'eval', self._eval_version
+
+        cache = self._ensure_layout(kind, note_array, version, ppb, treble_y, bass_y, s)
+        cached_layout = cache['layout']
+
+        window_right_beats = (width - start_x) / ppb if ppb > 0 else 20.0
+        # Left margin covers the longest note in the piece, so a note that is
+        # still sounding is still drawn however long it is.
+        min_beat = current_beat - max(8.0, cache['max_span'])
         max_beat = current_beat + window_right_beats + 8.0
 
         # The bisect index is built from _scrolling_notes, so it may only be used
         # when that is the array being drawn. Matching on length alone let
         # evaluation mode (which draws _eval_notes) borrow the wrong index and
         # land hit/miss colours on the wrong notes.
-        if note_array is self._scrolling_notes and self._scrolling_beats_index:
+        if use_index:
             beats_only = self._scrolling_beats_only
             left_idx = bisect.bisect_left(beats_only, min_beat)
             right_idx = bisect.bisect_right(beats_only, max_beat)
-            sliced_indices = [orig_i for b, orig_i in self._scrolling_beats_index[left_idx:right_idx]]
-            sliced_indices.sort()
-            sliced_notes = []
-            for orig_i in sliced_indices:
-                item = dict(note_array[orig_i])
-                item['orig_i'] = orig_i
-                sliced_notes.append(item)
+            candidates: list[int] | range = sorted(
+                orig_i for _b, orig_i in self._scrolling_beats_index[left_idx:right_idx]
+            )
         else:
-            sliced_notes = []
-            for orig_i, item in enumerate(note_array):
-                sb = float(item.get('start_beat', item.get('startBeat', 0.0)))
-                if min_beat <= sb <= max_beat:
-                    item_copy = dict(item)
-                    item_copy['orig_i'] = orig_i
-                    sliced_notes.append(item_copy)
+            candidates = range(len(note_array))
 
-        layout_data = self._get_layout_for_notes(sliced_notes, current_beat, start_x, ppb, treble_y, bass_y, s)
+        # Translate the cached engraving into screen space. The x-cull runs
+        # before anything else is touched, so notes inside the beat window but
+        # off the left or right edge cost one comparison rather than a full
+        # layout dict.
+        offset_x = start_x - (current_beat * ppb)
+        right_limit = width + 100.0
 
+        layout_data = []
         clusters = {}
-        for layout in layout_data:
-            if layout is None: continue
-            note = layout['note']
-            # One shared width helper for culling and drawing, so the two can
-            # never disagree. Previously the cull clamped to s*3.5 while the
-            # draw did not, making long notes vanish early on the left edge.
-            if self._notation_style == "traditional":
-                cap_w = s * 1.1
-            else:
-                label = None if note.get('is_rest') else self._note_label_text(note.get('pitch', 60))
-                cap_w = self._capsule_width(note, ppb, s, label)
-            layout['cap_w'] = cap_w
-
-            if layout['x'] + cap_w < -100 or layout['x'] > self.width() + 100:
+        for orig_i in candidates:
+            base = cached_layout[orig_i]
+            if base is None:
                 continue
 
-            start_beat = note.get('start_beat', note.get('startBeat', 0))
-            is_treble = layout['ref_y'] == treble_y
+            x = base['beat_x'] + offset_x
+            cap_w = base['cap_w']
+            if x + cap_w < -100 or x > right_limit:
+                continue
 
-            key = (start_beat, is_treble)
+            layout = dict(base)
+            layout['x'] = x
+            layout['orig_i'] = orig_i
+            layout_data.append(layout)
+
+            key = (base['start_beat'], layout['ref_y'] == treble_y)
             if key not in clusters: clusters[key] = []
             clusters[key].append(layout)
 
@@ -1426,17 +1688,14 @@ class NotationView(QQuickPaintedItem):
 
         outside_labels: list = []
 
-        for i, layout in enumerate(layout_data):
-            if layout is None: continue
-
+        # layout_data is already culled to what is on screen, and start_beat,
+        # duration and cap_w were resolved when the layout was engraved.
+        for layout in layout_data:
             note_data = layout['note']
-            orig_i = note_data.get('orig_i', i)
-            duration = note_data.get('duration_beats', note_data.get('durationBeats', 1))
-            start_beat = note_data.get('start_beat', note_data.get('startBeat', 0))
-
-            cap_w = layout.get('cap_w', s * 1.1)
-            if layout['x'] + cap_w < -100 or layout['x'] > self.width() + 100:
-                continue
+            orig_i = layout['orig_i']
+            duration = layout['duration']
+            start_beat = layout['start_beat']
+            cap_w = layout['cap_w']
 
             color = self._get_finger_color(note_data.get('finger', 0))
             opacity = 1.0
@@ -1456,7 +1715,7 @@ class NotationView(QQuickPaintedItem):
                     state = "pending"
 
                 if state == "hit":
-                    color = QColor("#888888")
+                    color = QColor(DONE_GREY)
                     is_done = True
                 elif state == "miss":
                     color = QColor("#F44336")
@@ -1473,7 +1732,7 @@ class NotationView(QQuickPaintedItem):
                 is_done      = is_completed
 
                 if is_completed:
-                    color = QColor("#888888")
+                    color = QColor(DONE_GREY)
                 elif is_active:
                     if self._notation_color_mode == "monochrome":
                         color = QColor("#111111")
@@ -1512,7 +1771,7 @@ class NotationView(QQuickPaintedItem):
         """Draws one item of the scrolling array in the active notation style."""
         if self._notation_style == "traditional":
             if note_data.get("is_barline"):
-                painter.setPen(QPen(QColor("#888888"), max(1.0, s * 0.1), Qt.PenStyle.SolidLine))
+                painter.setPen(QPen(QColor(DONE_GREY), max(1.0, s * 0.1), Qt.PenStyle.SolidLine))
                 painter.drawLine(int(layout['x']), int(treble_y - s*2), int(layout['x']), int(bass_y + s*2))
             elif note_data.get("is_time_sig"):
                 if start_beat > 0.0:
@@ -1520,14 +1779,12 @@ class NotationView(QQuickPaintedItem):
             elif note_data.get("is_dynamic"):
                 d_mark = note_data.get("mark", "p")
                 d_glyph = self.GLYPH_DYNAMICS.get(d_mark)
-                d_color = QColor("#888888") if current_beat >= start_beat else color
+                d_color = QColor(DONE_GREY) if current_beat >= start_beat else color
                 painter.setPen(QPen(d_color))
                 if d_glyph:
-                    smufl_font = QFont(self._get_smufl_family())
-                    smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-                    smufl_font.setPixelSize(int(s * 3.0))
-                    painter.setFont(smufl_font)
-                    painter.drawText(int(layout['x']), int(layout['y']), d_glyph)
+                    self._draw_smufl_glyph(
+                        painter, d_glyph, int(s * 3.0), d_color, layout['x'], layout['y']
+                    )
                 else:
                     d_font = QFont("Inter", int(s * 1.2), QFont.Weight.Bold, italic=True)
                     painter.setFont(d_font)
@@ -1542,12 +1799,9 @@ class NotationView(QQuickPaintedItem):
                 elif duration >= 0.5: r_glyph = self.GLYPH_REST_8TH
                 else: r_glyph = self.GLYPH_REST_16TH
 
-                smufl_font = QFont(self._get_smufl_family())
-                smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-                smufl_font.setPixelSize(int(s * 4.0))
-                painter.setFont(smufl_font)
-                painter.setPen(QPen(color))
-                painter.drawText(int(layout['x']), int(layout['y']), r_glyph)
+                self._draw_smufl_glyph(
+                    painter, r_glyph, int(s * 4.0), color, layout['x'], layout['y']
+                )
 
                 if dots > 0:
                     painter.setBrush(QBrush(color))
@@ -1567,7 +1821,7 @@ class NotationView(QQuickPaintedItem):
                     self._draw_time_signature(painter, layout['x'], note_data.get("numerator", 4), note_data.get("denominator", 4), treble_y, bass_y, s, color)
             elif note_data.get("is_dynamic"):
                 d_mark = note_data.get("mark", "p")
-                d_color = QColor("#888888") if current_beat >= start_beat else color
+                d_color = QColor(DONE_GREY) if current_beat >= start_beat else color
                 painter.setPen(QPen(d_color))
                 d_font = QFont("Inter", int(s * 1.2), QFont.Weight.Bold, italic=True)
                 painter.setFont(d_font)
@@ -1582,12 +1836,14 @@ class NotationView(QQuickPaintedItem):
                         is_active=is_active, is_miss=is_miss, is_done=is_done,
                         outside_labels=outside_labels,
                         above=layout['ref_y'] == treble_y,
+                        plan=layout.get('label_plan'),
                     )
 
     def _draw_enhanced_note(self, painter: QPainter, x: float, y: float, pitch: int, width: float,
                             spacing: float, color: QColor, is_active: bool = False,
                             is_miss: bool = False, is_done: bool = False,
-                            outside_labels: list | None = None, above: bool = True):
+                            outside_labels: list | None = None, above: bool = True,
+                            plan: dict | None = None):
         """
         Draws a pedagogical duration capsule: position encodes pitch, width
         encodes duration, fill encodes fingering, and the letter names the note.
@@ -1595,62 +1851,67 @@ class NotationView(QQuickPaintedItem):
         Geometry is float throughout so the rounded ends stay smooth under the
         antialiasing enabled in paint(); the previous implementation cast to int
         and produced visibly jagged caps.
+
+        `plan` is the precomputed label plan from the beat-space layout cache.
+        It depends only on the label text and the capsule box, so the scrolling
+        path supplies it and this never runs the fit search per frame; callers
+        that draw a one-off note may omit it.
         """
         h = spacing * CAPSULE_HEIGHT_RATIO
-        rect = QRectF(x, y - h / 2.0, width, h)
+        top = y - h / 2.0
+        rect = QRectF(x, top, width, h)
         radius = min(h / 2.0, width / 2.0)
 
-        path = QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
+        # The capsule and its onset accent are the same two shapes on every note
+        # of a given width, so they are built once and drawn under a translate.
+        # Both are anchored at the origin; see _capsule_paths.
+        path, accent_path = self._capsule_paths(width, h, spacing)
 
-        # Fill: a subtle vertical gradient reads as a physical block without
-        # looking glossy. Completed notes stay flat so they recede.
-        if is_done:
-            painter.setBrush(QBrush(color))
-        else:
-            grad = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
-            grad.setColorAt(0.0, color.lighter(112))
-            grad.setColorAt(1.0, color.darker(108))
-            painter.setBrush(QBrush(grad))
+        # save/restore rather than a translate and its inverse: the caller draws
+        # each note inside a try/except, so an unwound transform would otherwise
+        # leak and shift every remaining note in the frame.
+        painter.save()
+        try:
+            painter.translate(x, top)
 
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawPath(path)
-
-        # Onset accent: a brighter band on the leading edge marks the moment to
-        # strike, clipped to the capsule so it follows the rounded cap.
-        if not is_done and width > spacing * 0.6:
-            painter.save()
-            # IntersectClip, not the default ReplaceClip: replacing would discard
-            # the content clip paint() installed and let the accent draw over the
-            # clef and key signature when a note scrolls off the left edge.
-            painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
-            accent_w = max(2.0, min(width * 0.15, spacing * 0.7))
-            painter.setBrush(QBrush(color.lighter(126)))
+            # Fill: a subtle vertical gradient reads as a physical block without
+            # looking glossy. Completed notes stay flat so they recede.
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRect(QRectF(rect.left(), rect.top(), accent_w, rect.height()))
-            painter.restore()
+            painter.setBrush(self._capsule_brush(color, h, is_done))
+            painter.drawPath(path)
 
-        # Rim: separates neighbouring capsules and defines the edge against
-        # staff lines showing through.
-        rim_color = QColor("#F44336") if is_miss else color.darker(135)
-        rim_weight = 1.5 if is_miss else 1.0
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(rim_color, rim_weight))
-        painter.drawPath(path)
+            # Onset accent: a brighter band on the leading edge marks the moment
+            # to strike. Pre-intersected with the capsule so it follows the
+            # rounded cap without a per-note setClipPath, which was costing more
+            # than every other capsule operation combined.
+            if accent_path is not None and not is_done:
+                painter.setBrush(QBrush(self._shade(color, 126)))
+                painter.drawPath(accent_path)
 
-        # Active ring: the note under the playhead reads instantly.
-        if is_active:
-            ring = QColor(color.lighter(140))
-            ring.setAlpha(128)
-            inset = QRectF(rect.adjusted(-2.0, -2.0, 2.0, 2.0))
-            painter.setPen(QPen(ring, 2.0))
+            # Rim: separates neighbouring capsules and defines the edge against
+            # staff lines showing through.
+            rim_color = QColor("#F44336") if is_miss else self._shade(color, 135)
+            rim_weight = 1.5 if is_miss else 1.0
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(inset, radius + 2.0, radius + 2.0)
+            painter.setPen(QPen(rim_color, rim_weight))
+            painter.drawPath(path)
+
+            # Active ring: the note under the playhead reads instantly.
+            if is_active:
+                ring = QColor(self._shade(color, 140))
+                ring.setAlpha(128)
+                painter.setPen(QPen(ring, 2.0))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(
+                    QRectF(-2.0, -2.0, width + 4.0, h + 4.0), radius + 2.0, radius + 2.0
+                )
+        finally:
+            painter.restore()
 
         # Label. Drawn at full opacity even on missed notes, whose capsule is
         # deliberately faded — the letter must never fade with it.
-        text = self._note_label_text(pitch)
-        plan = self._plan_note_label(text, width, h, spacing)
+        if plan is None:
+            plan = self._plan_note_label(self._note_label_text(pitch), width, h, spacing)
         prev_opacity = painter.opacity()
         painter.setOpacity(1.0)
 
@@ -1662,8 +1923,7 @@ class NotationView(QQuickPaintedItem):
                 label_color_for(fill_for_contrast),
             )
         else:
-            fm = self._label_metrics(plan['px'])
-            tight = fm.tightBoundingRect(plan['text'])
+            tight = self._text_tight_rect(plan['text'], plan['px'])
             gap = h / 2.0 + tight.height() / 2.0 + 2.0
             cy = y - gap if above else y + gap
             if outside_labels is not None:
@@ -1701,15 +1961,10 @@ class NotationView(QQuickPaintedItem):
     def _draw_traditional_note(self, painter: QPainter, x: float, y: float, pitch: int, spacing: float, color: QColor, text_duration: float = 1.0, notehead_offset_x: float = 0.0, accidental_offset_x: float = 0.0, tie_state: str | None = None, ppb: float = 50.0, spelling: tuple | None = None, tuplet: dict | None = None, steps_from_ref: int = 0):
         glyph, _flag_type, dots = self._duration_to_glyph(text_duration, tuplet=tuplet)
 
-        smufl_font = QFont(self._get_smufl_family())
-        smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        smufl_font.setPixelSize(int(spacing * 4.0))
-
-        painter.setFont(smufl_font)
-        painter.setPen(QPen(color))
+        glyph_px = int(spacing * 4.0)
 
         notehead_x = x + notehead_offset_x + spacing * 0.6
-        painter.drawText(int(notehead_x), int(y), glyph)
+        self._draw_smufl_glyph(painter, glyph, glyph_px, color, notehead_x, y)
 
         if dots > 0:
             dot_x = notehead_x + spacing * 1.5
@@ -1724,10 +1979,8 @@ class NotationView(QQuickPaintedItem):
         is_acc, acc_type = self._get_accidental_from_spelling(pitch, spelling)
         if is_acc:
             acc_glyph = self.GLYPH_SHARP if acc_type == "sharp" else (self.GLYPH_FLAT if acc_type == "flat" else self.GLYPH_NATURAL)
-            painter.setFont(smufl_font)
-            painter.setPen(QPen(QColor("#111111")))
             acc_x = notehead_x + accidental_offset_x - spacing * 1.5
-            painter.drawText(int(acc_x), int(y), acc_glyph)
+            self._draw_smufl_glyph(painter, acc_glyph, glyph_px, QColor("#111111"), acc_x, y)
 
         if tie_state in ["start", "continue"]:
             tie_dir = 1.0 if pitch < 60 else -1.0
@@ -1887,9 +2140,7 @@ class NotationView(QQuickPaintedItem):
         if self._song_key_sharps == 0 or self._notation_style != "traditional":
             return
             
-        smufl_font = QFont(self._get_smufl_family())
-        smufl_font.setStyleStrategy(QFont.StyleStrategy.NoFontMerging)
-        smufl_font.setPixelSize(int(s * 4.0))  
+        smufl_font = self._smufl_font(int(s * 4.0))
         painter.setFont(smufl_font)
         painter.setPen(QPen(QColor("#222222")))
         

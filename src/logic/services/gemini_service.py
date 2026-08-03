@@ -61,6 +61,9 @@ class GeminiService(QObject):
         self.ws = None
         self.connected = False
         self._intentional_disconnect = False
+        # Set while a mode that does not use the coach owns the session, so
+        # resume_service knows whether there is anything to restore.
+        self._released = False
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
         self._active_model = self.LIVE_MODEL
@@ -178,6 +181,68 @@ class GeminiService(QObject):
     def disconnect_service(self):
         self._intentional_disconnect = True
         asyncio.run_coroutine_threadsafe(self._disconnect_ws(), self.loop)
+
+    @Slot()
+    def release_service(self):
+        """
+        Drops the live session for a mode that does not use the coach.
+
+        Distinct from disconnect_service only in that it is remembered, so
+        resume_service knows there is something to restore. Free play uses this:
+        holding a session open through a piece spends quota on nothing, and any
+        drop arms the reconnect loop, which puts a full-screen overlay on top of
+        the music the user is trying to read.
+        """
+        if self._released:
+            return
+        self._released = True
+        print("Gemini Service: Coach released (mode does not use it).")
+        self.disconnect_service()
+
+    @Slot()
+    def resume_service(self):
+        """
+        Re-establishes a session dropped by release_service.
+
+        Reuses the context, voice, brevity and personality last handed to
+        connect_service, so callers do not have to carry curriculum state around
+        just to bring the coach back.
+        """
+        if not self._released:
+            return
+        self._released = False
+
+        if not self.ws_url:
+            # connect_service was never reached — no API key, or the app has not
+            # finished starting. Nothing to restore.
+            return
+
+        print("Gemini Service: Restoring coach session.")
+        asyncio.run_coroutine_threadsafe(self._resume_ws(), self.loop)
+
+    async def _resume_ws(self):
+        """
+        Reconnects once the release has finished closing.
+
+        release_service and resume_service both hop onto the asyncio loop, so a
+        quick mode change can order them back to back. _connect_ws returns early
+        while self.connected is still True, which would silently leave the coach
+        down, so wait the close out rather than race it.
+        """
+        for _ in range(50):  # bounded at ~2.5s
+            if not self.connected:
+                break
+            await asyncio.sleep(0.05)
+
+        if self._released:
+            # Released again while we were waiting; the last word wins.
+            return
+
+        self._intentional_disconnect = False
+        try:
+            await self._connect_ws()
+        except Exception as e:
+            print(f"Gemini Service: Failed to restore coach session: {e}")
 
     @Slot()
     def stop_current_audio(self):
