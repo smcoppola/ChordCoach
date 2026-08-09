@@ -12,7 +12,85 @@ import ctypes
 import sys
 import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
+
+# Bounds for preview playback. A preview is a listening aid inside a modal
+# editor, not a performance: it must always terminate, and it must terminate
+# soon enough that a stray click cannot leave the room ringing.
+PREVIEW_MIN_BPM = 30.0
+PREVIEW_MAX_BPM = 300.0
+PREVIEW_FALLBACK_BPM = 100.0
+PREVIEW_MAX_MS = 8000.0
+
+
+def preview_schedule(notes, start_beat, end_beat, bpm,
+                     velocity: int = 80, max_ms: float = PREVIEW_MAX_MS) -> List[Dict[str, float]]:
+    """
+    Turns [{pitch, beat, duration}] into [{pitch, on_ms, off_ms, velocity}],
+    in milliseconds from now, for a single-note or whole-bar preview.
+
+    Pure so the timing rules can be tested without hardware or an event loop.
+
+    The numeric arguments are deliberately unannotated: they arrive from QML as
+    QVariants and from a record whose bpm may be missing or malformed, so every
+    one of them is coerced rather than trusted.
+
+    An onset before `start_beat` clamps to 0 rather than being dropped: a note
+    tied in from the previous bar is still sounding when the bar begins, and
+    silencing it would misrepresent the bar being previewed. Releases clip to
+    `end_beat` so a note running past the bar stops at its edge, and the whole
+    schedule truncates at `max_ms`.
+    """
+    try:
+        tempo = float(bpm)
+    except (TypeError, ValueError):
+        tempo = PREVIEW_FALLBACK_BPM
+    if not (tempo > 0):
+        tempo = PREVIEW_FALLBACK_BPM
+    tempo = min(PREVIEW_MAX_BPM, max(PREVIEW_MIN_BPM, tempo))
+    ms_per_beat = 60000.0 / tempo
+
+    try:
+        window_start = float(start_beat)
+        window_end = float(end_beat)
+    except (TypeError, ValueError):
+        return []
+    if window_end <= window_start:
+        return []
+
+    out: List[Dict[str, float]] = []
+    for note in (notes or []):
+        try:
+            pitch = int(note["pitch"])
+            beat = float(note.get("beat", 0.0))
+            duration = float(note.get("duration", 0.0))
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+        if not (0 <= pitch <= 127):
+            continue
+
+        note_end = min(beat + max(0.0, duration), window_end)
+        if note_end <= window_start:
+            continue
+
+        on_ms = max(0.0, (beat - window_start)) * ms_per_beat
+        off_ms = (note_end - window_start) * ms_per_beat
+        if on_ms >= max_ms:
+            continue
+        off_ms = min(off_ms, max_ms)
+        if off_ms <= on_ms:
+            continue
+
+        out.append({
+            "pitch": pitch,
+            "on_ms": round(on_ms, 3),
+            "off_ms": round(off_ms, 3),
+            "velocity": int(velocity),
+        })
+
+    out.sort(key=lambda e: (e["on_ms"], e["pitch"]))
+    return out
+
 
 class LowLevelMidiOutput:
     """
@@ -134,7 +212,15 @@ class MidiHardwareService(QObject):
         self._ll_lib_path = ll_lib_path
         self._ll_midi_out: Optional[LowLevelMidiOutput] = None
         self._midi_out_enabled = midi_out_enabled
-            
+
+        # Editor preview state. The token is what makes a preview cancellable:
+        # every scheduled callback captures the value current when it was queued
+        # and returns if it no longer matches, so one increment abandons a whole
+        # schedule without tracking individual timers.
+        self._preview_token = 0
+        self._preview_pitches: set = set()
+
+
         self._polling_timer = QTimer(self)
         self._is_polling = False # Thread-safe state tracking to avoid QTimer checks outside main thread
         self._probe_in_flight = False # Guards against probe-thread pileup when WinMM is slow/wedged
@@ -553,9 +639,69 @@ class MidiHardwareService(QObject):
         from datetime import datetime
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] MidiHardware: Playing chord preview (pitches {pitches})")
         if not self._ll_midi_out: return
-        
-        status = 0x90 
+
+        status = 0x90
         velocity = 80
-        
+
         self._safe_bulk_send([[status, pitch, velocity] for pitch in pitches])
         QTimer.singleShot(1500, lambda: self._safe_bulk_send([[0x80, p, 0] for p in pitches]))
+
+    # ── Editor preview ───────────────────────────────────────────────
+    # The song editor previews a single note or a whole bar in a note's own
+    # rhythm. play_chord_preview cannot do this: it holds everything for a fixed
+    # 1.5s and cannot be cancelled, which is wrong in an editor whose subject is
+    # when a note starts and how long it lasts.
+
+    @Slot("QVariantList", float, float, float)
+    def play_preview(self, notes, start_beat: float, end_beat: float, bpm: float):
+        """
+        Sounds `notes` over the beat window [start_beat, end_beat) at `bpm`.
+
+        Used for both the single-note and whole-bar previews — a single note is
+        just a one-element window.
+        """
+        self.stop_preview()
+        if not self._ll_midi_out:
+            return
+
+        schedule = preview_schedule(notes, start_beat, end_beat, bpm)
+        if not schedule:
+            return
+
+        self._preview_token += 1
+        token = self._preview_token
+
+        for event in schedule:
+            pitch = int(event["pitch"])
+            velocity = int(event["velocity"])
+            QTimer.singleShot(int(event["on_ms"]), self,
+                              lambda p=pitch, v=velocity, t=token: self._preview_note_on(t, p, v))
+            QTimer.singleShot(int(event["off_ms"]), self,
+                              lambda p=pitch, t=token: self._preview_note_off(t, p))
+
+    def _preview_note_on(self, token: int, pitch: int, velocity: int):
+        if token != self._preview_token or not self._ll_midi_out:
+            return
+        self._preview_pitches.add(pitch)
+        self._safe_bulk_send([[0x90, pitch, velocity]])
+
+    def _preview_note_off(self, token: int, pitch: int):
+        if token != self._preview_token or not self._ll_midi_out:
+            return
+        self._preview_pitches.discard(pitch)
+        self._safe_bulk_send([[0x80, pitch, 0]])
+
+    @Slot()
+    def stop_preview(self):
+        """
+        Cancels a running preview and releases everything it sounded.
+
+        Called on every exit from the editor — close, save and cancel — because
+        an abandoned schedule would otherwise leave notes held down.
+        """
+        self._preview_token += 1
+        if self._preview_pitches:
+            pitches = sorted(self._preview_pitches)
+            self._preview_pitches.clear()
+            if self._ll_midi_out:
+                self._safe_bulk_send([[0x80, p, 0] for p in pitches])

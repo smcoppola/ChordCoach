@@ -300,7 +300,22 @@ class AppState(QObject):
     @Property(QObject, constant=True)
     def playback(self):
         return self.playback_service
-            
+
+    @Property(QObject, constant=True)
+    def hardware(self):
+        """
+        The MIDI hardware service, for QML that needs to sound something itself
+        (the song editor's note and bar preview).
+
+        Everything else reads it through the narrow scalars above —
+        midiConnected, midiDeviceName, isSustainPedalDown — which stay the right
+        way to ask about connection state. Note that a plain Python attribute on
+        this object is invisible from QML: only declared properties and slots
+        cross the boundary.
+        """
+        return self.hw_service
+
+
     @Slot(str)
     def fetch_song(self, query: str):
         print(f"AppState: UI requested song fetch for '{query}'")

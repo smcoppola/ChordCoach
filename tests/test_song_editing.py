@@ -464,3 +464,75 @@ def test_difficulty_level_suffix_resolves_to_the_base_song(service, song):
     rows = service.get_user_song_notes(song + "::L2")
     assert len(rows) == 3
     assert service.save_user_song_notes(song + "::L2", rows) == ""
+
+
+# --- Notation context for the editor's strip --------------------------------
+
+def test_rows_carry_the_finger_the_strip_colours_by(service, song):
+    rows = service.get_user_song_notes(song)
+
+    assert _find(rows, 60)["finger"] == 1
+    assert _find(rows, 64)["finger"] == 3
+    assert _find(rows, 48)["finger"] == 5
+
+
+def test_a_step_without_fingers_still_yields_a_usable_one(service, song):
+    rec = _stored(service, song)
+    del rec["steps"][0]["fingers"]
+    service._save_user_song_record(rec)
+
+    assert _find(service.get_user_song_notes(song), 60)["finger"] == 1
+
+
+def test_notation_context_reports_key_metre_and_tempo(service, song):
+    ctx = service.get_user_song_notation_context(song)
+
+    assert ctx["key_sharps"] == 0
+    assert ctx["bpm"] == 100.0
+    assert ctx["time_signatures"] == [{"offset": 0.0, "numerator": 4, "denominator": 4}]
+
+
+def test_notation_context_falls_back_rather_than_returning_nothing(service):
+    ctx = service.get_user_song_notation_context("user::nope-0")
+
+    assert ctx["key_sharps"] == 0
+    assert ctx["bpm"] == 100.0
+    assert ctx["time_signatures"] == [{"offset": 0.0, "numerator": 4, "denominator": 4}]
+
+
+@pytest.mark.parametrize("value", [[], None])
+def test_a_song_stored_without_a_metre_still_gets_one(service, song, value):
+    rec = _stored(service, song)
+    rec["time_signatures"] = value
+    service._save_user_song_record(rec)
+
+    assert service.get_user_song_notation_context(song)["time_signatures"] == [
+        {"offset": 0.0, "numerator": 4, "denominator": 4}
+    ]
+
+
+def test_notation_context_defaults_are_not_shared_between_calls(service):
+    """The fallback is deep-copied — one caller's edit must not poison the next."""
+    first = service.get_user_song_notation_context("user::nope-0")
+    first["time_signatures"][0]["numerator"] = 7
+
+    assert service.get_user_song_notation_context("user::nope-0")["time_signatures"][0][
+        "numerator"
+    ] == 4
+
+
+def test_notation_context_keeps_mid_piece_metre_changes_in_order(service, song):
+    rec = _stored(service, song)
+    rec["time_signatures"] = [
+        {"offset": 8.0, "numerator": 3, "denominator": 4},
+        {"offset": 0.0, "numerator": 4, "denominator": 4},
+    ]
+    service._save_user_song_record(rec)
+
+    signatures = service.get_user_song_notation_context(song)["time_signatures"]
+    assert [s["offset"] for s in signatures] == [0.0, 8.0]
+    assert signatures[1]["numerator"] == 3
+
+
+def test_notation_context_resolves_a_difficulty_level_suffix(service, song):
+    assert service.get_user_song_notation_context(song + "::L2")["bpm"] == 100.0

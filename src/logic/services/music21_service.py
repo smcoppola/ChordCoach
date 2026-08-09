@@ -1304,6 +1304,7 @@ class Music21Service(QObject):
             pitches = step.get("pitches", [])
             hands = step.get("hands", [])
             durations = step.get("durations", [])
+            fingers = step.get("fingers", [])
             for ni, pitch in enumerate(pitches):
                 rows.append({
                     "beat": round(offset, 4),
@@ -1313,6 +1314,11 @@ class Music21Service(QObject):
                     "pitch": int(pitch),
                     "name": pitch_name_with_octave(pitch),
                     "measure": measure,
+                    # Display only, and the editor never edits it: the notation
+                    # strip colours noteheads by finger, so without it every
+                    # previewed note renders in the finger-0 fallback black and
+                    # the strip stops matching the sheet being practised.
+                    "finger": int(fingers[ni]) if ni < len(fingers) else 1,
                     "step_index": si,
                     "note_index": ni,
                 })
@@ -1331,6 +1337,63 @@ class Music21Service(QObject):
                 return [float(b) for b in (json.load(f).get("barlines") or [])]
         except Exception:
             return []
+
+    # A staff cannot be drawn or a bar previewed without these three, and the
+    # light _user_songs catalog deliberately carries none of them, so this is a
+    # record read. Kept separate from get_user_song_barlines rather than folded
+    # into it: that slot has its own caller and merging would orphan it.
+    NOTATION_CONTEXT_DEFAULTS = {
+        "key_sharps": 0,
+        "time_signatures": [{"offset": 0.0, "numerator": 4, "denominator": 4}],
+        "bpm": 100.0,
+    }
+
+    @Slot(str, result="QVariantMap")
+    def get_user_song_notation_context(self, song_id: str):
+        """
+        Key signature, metre and tempo for the editor's notation strip.
+
+        Always returns a usable map — an unreadable song, or one stored without
+        a metre, still yields 4/4 in C at 100bpm — so the strip has no null
+        branch and renders a plausible staff instead of nothing.
+        """
+        import copy
+        ctx = copy.deepcopy(self.NOTATION_CONTEXT_DEFAULTS)
+        try:
+            with open(self._user_song_path(self._base_song_id(song_id)), "r") as f:
+                record = migrate_record(json.load(f))
+        except Exception as e:
+            print(f"Music21Service: Could not read notation context for {song_id}: {e}")
+            return ctx
+
+        try:
+            ctx["key_sharps"] = int(record.get("key_sharps") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            bpm = float(record.get("bpm") or 0.0)
+            if bpm > 0:
+                ctx["bpm"] = bpm
+        except (TypeError, ValueError):
+            pass
+
+        signatures = []
+        for ts in (record.get("time_signatures") or []):
+            try:
+                num = int(ts.get("numerator", 4))
+                den = int(ts.get("denominator", 4))
+                if num > 0 and den > 0:
+                    signatures.append({
+                        "offset": float(ts.get("offset", 0.0)),
+                        "numerator": num,
+                        "denominator": den,
+                    })
+            except (TypeError, ValueError, AttributeError):
+                continue
+        if signatures:
+            signatures.sort(key=lambda s: s["offset"])
+            ctx["time_signatures"] = signatures
+        return ctx
 
     @Slot(str, "QVariantList", result=str)
     def save_user_song_notes(self, song_id: str, notes) -> str:

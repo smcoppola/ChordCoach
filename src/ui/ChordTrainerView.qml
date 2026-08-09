@@ -85,7 +85,10 @@ Rectangle {
     property int currentNoteIndex: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.currentNoteIndex : 0
     property string scaleName: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? (appState.chordTrainer.scaleName || "") : ""
     property string currentHand: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? (appState.chordTrainer.currentHand || "right") : "right"
-    property bool isSustainPedalDown: (typeof appState !== "undefined" && appState !== null && appState.hw_service) ? appState.hw_service._is_sustain_pedal_down : false
+    // appState.hw_service is a plain Python attribute, so it never crossed into
+    // QML and this read had always been false. isSustainPedalDown is the
+    // declared property, and it carries a change notification too.
+    property bool isSustainPedalDown: (typeof appState !== "undefined" && appState !== null) ? appState.isSustainPedalDown : false
     property int pentascaleBeatCount: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.pentascaleBeatCount : 0
     property var pentascaleFeedbackList: ["", "", "", "", ""]
  
