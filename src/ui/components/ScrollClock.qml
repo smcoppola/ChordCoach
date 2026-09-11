@@ -19,6 +19,11 @@
 // are never applied as a jump; the residual is slewed out at a bounded rate so
 // the music stays readable while the error is absorbed. Only a genuine
 // discontinuity — start, seek, loop wrap — snaps.
+//
+// A correction is only as good as the time it is dated by. Anchors are sampled
+// on a 10 ms backend timer, so one lands at an arbitrary point inside a frame;
+// dating it by the last frame tick (which is what elapsedTime holds between
+// frames) backdates it by up to a whole frame. See arrivalTime.
 
 import QtQuick
 
@@ -46,14 +51,22 @@ Item {
     // Below it the error is absorbed silently.
     property real snapThresholdBeats: 0.75
 
-    // Floor on how long a correction takes. Short enough to stay in sync,
-    // long enough that a small residual is not a visible twitch.
-    property real minCorrectionSeconds: 0.15
+    // Floor on how long a correction takes. With anchors dated at arrival the
+    // residual left over is Date.now()'s 1 ms granularity plus real clock
+    // drift, so spreading it this thin holds the speed error under about half a
+    // percent. It was 0.15 back when every correction also carried up to a
+    // frame of timestamp noise and had to be absorbed before the next one.
+    property real minCorrectionSeconds: 0.5
 
     // Ceiling on how much a correction may distort playback speed. At 0.25 the
     // music never scrolls more than 25% off tempo while absorbing drift, so a
     // correction is felt as nothing at all rather than as a lurch.
     property real maxCorrectionRate: 0.25
+
+    // Ceiling on how old an arriving anchor is assumed to be. One that lands
+    // while the frame clock is stalled would otherwise be dated arbitrarily far
+    // ahead of the last tick.
+    property real maxArrivalLeadSeconds: 0.05
 
     // --- Internal ------------------------------------------------------------
 
@@ -69,6 +82,9 @@ Item {
     // The first anchor has nothing to slew from, so it always lands directly.
     property bool _initialised: false
 
+    // Wall clock at the last frame tick, the reference arrivalTime measures from.
+    property real _tickWallMs: 0
+
     function _residualAt(t) {
         if (root._offset === 0.0 || root._offsetSeconds <= 0.0)
             return 0.0;
@@ -83,6 +99,30 @@ Item {
 
     function beatAt(t) {
         return root._anchorBeat + (t - root._anchorClock) * root._bps + root._residualAt(t);
+    }
+
+    // The frame-clock time *now*, rather than at the last frame tick.
+    //
+    // elapsedTime only moves once per frame, so an anchor arriving between
+    // frames would be dated up to 16.7 ms early. The view then reads it as "the
+    // transport was at that beat a fraction of a frame ago" — a residual of up
+    // to ±0.028 beats at 100 BPM (±8 device px on a wide pane) that is pure
+    // timing noise, and that the correction machinery duly absorbs as a change
+    // of speed. Four of those a second is a scroll speed wobbling by ±4-11%,
+    // and a wobbling velocity is precisely what smooth pursuit cannot track:
+    // the notation slips across the retina and reads as motion blur.
+    //
+    // Date.now() resolves to 1 ms here, leaving under a device pixel of noise.
+    function arrivalTime(frameElapsed, tickWallMs, nowMs) {
+        if (!tickWallMs)
+            return frameElapsed;
+
+        var lead = (nowMs - tickWallMs) / 1000.0;
+        if (lead < 0.0)
+            lead = 0.0;
+        else if (lead > root.maxArrivalLeadSeconds)
+            lead = root.maxArrivalLeadSeconds;
+        return frameElapsed + lead;
     }
 
     // `t` is the frame-clock time the anchor is being applied at. It is passed
@@ -126,12 +166,19 @@ Item {
             return;
         if (anchor && anchor.seq !== undefined)
             root._seenSeq = anchor.seq;
-        applyAnchorAt(anchor, frameClock.elapsedTime);
+        // While the clock is stopped elapsedTime is frozen and there is no tick
+        // to measure a lead from, so the anchor is dated by it directly.
+        applyAnchorAt(anchor, frameClock.running
+            ? arrivalTime(frameClock.elapsedTime, root._tickWallMs, Date.now())
+            : frameClock.elapsedTime);
     }
 
     FrameAnimation {
         id: frameClock
         running: root.active
-        onTriggered: root.beat = root.beatAt(elapsedTime)
+        onTriggered: {
+            root._tickWallMs = Date.now();
+            root.beat = root.beatAt(elapsedTime);
+        }
     }
 }

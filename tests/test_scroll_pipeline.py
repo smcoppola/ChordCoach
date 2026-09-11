@@ -10,6 +10,8 @@ The backend clock is stepped manually rather than left to a QTimer, so the test
 is deterministic and does not depend on timer delivery under load.
 """
 
+import math
+
 import pytest
 
 from PySide6.QtCore import QUrl
@@ -157,4 +159,75 @@ def test_anchors_are_published_sparingly(service):
     emitted = service.scrollAnchor["seq"] - start_seq
     assert emitted <= 15, (
         f"{emitted} anchors in 3 seconds — the backend is streaming positions again"
+    )
+
+
+def _interleaved(service, clock, seconds, fps=60.0, tick_ms=10.0):
+    """
+    Runs the transport timer and the frame clock on one timeline, the way the
+    GUI thread actually interleaves them, sampling the view once per frame.
+
+    _pump above hands every anchor to the clock at exactly the frame time, which
+    is the one case the timing bug cannot occur in. A 10 ms tick and a ~16.7 ms
+    frame do not line up, so in production an anchor is sampled at an arbitrary
+    point inside a frame — and dating it by that frame's tick backdates it.
+    """
+    frame_dt = 1.0 / fps
+    tick_dt = tick_ms / 1000.0
+
+    beats = []
+    next_frame = frame_dt
+    next_tick = tick_dt
+    last_frame_t = 0.0
+    t = 0.0
+
+    while t < seconds:
+        if next_tick <= next_frame:
+            t = next_tick
+            next_tick += tick_dt
+            # The transport advances its own beat, then re-anchors the view.
+            service._playback_beat += tick_dt * BPS
+            service._emit_scroll_anchor(now=t)
+            # Date.now() resolves to whole milliseconds, so model that too.
+            clock.applyAnchorAt(
+                service.scrollAnchor,
+                clock.arrivalTime(
+                    last_frame_t,
+                    math.floor(last_frame_t * 1000.0),
+                    math.floor(t * 1000.0),
+                ),
+            )
+        else:
+            t = next_frame
+            next_frame += frame_dt
+            last_frame_t = t
+            beats.append(clock.beatAt(t))
+
+    return beats
+
+
+def test_interleaved_ticks_keep_velocity_constant(service, clock):
+    """
+    Scroll speed stays constant while the transport re-anchors underneath it.
+
+    Playback corrects the view four times a second from a 10 ms timer. Each of
+    those anchors used to be dated by the previous frame tick, backdating it by
+    up to a whole frame: +-0.028 beats at 100 BPM, around +-8 device pixels on a
+    wide pane. Slewed out as a correction, that became a +-4-11% swing in scroll
+    speed every quarter second — and a velocity the eye cannot track reads as
+    motion blur even when every individual frame is sharp.
+    """
+    service.play()
+    clock.applyAnchorAt(service.scrollAnchor, 0.0)
+
+    beats = _interleaved(service, clock, seconds=5.0)
+    deltas = [b - a for a, b in zip(beats, beats[1:])]
+
+    expected = BPS / 60.0
+    assert min(deltas) > 0.0, "the playhead stalled or reversed on some frame"
+
+    worst = max(abs(d - expected) for d in deltas)
+    assert worst < expected * 0.015, (
+        f"per-frame advance varied by {worst / expected:.1%} of a frame step "
+        "while the transport re-anchored; scrolling is not at constant velocity"
     )

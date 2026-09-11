@@ -165,3 +165,56 @@ def test_stopped_transport_holds_position(clock):
 
     for ahead in (0.5, 5.0, 60.0):
         assert clock.beatAt(t0 + ahead) == pytest.approx(12.5, abs=1e-9)
+
+
+# --- Anchor arrival time ---------------------------------------------------
+
+def test_arrival_time_adds_the_lead_since_the_frame_tick(clock):
+    """
+    An anchor sampled between frames is dated now, not at the last frame tick.
+
+    elapsedTime only moves once per frame, so dating an anchor by it backdates
+    the anchor by however far into the frame the backend timer happened to fire.
+    The view then absorbs that pure timing noise as a change of scroll speed.
+    """
+    # Frame tick at elapsed 4.0 s / wall 1000 ms; the anchor lands 9 ms later.
+    assert clock.arrivalTime(4.0, 1000.0, 1009.0) == pytest.approx(4.009, abs=1e-9)
+
+
+def test_arrival_time_never_runs_backwards(clock):
+    """A wall clock that steps back must not date an anchor before its frame."""
+    assert clock.arrivalTime(4.0, 1000.0, 980.0) == pytest.approx(4.0, abs=1e-9)
+
+
+def test_arrival_time_is_capped(clock):
+    """A stalled frame clock must not date an anchor arbitrarily far ahead."""
+    cap = clock.property("maxArrivalLeadSeconds")
+    assert clock.arrivalTime(4.0, 1000.0, 9000.0) == pytest.approx(4.0 + cap, abs=1e-9)
+
+
+def test_arrival_time_without_a_tick_uses_the_frame_time(clock):
+    """Before the first frame tick there is nothing to measure a lead from."""
+    assert clock.arrivalTime(4.0, 0.0, 1009.0) == pytest.approx(4.0, abs=1e-9)
+
+
+def test_anchor_property_wires_through_to_the_beat(clock):
+    """
+    Assigning the anchor property drives the clock, not just applyAnchorAt.
+
+    Every other test here calls applyAnchorAt directly, which skips the handler
+    that dates the anchor — so a mistake in that wiring (a mistyped property, a
+    JS error in the date arithmetic) would abort the handler at playback time
+    and leave the playhead parked, with nothing failing here.
+    """
+    clock.setProperty("active", True)
+    clock.setProperty("anchor", {"beat": 12.0, "bps": BPM_100, "snap": True,
+                                 "active": True, "seq": 1})
+
+    assert clock.property("beat") == pytest.approx(12.0, abs=0.05), (
+        "the anchor property did not reach the playhead"
+    )
+
+    # A second anchor on the same line must keep tracking it.
+    clock.setProperty("anchor", {"beat": 40.0, "bps": BPM_100, "snap": True,
+                                 "active": True, "seq": 2})
+    assert clock.property("beat") == pytest.approx(40.0, abs=0.05)

@@ -28,7 +28,11 @@ log = logging.getLogger(__name__)
 # tests/test_notation_labels.py.
 
 MIN_LABEL_PX = 10.0         # absolute floor for a legible Inter Bold glyph
-LABEL_TARGET_RATIO = 0.92   # preferred label pixel size as a fraction of capsule height
+# Preferred label pixel size, as a fraction of capsule height. Above 1.0 because
+# a pixel size is an em and these labels are caps with no descenders: their ink
+# is about 0.73 em, so an em a little taller than the capsule still sits inside
+# it. _plan_note_label measures the real glyph box and shrinks whatever does not.
+LABEL_TARGET_RATIO = 1.10
 LABEL_PX_QUANTUM = 0.5      # rounding step, bounds the font/metrics cache size
 DARK_LABEL = "#14181F"
 LIGHT_LABEL = "#FFFFFF"
@@ -46,7 +50,9 @@ OUTSIDE_LABEL_MAX_ROWS = 4   # after this many collision bumps we draw anyway
 # pedal marking) — change them together or the overlays desync from the ink.
 
 STAFF_SPACE_RATIO = 0.0525   # one staff space as a fraction of the pane height
-CAPSULE_HEIGHT_RATIO = 0.92  # enhanced duration capsule height, in staff spaces
+# Enhanced duration capsule height, in staff spaces. Held under 1.0 so that two
+# capsules a third apart — exactly one staff space — keep paper between them.
+CAPSULE_HEIGHT_RATIO = 0.96
 
 # Treble-to-bass centre distance, deliberately expressed in staff spaces rather
 # than as a fraction of the pane height. With fixed fractions the two staves
@@ -89,7 +95,7 @@ def label_color_for(fill: QColor) -> QColor:
     styles, so the requirement moved from the label onto the fills: a capsule
     colour must now be dark enough to carry white text.
 
-    The labels are Inter Bold at roughly 0.9x the capsule height — large text by
+    The labels are Inter Bold at roughly 1.1x the capsule height — large text by
     WCAG, so the bar is 3.0:1. tests/test_notation_labels.py enforces it against
     the lightest end of the capsule gradient, which is the worst case.
 
@@ -860,7 +866,10 @@ class NotationView(QQuickPaintedItem):
             return {'text': text, 'px': MIN_LABEL_PX, 'inside': False}
 
         avail_w = cap_w - 2 * self._label_pad_x(s)
-        avail_h = h - 2 * max(1.0, s * 0.08)
+        # Vertical breathing room, deliberately thinner than the horizontal
+        # padding: the letter is the thing being read, and the capsule's rounded
+        # ends already separate it from its neighbours.
+        avail_h = h - 2 * max(1.0, s * 0.05)
         if avail_w <= 0 or avail_h <= 0:
             return {'text': text, 'px': MIN_LABEL_PX, 'inside': False}
 
@@ -1129,6 +1138,26 @@ class NotationView(QQuickPaintedItem):
         self._layout_caches[kind] = cached
         return cached
 
+    @staticmethod
+    def _scroll_offset(painter: QPainter, start_x: float, current_beat: float, ppb: float) -> float:
+        """
+        The beat-space to screen-space translation, snapped to whole device pixels.
+
+        Everything that scrolls moves by this one number, so snapping it keeps
+        every note at a fixed sub-pixel phase for the life of the piece: a note
+        rasterises identically on every frame and is merely shifted, rather than
+        being re-antialiased at a new sub-pixel offset sixty times a second.
+
+        Nothing moves relative to anything else either — which is the difference
+        from the per-glyph int(x) that _draw_smufl_glyph describes, where
+        noteheads snapped while the staff around them did not. The price is at
+        most half a device pixel of position error, spread across the whole
+        engraving at once.
+        """
+        raw = start_x - (current_beat * ppb)
+        scale = painter.deviceTransform().m11() or 1.0
+        return round(raw * scale) / scale
+
     def _invalidate_layout(self, kind: str | None = None):
         """Drops cached layout so the next paint re-engraves. Cheap; the rebuild is lazy."""
         if kind is None:
@@ -1199,8 +1228,11 @@ class NotationView(QQuickPaintedItem):
         # Draw translucent loop shading behind staff/notes if A/B loop bounds are active
         if self._loop_start_beat >= 0 and self._loop_end_beat > self._loop_start_beat:
             curr_beat = self._eval_beat if self._display_mode == "evaluation" else self._scroll_beat
-            x1 = note_start_x + (self._loop_start_beat - curr_beat) * ppb
-            x2 = note_start_x + (self._loop_end_beat - curr_beat) * ppb
+            # The same snapped offset the notes are drawn at, so the band cannot
+            # drift a pixel against the music it marks.
+            loop_offset_x = self._scroll_offset(painter, note_start_x, curr_beat, ppb)
+            x1 = loop_offset_x + (self._loop_start_beat * ppb)
+            x2 = loop_offset_x + (self._loop_end_beat * ppb)
             if x2 > x1:
                 loop_top = treble_cy - (s * 3.5)
                 loop_height = (bass_cy - treble_cy) + (s * 7.0)
@@ -1655,7 +1687,7 @@ class NotationView(QQuickPaintedItem):
         # before anything else is touched, so notes inside the beat window but
         # off the left or right edge cost one comparison rather than a full
         # layout dict.
-        offset_x = start_x - (current_beat * ppb)
+        offset_x = self._scroll_offset(painter, start_x, current_beat, ppb)
         right_limit = width + 100.0
 
         layout_data = []

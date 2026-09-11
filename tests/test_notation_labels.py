@@ -21,7 +21,7 @@ from ui.notation_view import (
 )
 from PySide6.QtGui import QColor
 
-# WCAG AA for large text. The capsule letter is Inter Bold at roughly 0.9x the
+# WCAG AA for large text. The capsule letter is Inter Bold at roughly 1.1x the
 # capsule height, which clears the large-text size threshold at every pane size
 # the app supports, so 3.0 is the applicable bar rather than 4.5.
 MIN_LARGE_TEXT_CONTRAST = 3.0
@@ -148,13 +148,20 @@ def test_note_labels_are_legible_at_a_normal_pane(view):
     Readability is the point of the display, so the letter on an ordinary
     quarter note at an ordinary pane size has to be genuinely large — not
     merely "placed somewhere at the legibility floor".
+
+    The floor is expressed in staff spaces rather than as a bare pixel count:
+    the label is sized from the capsule, which is sized from the staff space, so
+    a pixel floor silently weakens as the pane grows. At this pane s is 23.6px
+    and the planner yields 25px.
     """
     s, ppb = _geometry(1400, 450)
     cap_w = view._capsule_width({"duration_beats": 1.0}, ppb, s, "C")
     plan = view._plan_note_label("C", cap_w, s * CAPSULE_HEIGHT_RATIO, s)
 
     assert plan["inside"]
-    assert plan["px"] >= 18.0, f"quarter-note label is only {plan['px']}px"
+    assert plan["px"] >= s, (
+        f"quarter-note label is only {plan['px']}px against a {s:.1f}px staff space"
+    )
 
 
 # --- Grand staff geometry --------------------------------------------------
@@ -257,7 +264,7 @@ def test_every_fill_carries_its_label(view, name, hex_fill):
     each must be dark enough to carry white text.
 
     The bar is the WCAG large-text threshold, which these labels qualify for —
-    Inter Bold at roughly 0.9x the capsule height. Fills held below it on
+    Inter Bold at roughly 1.1x the capsule height. Fills held below it on
     purpose are listed in ACCEPTED_BELOW_BAR with the reason.
     """
     if hex_fill in ACCEPTED_BELOW_BAR:

@@ -290,3 +290,111 @@ def test_eval_mode_does_not_borrow_the_scrolling_index(view):
     image = _render(view)
     region = QRectF(WIDTH * 0.28, 0, WIDTH * 0.6, HEIGHT)
     assert _colored_pixel_count(image, region) > 20
+
+
+# --- Pixel-stable scrolling -------------------------------------------------
+
+PPB = WIDTH * 0.10
+START_X = WIDTH * 0.28
+
+
+def _painter_on(dpr):
+    """A painter on a surface with a device pixel ratio, as the app paints into."""
+    image = QImage(int(WIDTH * dpr), int(HEIGHT * dpr), QImage.Format.Format_ARGB32)
+    image.setDevicePixelRatio(dpr)
+    image.fill(PAPER)
+    return image, QPainter(image)
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.5, 2.0])
+@pytest.mark.parametrize("beat", [0.0, 0.37, 1.06, 12.913])
+def test_scroll_offset_lands_on_the_device_grid(view, dpr, beat):
+    """
+    The scroll translation is snapped to whole device pixels.
+
+    Everything that scrolls moves by this one number, so snapping it holds each
+    note at a fixed sub-pixel phase for the life of the piece.
+    """
+    _image, painter = _painter_on(dpr)
+    try:
+        offset = view._scroll_offset(painter, START_X, beat, PPB)
+    finally:
+        painter.end()
+
+    device_px = offset * dpr
+    assert device_px == pytest.approx(round(device_px), abs=1e-9), (
+        f"offset {offset} is not a whole number of device pixels at dpr {dpr}"
+    )
+    raw = START_X - beat * PPB
+    assert abs(offset - raw) <= 0.5 / dpr + 1e-9, (
+        "snapping displaced the music by more than half a device pixel"
+    )
+
+
+def _render_scrolled(view, beat, dpr):
+    image = QImage(int(WIDTH * dpr), int(HEIGHT * dpr), QImage.Format.Format_ARGB32)
+    image.setDevicePixelRatio(dpr)
+    image.fill(PAPER)
+    painter = QPainter(image)
+    try:
+        view.scrollBeat = beat
+        view.paint(painter)
+    finally:
+        painter.end()
+    return image
+
+
+def _offset_device_px(view, beat, dpr):
+    _image, painter = _painter_on(dpr)
+    try:
+        return round(view._scroll_offset(painter, START_X, beat, PPB) * dpr)
+    finally:
+        painter.end()
+
+
+def test_scrolled_frames_are_pixel_identical_once_shifted(view):
+    """
+    A note looks the same in every frame it appears in.
+
+    With a fractional translation, every frame re-antialiased the capsule edges
+    and re-placed the label at a new sub-pixel offset, so the ink shimmered as
+    it travelled. Snapped, two frames differ by a whole-pixel shift and nothing
+    else — which is what this asserts, on real pixels, at a fractional DPR.
+    """
+    dpr = 1.5
+    note_beat = 6.0
+    view.notationStyle = "enhanced"
+    view.isScrollingMode = True
+    view.scrollingNotes = [
+        {"pitch": 64, "hand": "R", "finger": 3,
+         "start_beat": note_beat, "duration_beats": 1.0},
+    ]
+
+    beat_a, beat_b = 2.0, 2.113
+    image_a = _render_scrolled(view, beat_a, dpr)
+    image_b = _render_scrolled(view, beat_b, dpr)
+
+    offset_a = _offset_device_px(view, beat_a, dpr)
+    shift = _offset_device_px(view, beat_b, dpr) - offset_a
+    assert shift < 0, "the music should have moved left between the two frames"
+
+    # The capsule, plus margin. Kept clear of the clef and signature block so
+    # the comparison only covers ink that actually scrolls.
+    left = offset_a + int(note_beat * PPB * dpr) - int(8 * dpr)
+    right = min(left + int((PPB + 40) * dpr), image_a.width())
+    assert left + shift >= 0 and right > left
+
+    mismatches = []
+    for y in range(0, image_a.height()):
+        for x in range(left, right):
+            if image_a.pixel(x, y) != image_b.pixel(x + shift, y):
+                mismatches.append((x, y))
+                if len(mismatches) > 8:
+                    break
+        if len(mismatches) > 8:
+            break
+
+    assert not mismatches, (
+        f"the same note rasterised differently between frames at {mismatches[:8]}; "
+        "the scroll translation is not landing on whole device pixels"
+    )
