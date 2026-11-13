@@ -10,6 +10,7 @@ from logic.services.rhythm_engine import RhythmEngine # type: ignore
 from logic.services.lesson_sequencer import LessonSequencer, review_exercises # type: ignore
 from logic.services import coach_prompts # type: ignore
 from logic.utils.sm2 import quality_for_chord, quality_for_song # type: ignore
+from logic.utils import chord_types # type: ignore
 import music21
 import re
 
@@ -67,6 +68,12 @@ class ChordTrainerService(QObject):
 
     # How long a lesson waits for the coach to start talking after a prompt.
     SPEECH_START_TIMEOUT_MS = 8000
+
+    # The chord vocabulary (see logic/utils/chord_types.py).
+    CHORD_TYPES = chord_types.CHORD_TYPES
+    CHORD_TYPE_ALIASES = chord_types.CHORD_TYPE_ALIASES
+    PENTASCALE_PATTERNS = chord_types.PENTASCALE_PATTERNS
+    ROOT_NOTES = chord_types.ROOT_NOTES
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None, music21_service=None):
         super().__init__()
@@ -197,6 +204,7 @@ class ChordTrainerService(QObject):
         self._is_dominant_motion_mode = False
         self._dominant_motion_step = 0
         self._dominant_motion_hint_sent = False
+        self._circle_tutorial_step = 0  # 1-7 while the Circle of Fifths tutorial runs
         self._wrong_chord_needs_hint = False
         self._wrong_chord_pitches_snapshot = []
         self._dominant_motion_complete = False  # Prevent duplicate hints per step
@@ -231,6 +239,7 @@ class ChordTrainerService(QObject):
         self._pentascale_sequence: List[int] = []  # Exact MIDI pitches for the 5-note sequence
         self._scale_name = ""
         self._pentascale_index = 0
+        self._pentascale_fingers: List[int] = []
 
         # Coach personality settings (set by AppState from SettingsService)
         self.coach_personality = "Encouraging"
@@ -268,40 +277,6 @@ class ChordTrainerService(QObject):
         self._steady_pulse_hits: List[float] = []  # Timing offsets for each successful hit
         self._steady_pulse_current_beat: int = 0
         self._steady_pulse_missed_beats: int = 0
-
-        # A simple library of chords defined by their intervals from a root note (0)
-        # 0 = Root, 4 = Major 3rd, 7 = Perfect 5th, etc.
-        self.CHORD_TYPES = {
-            "Major": {0, 4, 7},
-            "Minor": {0, 3, 7},
-            "Diminished": {0, 3, 6},
-            "Augmented": {0, 4, 8},
-            "Dominant 7th": {0, 4, 7, 10},
-            "Major 7th": {0, 4, 7, 11},
-            "Minor 7th": {0, 3, 7, 10},
-            "Single": {0},
-        }
-        # Common AI shorthand aliases → canonical CHORD_TYPES keys
-        self.CHORD_TYPE_ALIASES = {
-            "Major7": "Major 7th",
-            "Minor7": "Minor 7th",
-            "Dom7": "Dominant 7th",
-            "Dominant7": "Dominant 7th",
-            "Dim": "Diminished",
-            "Aug": "Augmented",
-            "Maj7": "Major 7th",
-            "Min7": "Minor 7th",
-            "major": "Major",
-            "minor": "Minor",
-        }
-
-        # Pentascale patterns: intervals from root for each scale type
-        self.PENTASCALE_PATTERNS = {
-            "Major": [0, 2, 4, 5, 7],      # W-W-H-W (C-D-E-F-G)
-            "Minor": [0, 2, 3, 5, 7],      # W-H-W-W (C-D-Eb-F-G)
-        }
-
-        self.ROOT_NOTES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
     def set_playback_service(self, playback_service):
         """Inject PlaybackService reference for song loading and input suppression."""
@@ -408,7 +383,7 @@ class ChordTrainerService(QObject):
         self._next_chord()
 
     def _set_state(self, new_state: LessonState):
-        if hasattr(self, '_state') and self._state == new_state:
+        if self._state == new_state:
             return
 
         old_active = self.isActive
@@ -610,7 +585,7 @@ class ChordTrainerService(QObject):
 
     @Property(bool, notify=waitingForUserContinueChanged)
     def isWaitingForUserContinue(self) -> bool:  # type: ignore[reportRedeclaration]
-        return getattr(self, '_waiting_for_user_continue', False)
+        return self._waiting_for_user_continue
 
     @Property(float, notify=lessonStateChanged)
     def holdProgress(self) -> float:  # type: ignore[reportRedeclaration]
@@ -1232,7 +1207,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         group_title = ""
         if track == "review":
             group_title = "Review"
-        elif hasattr(self, 'curriculum') and self.curriculum and track and milestone_id:
+        elif self.curriculum and track and milestone_id:
             group_title = self.curriculum.get_milestone_title(track, milestone_id)
 
         if not group_title:
@@ -1576,7 +1551,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._progression_numerals.append(str(step.get("numeral", ""))) # type: ignore
 
         self._progression_index = 0
-        self._target_hold_ms = 0
         self._required_hold_ms = 0
         self.lessonStateChanged.emit()
 
@@ -1679,7 +1653,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             )
 
         self._song_index = 0
-        self._target_hold_ms = 0
         self._required_hold_ms = 0
         self.lessonStateChanged.emit()
 
@@ -2443,7 +2416,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._target_chord_name = f"{root_name} {chord_type_name}".strip()
         self._review_chord = f"{root_name} {chord_type_name}" if chord_type_name else ""
         # Add inversion label if applicable
-        inversion = getattr(self, '_current_inversion', 0)
+        inversion = self._current_inversion
         if inversion == 1:
             self._target_chord_name += " (1st inv)"
         elif inversion == 2:
@@ -2532,12 +2505,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         # If we are in the sequenced Circle of Fifths tutorial or Dominant Motion
         if self.isCircleOfFifthsMode:
-            if getattr(self, '_is_dominant_motion_mode', False):
+            if self._is_dominant_motion_mode:
                 # For Dominant Motion, immediately transition to USER_PLAYING and start timer
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Dominant Motion speech finished, awaiting user input.")
                 self._set_state(LessonState.USER_PLAYING)
                 self.lessonStateChanged.emit()
-            elif hasattr(self, '_circle_tutorial_step'):
+            else:
                 if self._circle_tutorial_step == 7:
                     # Final step just finished speaking — end the lesson directly (no Continue button)
                     print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence complete (step 7 finished). Finalizing lesson directly.")
@@ -2557,13 +2530,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     @Slot()
     def continueCircleTutorial(self):
         """Called by QML when the user clicks the Continue button during the tutorial."""
-        if not getattr(self, '_waiting_for_user_continue', False):
+        if not self._waiting_for_user_continue:
             return
             
         self._waiting_for_user_continue = False
         self.waitingForUserContinueChanged.emit(False)
         
-        if hasattr(self, '_circle_tutorial_step') and 0 < self._circle_tutorial_step <= 7:
+        if 0 < self._circle_tutorial_step <= 7:
             if self._circle_tutorial_step == 7:
                 # Step 7 is the conclusion — after user clicks Continue, end the lesson directly
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence complete. Finalizing lesson directly.")
@@ -2964,13 +2937,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             if len(self._active_pitches) == 0:
                 self._waiting_for_release = False
                 if self._is_dominant_motion_mode:
-                    if getattr(self, '_dominant_motion_complete', False):
+                    if self._dominant_motion_complete:
                         self._dominant_motion_complete = False
                         self._is_dominant_motion_mode = False
                         self._is_circle_of_fifths_mode = False
                         self.isCircleOfFifthsModeChanged.emit(False)
                         self._conclude_lesson()
-                    elif getattr(self, '_wrong_chord_needs_hint', False):
+                    elif self._wrong_chord_needs_hint:
                         self._wrong_chord_needs_hint = False
                         self._dominant_motion_hint(wrong_pitches=self._wrong_chord_pitches_snapshot)
                     else:
@@ -3081,7 +3054,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             return
 
         # Do not evaluate if we are explicitly waiting for a full key release
-        if getattr(self, '_waiting_for_release', False):
+        if self._waiting_for_release:
             return
 
         active_set = set(self._active_pitches)
@@ -3188,7 +3161,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                                                      self._current_track, self._current_milestone_id)
 
                 # Dominant Motion: wrong chord → trigger hint
-                if self._is_dominant_motion_mode and not getattr(self, '_dominant_motion_hint_sent', False):
+                if self._is_dominant_motion_mode and not self._dominant_motion_hint_sent:
                     self._dominant_motion_hesitation_timer.stop() # Stop hesitation timer
                     self._wrong_chord_needs_hint = True
                     self._wrong_chord_pitches_snapshot = list(self._active_pitches)
