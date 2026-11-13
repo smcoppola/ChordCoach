@@ -395,7 +395,7 @@ def test_trainer_recovers_from_a_bad_song_application_exercise(service, tmp_user
     statuses = []
     trainer.statusMessageRequested.connect(lambda kind, msg: statuses.append((kind, msg)))
 
-    trainer.receive_exercise({
+    trainer.present_exercise({
         "exercise_type": "song_application",
         "exercise_name": "Bogus Piece",
         "track": "repertoire",
@@ -407,7 +407,7 @@ def test_trainer_recovers_from_a_bad_song_application_exercise(service, tmp_user
     assert statuses and statuses[-1][0] == "error"
 
     # ...and the next exercise is still accepted
-    trainer.receive_exercise({
+    trainer.present_exercise({
         "exercise_type": "song_application",
         "exercise_name": "Real Piece",
         "track": "repertoire",

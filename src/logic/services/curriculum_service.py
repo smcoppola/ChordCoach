@@ -64,6 +64,14 @@ class CurriculumService(QObject):
                 return m
         return {}
 
+    def get_milestone_meta(self, track_name: str, milestone_id: str) -> dict:
+        """
+        A milestone's full definition from curriculum_tracks.json, including
+        the optional hints the lesson sequencer reads (inversions, hand,
+        pedal_type, progressions, follow_up, suggested_pieces). {} if unknown.
+        """
+        return dict(self._get_milestone_meta(track_name, milestone_id))
+
     def get_milestone_title(self, track_name: str, milestone_id: str) -> str:
         """User-facing accessor to look up a milestone title."""
         if not track_name or not milestone_id:

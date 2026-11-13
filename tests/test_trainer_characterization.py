@@ -105,10 +105,10 @@ def release(trainer, *pitches):
 
 def apply(trainer, exercise):
     """
-    Puts `exercise` (a set_exercise-shaped dict) in front of the student, with
-    the same normalisation (aliases, inversions) the lesson path applies.
+    Puts `exercise` (a LessonSequencer-shaped dict) in front of the student,
+    with the same normalisation (aliases, inversions) the lesson path applies.
     """
-    trainer.receive_exercise(dict(exercise))
+    trainer.present_exercise(dict(exercise))
 
 
 @pytest.fixture
@@ -165,26 +165,8 @@ def test_inversion_rotates_the_voicing(trainer):
 
 
 def test_unknown_chord_type_is_rejected(trainer):
-    apply(trainer, c_major(chord_type_name="Sus4"))
+    assert trainer.present_exercise(c_major(chord_type_name="Sus4")) is False
     assert trainer.targetPitches == []
-
-
-def test_every_chord_type_offered_to_the_coach_is_accepted(trainer):
-    """The prompts and the tool schema must not offer qualities the trainer rejects."""
-    import re
-    from pathlib import Path
-
-    services = Path(__file__).resolve().parent.parent / "src" / "logic" / "services"
-    offered = set()
-    for name, pattern in (("chord_trainer.py", r"Available chord_type_name values: ([^\n]+)"),
-                          ("gemini_service.py", r"Chord quality: ([^\"]+)\"")):
-        lists = re.findall(pattern, (services / name).read_text(encoding="utf-8"))
-        assert lists, f"no chord-type list found in {name}"
-        for listed in lists:
-            offered.update(t.strip() for t in listed.split(","))
-
-    accepted = set(trainer.CHORD_TYPES) | set(trainer.CHORD_TYPE_ALIASES)
-    assert offered and offered <= accepted, f"offered but rejected: {sorted(offered - accepted)}"
 
 
 def test_right_notes_in_the_wrong_octave_neither_complete_nor_fail(trainer):
@@ -438,7 +420,6 @@ def test_new_step_during_speech_with_keys_down_needs_a_full_release(trainer):
     press(trainer, C4, E4)  # not yet complete
 
     trainer.pause_for_speech()
-    trainer._target_chord_name = ""  # the trainer is between steps, as when the next exercise arrives
     apply(trainer, c_major(root_idx=7, exercise_name="G Major"))
     trainer.resume_lesson()
     assert trainer.targetPitches == [G4, B4, D5]

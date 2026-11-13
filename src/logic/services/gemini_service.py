@@ -46,8 +46,6 @@ class GeminiService(QObject):
     aiStartedSpeaking = Signal()
     aiFinishedSpeaking = Signal()
     reconnecting = Signal(int, int)  # (attempt, max_attempts)
-    exerciseReceived = Signal(dict)   # Fired when model calls set_exercise tool
-    lessonEndReceived = Signal(str)   # Fired when model calls end_lesson tool
     theoryVisualReceived = Signal(dict) # Fired when model calls update_theory_visual
     apiKeyInvalid = Signal()    # Fired when the API key is missing or rejected
 
@@ -68,10 +66,7 @@ class GeminiService(QObject):
         self._max_reconnect_attempts = 5
         self._active_model = self.LIVE_MODEL
         self._setup_complete_seen = False
-        # set_exercise call awaiting its (delayed) tool response — the
-        # performance report is delivered as the function result on 3.1
-        self._pending_exercise_call = None
-        
+
         self._audio_buffer = b""
         self._last_audio_write_time = 0.0
         self._audio_timer = QTimer(self)
@@ -80,7 +75,6 @@ class GeminiService(QObject):
         
         self._is_speaking_state = False
         self._turn_complete = True # Start as complete
-        self._exercise_pending = False  # Track if an exercise is awaiting completion
         self._tools_disabled = False  # When True, omit tools from session setup (voice-only mode)
         
         # Start the asyncio loop in a background thread so we don't block the Qt UI
@@ -343,26 +337,11 @@ class GeminiService(QObject):
                 " VOICE RULES: 1. NEVER say raw numbers like BPM, milliseconds, or technical parameters. "
                 "Say 'play slowly and steadily' instead of 'play at 60 BPM'. "
                 "2. The student sees the chord/notes on screen — focus on WHY they're doing this, not WHAT keys to press. "
-                "3. Between exercises of the SAME type, provide a 1-3 word micro-affirmation ONLY every 3 to 5 reps. Otherwise, remain COMPLETELY SILENT and just call set_exercise. "
-                "4. Only speak longer sentences when: introducing a NEW exercise type for the first time, giving feedback on significant struggles, or ending the lesson. "
-                "5. Keep transitions fast. Call set_exercise immediately after receiving performance data. "
-                "If the next exercise is the same type as the last, do NOT speak - just call the tool."
-                "6. When a [System Note] says 'Do NOT call any tools', obey unconditionally — do NOT call set_exercise or end_lesson. "
-                "7. Your reasoning is private and is never spoken. Every word of your spoken response must be meant for the student's ears. When introducing a NEW concept (like 'What is an Inversion?'), speak the explanation ALOUD so the student hears it.\n"
-                "CRITICAL RULES FOR EXERCISE GENERATION:\n"
-                "- You are the conductor. Assign exercises STRICTLY ONE AT A TIME. (Note: A 'progression' exercise containing multiple chords counts as a single exercise. Use 'progression' for ANY chord transition drills).\n"
-                "- If the curriculum requires 'song_application', you MUST use the `song_application` exercise_type and provide a `piece_name` (e.g. 'bach/bwv1.6.mxl').\n"
-                "- For repertoire milestones, prefer pieces from the STUDENT'S SONG LIBRARY at or slightly below the student's level; fall back to a corpus piece only if the library has nothing suitable.\n"
-                "- DO NOT use parallel function calling to dispense the entire block at once.\n"
-                "- Always wait for me to report the student's performance before giving the next step.\n"
-                "- For 'exercise_name', provide a descriptive name for the specific drill you are giving (e.g., \"C Major Root Position\"), NOT the name of the entire lesson block.\n"
-                "- VARIETY RULE: Within a block, you MUST vary the exercises. If the goal is 'Major Triads', do not just ask for C Major 10 times. Vary the keys (C, F, G), vary the inversion (Root, 1st, 2nd), or vary the exercise type (chord, then listen, then pentascale). DO NOT REPEAT THE EXACT SAME EXERCISE MORE THAN TWICE.\n"
-                "- ADVANCEMENT RULE: You must move to the next block after you have assigned approximately the 'Target exercise count' for the current block. Do not linger on one block forever.\n"
-                "BEGINNER SAFETY RULES:\n"
-                "- DO NOT use 7th, 9th, or extended chords unless in target_chords.\n"
-                "- DO NOT use complex rhythms for beginners.\n"
-                "- For 'listen' exercises, ONLY use Major and Minor.\n"
-                "- ALWAYS prioritize the 'target_chords' list."
+                "3. You do not choose the exercises; the app does, and it tells you when to speak and about what. "
+                "Speak only when the app asks you to, and say only what it asks for. "
+                "4. Do not announce what you are going to do or describe the app's instructions; just speak to the student. "
+                "5. Your reasoning is private and is never spoken. Every word of your spoken response must be meant for the student's ears. When introducing a NEW concept (like 'What is an Inversion?'), speak the explanation ALOUD so the student hears it. "
+                "6. If the student talks to you, answer briefly and kindly."
             )
             if hasattr(self, 'coach_context') and self.coach_context:
                 base_instruction += "\n\n" + self.coach_context
@@ -384,7 +363,6 @@ class GeminiService(QObject):
                 generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
             self._setup_complete_seen = False
-            self._pending_exercise_call = None
             setup_msg: dict = {
                 "setup": {
                     "model": self._active_model,
@@ -401,122 +379,6 @@ class GeminiService(QObject):
             if not self._tools_disabled:
                 setup_msg["setup"]["tools"] = [{
                     "functionDeclarations": [
-                        {
-                            "name": "set_exercise",
-                            "description": (
-                                "Set the next piano exercise for the student. "
-                                "CRITICAL: Call this EXACTLY ONCE per turn. DO NOT use parallel function calling to queue multiple exercises. "
-                                "You must wait for the user to perform the exercise before calling this tool again. "
-                                "Multiple simultaneous calls will be ignored."
-                            ),
-                            "parameters": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "exercise_type": {
-                                        "type": "STRING",
-                                        "description": "One of: chord, pentascale, progression, listen, hands_together, sustain_pedal, steady_pulse, song_application"
-                                    },
-                                    "exercise_name": {
-                                        "type": "STRING",
-                                        "description": "Human-readable name for this exercise group (e.g. 'Minor Triads')"
-                                    },
-                                    "root_idx": {
-                                        "type": "INTEGER",
-                                        "description": "Root note as semitone offset from C: C=0, C#=1, D=2, ... B=11"
-                                    },
-                                    "chord_type_name": {
-                                        "type": "STRING",
-                                        "description": "Chord quality: Major, Minor, Diminished, Augmented, Major7, Minor7, Dominant7"
-                                    },
-                                    "hand": {
-                                        "type": "STRING",
-                                        "description": "Which hand: right, left, or both"
-                                    },
-                                    "hold_ms": {
-                                        "type": "INTEGER",
-                                        "description": "How long the student must hold the chord in ms. 0 = strike only, 2000+ = sustain"
-                                    },
-                                    "track": {
-                                        "type": "STRING",
-                                        "description": "Curriculum track: technique, theory, ear, repertoire"
-                                    },
-                                    "milestone_id": {
-                                        "type": "STRING",
-                                        "description": "Curriculum milestone identifier"
-                                    },
-                                    "scale_type": {
-                                        "type": "STRING",
-                                        "description": "For pentascale exercises: Major or Minor"
-                                    },
-                                    "direction": {
-                                        "type": "STRING",
-                                        "description": "For pentascale: ascending or descending"
-                                    },
-                                    "octave": {
-                                        "type": "INTEGER",
-                                        "description": "Octave number, usually 4"
-                                    },
-                                    "bpm": {
-                                        "type": "INTEGER",
-                                        "description": "Metronome BPM for timed exercises. 0 or omit for free play"
-                                    },
-                                    "preview_chord": {
-                                        "type": "BOOLEAN",
-                                        "description": "If true, play the chord on the MIDI keyboard before the student tries"
-                                    },
-                                    "target_quality": {
-                                        "type": "STRING",
-                                        "description": "For listen exercises: Major or Minor"
-                                    },
-                                    "pedal_type": {
-                                        "type": "STRING",
-                                        "description": "For sustain_pedal exercises: direct or legato"
-                                    },
-                                    "inversion": {
-                                        "type": "INTEGER",
-                                        "description": "Chord inversion: 0 = root position (default), 1 = 1st inversion, 2 = 2nd inversion. Omit or 0 for root position."
-                                    },
-                                    "pulse_count": {
-                                        "type": "INTEGER",
-                                        "description": "For steady_pulse exercises: how many beats to play. Default is 16."
-                                    },
-                                    "progression_steps": {
-                                        "type": "ARRAY",
-                                        "description": "For progression exercises: array of chord steps",
-                                        "items": {
-                                            "type": "OBJECT",
-                                            "properties": {
-                                                "root_idx": {"type": "INTEGER"},
-                                                "chord_type_name": {"type": "STRING"},
-                                                "numeral": {"type": "STRING"}
-                                            }
-                                        }
-                                    },
-                                    "piece_name": {
-                                        "type": "STRING",
-                                        "description": "For song_application exercises: a music21 corpus identifier (e.g. 'bach/bwv1.6.mxl' or 'essenFolksong/erk5') OR a user-library id starting with 'user::' taken EXACTLY from the Student's Song Library list in your context. Never invent user:: ids."
-                                    }
-                                },
-                                "required": ["exercise_type", "exercise_name", "track", "milestone_id"]
-                            }
-                        },
-                        {
-                            "name": "end_lesson",
-                            "description": (
-                                "End the current lesson. Call this when the student has completed "
-                                "enough exercises or the session time is up. Speak your closing "
-                                "feedback AND call this tool."
-                            ),
-                            "parameters": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "feedback_summary": {
-                                        "type": "STRING",
-                                        "description": "Brief text summary of the student's performance"
-                                    }
-                                }
-                            }
-                        },
                         {
                             "name": "update_theory_visual",
                             "description": (
@@ -543,11 +405,6 @@ class GeminiService(QObject):
                         }
                     ]
                 }]
-                if self._active_model == self.LIVE_MODEL:
-                    # Async function calling: the model keeps conversing while
-                    # set_exercise awaits its delayed result (the performance
-                    # report), so mid-exercise questions still work.
-                    setup_msg["setup"]["tools"][0]["functionDeclarations"][0]["behavior"] = "NON_BLOCKING"
             else:
                 print("Gemini Service: Tools DISABLED for this session (voice-only mode).")
             await self._safe_ws_send(json.dumps(setup_msg))
@@ -627,44 +484,21 @@ class GeminiService(QObject):
                         tool_response = {"status": "ok"}
                         
                         if i > 0:
-                            # 100% Reject: Parallel function calls are not allowed in this curriculum engine
+                            # One visual update per turn; extra parallel calls are refused.
                             tool_response = {
-                                "status": "error", 
-                                "message": "Parallel tool calls are strictly forbidden. You must wait for the user to complete the FIRST exercise. Do NOT speak — just wait."
+                                "status": "error",
+                                "message": "Only one tool call per turn is allowed."
                             }
                         else:
                             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] Gemini Service: Tool call received: {fn_name}({json.dumps(fn_args)[:120]})")
-                            
-                            # Intercept and print the thought bucket
-                            if "internal_monologue" in fn_args:
-                                print(f"\n🧠 [AI THOUGHT BUCKET] ->\n{fn_args['internal_monologue']}\n")
 
-                            if fn_name == "set_exercise":
-                                if self._exercise_pending:
-                                    print(f"Gemini Service: Informing AI of pending exercise — skipping duplicate set_exercise")
-                                    # Use a success status but inform the model to wait (prevents model retry-loop spam)
-                                    tool_response = {"status": "awaiting_completion", "message": "System: An exercise is already active. Please WAIT for the student to finish. Do NOT speak or resend the tool call."}
-                                else:
-                                    self._exercise_pending = True
-                                    self.exerciseReceived.emit(fn_args)
-                                    if self._active_model == self.LIVE_MODEL:
-                                        # Hold the tool response until the student
-                                        # finishes — the performance report rides
-                                        # back as the function result (data the
-                                        # model can't read aloud), instead of a
-                                        # fake user message it might recite.
-                                        self._pending_exercise_call = {"id": fn_id, "name": fn_name}
-                                        continue
-                            elif fn_name == "update_theory_visual":
+                            if fn_name == "update_theory_visual":
                                 self.theoryVisualReceived.emit(fn_args)
-                            elif fn_name == "end_lesson":
-                                if self._exercise_pending:
-                                    print(f"Gemini Service: Informing AI of pending exercise — skipping early end_lesson")
-                                    tool_response = {"status": "awaiting_completion", "message": "System: Exercise in progress. Finish the current drill before ending the lesson. Please WAIT."}
-                                else:
-                                    self._exercise_pending = False
-                                    self.lessonEndReceived.emit(fn_args.get("feedback_summary", ""))
-                        
+                            else:
+                                # The app chooses exercises itself; a session
+                                # set up before this change could still try.
+                                tool_response = {"status": "error", "message": f"Unknown tool '{fn_name}'."}
+
                         responses.append({
                             "id": fn_id,
                             "name": fn_name,
@@ -762,9 +596,6 @@ class GeminiService(QObject):
 
     async def _attempt_reconnect(self):
         """Attempt to reconnect with exponential backoff."""
-        # Reset exercise lock so new exercises can flow after reconnect
-        self._exercise_pending = False
-
         while self._reconnect_attempts < self._max_reconnect_attempts:
             self._reconnect_attempts += 1
             delay = min(2 ** self._reconnect_attempts, 30)
@@ -794,65 +625,12 @@ class GeminiService(QObject):
         print("Gemini Service: All reconnection attempts failed.")
         self.connectionStatusChanged.emit(False)
 
-    def _flush_pending_exercise_call(self, payload: dict | None = None):
-        """Answer a held set_exercise tool call. Called with the performance
-        report when the exercise completes, or bare (status ok) as a safety
-        valve before any new text goes out, so the model is never left with
-        an unanswered call."""
-        call = self._pending_exercise_call
-        self._pending_exercise_call = None
-        if not call or not self.connected or not self.ws:
-            return False
-        response = {"status": "ok"}
-        if payload:
-            response.update(payload)
-        msg = {
-            "toolResponse": {
-                "functionResponses": [{
-                    "id": call["id"],
-                    "name": call["name"],
-                    "response": response
-                }]
-            }
-        }
-        asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)
-        return True
-
-    @Slot(str)
-    def send_performance_report(self, report: str):
-        """Deliver an exercise performance report to the model.
-
-        Preferred path (Gemini 3.1): as the delayed tool response to the held
-        set_exercise call — tool results are data, so the model has nothing
-        to accidentally read aloud. Falls back to a plain text prompt when no
-        call is being held (2.5 fallback model, reconnected session, etc.)."""
-        self._turn_complete = False  # Expecting a response
-        clean = (report
-                 .replace("<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>", "")
-                 .replace("</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>", "")
-                 .strip())
-        # scheduling INTERRUPT makes the model act on the result immediately
-        # (assign the next exercise) instead of waiting for more input
-        if self._flush_pending_exercise_call({"performance_report": clean,
-                                              "scheduling": "INTERRUPT"}):
-            print("Gemini Service: Performance report sent as delayed tool response.")
-        else:
-            self.send_prompt(report)
-
     @Slot(str)
     def send_prompt(self, prompt: str):
         """Send a standard text message."""
         if not self.connected or not self.ws:
             print("Gemini Service: Not connected. Dropping prompt.")
             return
-
-        # Safety valve: release a STALE held set_exercise call (e.g. lesson
-        # aborted mid-exercise, then new text goes out). While an exercise is
-        # genuinely in progress (_exercise_pending), keep holding — the call
-        # is NON_BLOCKING, so mid-exercise hints can flow alongside it.
-        if self._pending_exercise_call and not self._exercise_pending:
-            print("Gemini Service: Releasing stale set_exercise response before text prompt.")
-            self._flush_pending_exercise_call()
 
         self._turn_complete = False # Expecting a response
             
@@ -877,9 +655,3 @@ class GeminiService(QObject):
                 }
             }
         asyncio.run_coroutine_threadsafe(self._safe_ws_send(json.dumps(msg)), self.loop)
-
-    @Slot()
-    def clear_exercise_pending(self):
-        """Clear the exercise-pending flag. Call ONLY when the student has
-        completed an exercise and performance data is about to be sent."""
-        self._exercise_pending = False

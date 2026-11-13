@@ -7,13 +7,14 @@ from datetime import datetime
 from enum import Enum, auto
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
 from logic.services.rhythm_engine import RhythmEngine # type: ignore
+from logic.services.lesson_sequencer import LessonSequencer # type: ignore
+from logic.services import coach_prompts # type: ignore
 import music21
 
 class LessonState(Enum):
     IDLE = auto()               # Not in a lesson
     LOADING = auto()            # Initial lesson loading
-    AWAITING_EXERCISE = auto()  # Requested next exercise, waiting for AI tool call
-    AI_SPEAKING = auto()        # AI is introducing the exercise
+    AI_SPEAKING = auto()        # Coach is speaking (or about to); input is paused
     USER_PLAYING = auto()       # Exercise active, accepting MIDI input
     WAITING_TO_BEGIN = auto()   # Waiting for user to click begin
 
@@ -29,17 +30,13 @@ class ChordTrainerService(QObject):
     loadingStatusChanged = Signal()
     speakInstruction = Signal(str)
     speakBrief = Signal(str)              # Non-blocking brief coach commentary
-    apiConnectivityChanged = Signal(bool)  # True = confirmed, False = lost
     midiOutRequested = Signal(list)
     metronomeTick = Signal()
     inputReady = Signal()                 # Emitted exactly when a drill is ready for user input
     waitingForUserContinueChanged = Signal(bool)
     statusMessageRequested = Signal(str, str) # type, message (type: "info", "error", "success")
 
-    # Single-model architecture signals
-    requestLessonStart = Signal(str)    # Emitted with the full lesson prompt for the AI coach
-    reportPerformance = Signal(str)     # Emitted after each exercise with performance data
-    exerciseRequestUnlocked = Signal()  # Emitted when a dropped tool call failsafe triggers
+    conceptCardChanged = Signal()       # A theory card was shown or dismissed
     isCircleOfFifthsModeChanged = Signal(bool)  # Emitted when entering/leaving circle of fifths lesson
     theoryVisualDirect = Signal(dict)  # Directly push visual state from Python (bypass AI)
     targetFingersChanged = Signal()
@@ -65,6 +62,9 @@ class ChordTrainerService(QObject):
     songNoteStatesChanged = Signal()
     songResultChanged = Signal()
     rhythmCountInTick = Signal(int, bool)  # count-in beat number, is_accent
+
+    # How long a lesson waits for the coach to start talking after a prompt.
+    SPEECH_START_TIMEOUT_MS = 8000
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None, music21_service=None):
         super().__init__()
@@ -148,7 +148,6 @@ class ChordTrainerService(QObject):
 
         # Lesson State
         self._is_lesson_mode = False
-        self._lesson_playlist = []
         self._lesson_blocks = []  # Stable snapshot of exercise blocks for sidebar
         self._lesson_progress = 0
         self._lesson_total = 0
@@ -158,14 +157,34 @@ class ChordTrainerService(QObject):
         self._is_lesson_complete = False
         self._loading_status_text = ""
         self._require_key_release_before_eval = False
-        self._pending_exercise = None  # Single-slot queue to prevent rapid-fire overwrites
         self._listen_preview_pending = False  # Deferred MIDI preview for listen exercises
         self._ignore_midi_until = 0.0   # Ignore MIDI input while previewing
         self._session_stats: Dict[str, List[float]] = {}
         self._estimated_gen_ms = 5000.0
         self._exercise_history: List[str] = []
-        self._lesson_roadmap = ""  # Persist the roadmap (blocks) to survive reco drops
         self._lesson_end_pending = False # Defer showing completion UI until AI finishes speaking
+
+        # ── Sequenced lessons ──
+        # The sequencer chooses every exercise; the coach only introduces and
+        # comments. See lesson_sequencer and coach_prompts.
+        self._sequencer: Optional[LessonSequencer] = None
+        self._coach_available = False          # set by AppCoordinator from the live connection
+        self._lesson_exercise_count = 0
+        self._last_lesson_type: Optional[str] = None
+        self._seen_types_at_start: Set[str] = set()
+        self._lesson_student_context = ""
+        self._pending_coach_note = ""          # e.g. "they just finished the song", folded into the next intro
+        self._exercise_struggled = False       # anything went wrong during the current exercise
+        self._struggle_tip_given = False
+        self._concept_card: Dict[str, str] = {}
+        self._song_steps: List[Dict] = []
+        self._song_index = 0
+
+        # If the coach was asked to speak but no audio arrives, stop waiting.
+        self._speech_start_timer = QTimer(self)
+        self._speech_start_timer.setSingleShot(True)
+        self._speech_start_timer.setInterval(self.SPEECH_START_TIMEOUT_MS)
+        self._speech_start_timer.timeout.connect(self._on_speech_start_timeout)
         self._is_circle_of_fifths_mode = False  # True while Circle of Fifths tutorial is the active lesson
         self._waiting_for_user_continue = False
 
@@ -379,15 +398,9 @@ class ChordTrainerService(QObject):
             self.stop_session()
             return
 
-        # AI-lesson song — report completion and request the next exercise
-        title    = self._song_title or "the piece"
-        composer = self._song_composer or "Unknown Composer"
-        context  = (
-            f"The student just finished playing all the way through '{title}' by {composer}. "
-            "Acknowledge the achievement briefly, give a short piece of feedback on their performance, "
-            "and then set the next appropriate exercise."
-        )
-        self._request_next_exercise(context=context)
+        # Lesson song — the coach acknowledges it while introducing what comes next.
+        self._pending_coach_note = coach_prompts.note_song_finished(self._song_title or "the piece")
+        self._next_chord()
 
     def _set_state(self, new_state: LessonState):
         if hasattr(self, '_state') and self._state == new_state:
@@ -542,9 +555,10 @@ class ChordTrainerService(QObject):
     def lessonTotal(self) -> int:  # type: ignore[reportRedeclaration]
         return self._lesson_total
 
-    @Property(bool, notify=lessonStateChanged)
-    def isWaitingForAi(self) -> bool:  # type: ignore[reportRedeclaration]
-        return self._state == LessonState.AWAITING_EXERCISE
+    @Property("QVariantMap", notify=conceptCardChanged)
+    def conceptCard(self) -> dict:  # type: ignore[reportRedeclaration]
+        """{title, body} of the theory card on screen, or {} when there is none."""
+        return dict(self._concept_card)
 
     @Property(list, notify=lessonStateChanged)
     def lessonBlocks(self) -> list:  # type: ignore[reportRedeclaration]
@@ -705,220 +719,195 @@ class ChordTrainerService(QObject):
     @Slot()
     @Slot(int)
     def start_lesson_plan(self, available_minutes: int = 10):
-        """Start a new lesson by sending context to the AI coach via WebSocket.
-
-        Instead of generating the entire plan via REST API, we send the session
-        context to the live voice model and let it generate exercises one at a
-        time via tool calls while speaking instructions.
         """
-        if self.isLoading:
-            return
+        Starts a lesson from the curriculum's session plan.
 
-        # Defensive: a lesson is entirely coach-driven, so make sure the session
-        # is on its way back even if we reached here without passing through
-        # stop_session.
+        Every exercise is chosen locally by a LessonSequencer, so a lesson runs
+        the same with or without a coach connection. When the coach is there it
+        introduces new kinds of exercise and comments; it no longer decides
+        what comes next.
+        """
         self._set_coach_needed(True)
 
-        self._is_lesson_mode = True
-        self._is_lesson_complete = False
-        self._lesson_progress = 0
-        self._lesson_total = 0
-        self._lesson_playlist = []
-        self._lesson_blocks = []
+        session_plan = (self.curriculum.plan_session(available_minutes=available_minutes)
+                        if self.curriculum else {"blocks": []})
+        blocks = session_plan.get("blocks") or []
+        student_context = self._student_context()
 
-        self._estimated_gen_ms = 3000.0  # Much faster now — single round-trip
-        self._loading_status_text = "PREPARING LESSON PLAN..."
-        self._set_state(LessonState.LOADING)
+        first = blocks[0] if blocks else {}
+        if first.get("track") == "theory" and first.get("milestone_id") == "circle_of_fifths":
+            self._start_circle_tutorial(student_context)
+            return
 
-        self._active_pitches.clear()
-        self._session_stats.clear()
-        self._struggled_items.clear()
-        self._pending_exercise = None
-        self._consecutive_successes = 0
-        self._consecutive_struggles = 0
+        hints = {b["milestone_id"]: self._milestone_meta(b["track"], b["milestone_id"]) for b in blocks}
+        sequencer = LessonSequencer(session_plan, hints=hints, library=self._song_library(),
+                                    dev_mode=self._dev_mode())
+        self._begin_lesson(sequencer, student_context)
 
-        # Build the curriculum context
-        user_context = ""
-        session_plan = None
-        if self.curriculum:
-            session_plan = self.curriculum.plan_session(available_minutes=available_minutes)
-            user_context = self.curriculum.get_curriculum_context()
-        else:
-            user_context = self.db.get_coach_context()
-
-        learned_terms = self.db.get_learned_term_names()
-        if learned_terms:
-            user_context += f"\n\nALREADY EXPLAINED TERMS (DO NOT explain these again!):\n{', '.join(learned_terms)}\n"
-
-        seen_exercises = self.db.get_seen_exercise_intros()
-        if seen_exercises:
-            user_context += f"\n\nSEEN EXERCISES (User already knows how to do these):\n{', '.join(seen_exercises)}\n"
-
-        # Build the lesson prompt for the live model
-        dev_mode = os.environ.get("DEV_MODE", "false").lower() in ("true", "1", "yes")
-
-        blocks_text = ""
-        if session_plan and "blocks" in session_plan:
-            if dev_mode:
-                blocks_text = "Here is the SESSION PLAN. You will assign 2-3 exercises per block ONE AT A TIME (DEV MODE — short session):\n"
-            else:
-                blocks_text = "Here is the SESSION PLAN. You will assign 20-40 exercises per block ONE AT A TIME:\n"
-
-            for i, b in enumerate(session_plan["blocks"]):
-                blocks_text += f"\nBlock {i+1}: {b['milestone_title']} (track: '{b['track']}', milestone_id: '{b['milestone_id']}')\n"
-                blocks_text += f"- Goal: {b['milestone_description']}\n"
-                blocks_text += f"- Required Exercise Types: {b.get('exercise_types', ['chord'])}\n"
-                blocks_text += f"- Target Keys: {b['target_keys']}\n"
-                blocks_text += f"- Target Chords: {b['target_chords']}\n"
-                blocks_text += f"- Target exercise count: {b['step_count']}\n"
-
-            if session_plan.get("review_items"):
-                if dev_mode:
-                    blocks_text += "\nREVIEW ITEMS (SM-2): Include 1 drill for each:\n"
-                else:
-                    blocks_text += "\nREVIEW ITEMS (SM-2): Include 2-3 drills for each:\n"
-                for r in session_plan["review_items"]:
-                    blocks_text += f"- {r['item_type']}: {r['item_id']}\n"
-        else:
-            blocks_text = "The student is a complete beginner. Start with a C Major Pentascale (C-D-E-F-G)."
-
-        self._lesson_roadmap = blocks_text
-
-        # Check for Circle of Fifths Tutorial Milestone injection
-        is_circle_tutorial = False
-        if session_plan and "blocks" in session_plan and session_plan["blocks"]:
-            first_block = session_plan["blocks"][0]
-            if first_block.get("track") == "theory" and first_block.get("milestone_id") == "circle_of_fifths":
-                is_circle_tutorial = True
-
-        if is_circle_tutorial:
-            if not self._is_circle_of_fifths_mode:
-                self._is_circle_of_fifths_mode = True
-                self.isCircleOfFifthsModeChanged.emit(True)
-            self._circle_tutorial_step = 1
-            prompt = self._get_circle_tutorial_prompt(self._circle_tutorial_step, user_context)
-        else:
-            prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
-START A NEW LESSON. [INITIAL_LOAD]
-
-{user_context}
-
-{blocks_text}
-
-INSTRUCTIONS:
-1. You MUST call the `set_exercise` tool right now to assign the first exercise. Do NOT forget to call the tool.
-2. Speak a brief welcome and session overview, AND explicitly explain how to perform the very first exercise you are assigning so the student knows what to do.
-3. Wait for me to report the student's performance before calling the tool again.
-4. When they finish an exercise, I will send you a report. Decide the next step (advance, repeat, or simplify) and call `set_exercise` again.
-5. When the session is complete, call `end_lesson`.
-6. You MUST REMAIN COMPLETELY SILENT between exercises of the SAME type. Do NOT provide any micro-affirmations or commentary. Just call `set_exercise` immediately.
-7. Only speak longer sentences when introducing a NEW exercise type FOR THE FIRST TIME, giving feedback on significant struggles, or ending.
-
-Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal, song_application
-Available chord_type_name values: Major, Minor, Diminished, Augmented, Major7, Minor7, Dominant7
-
-Start the lesson now by calling set_exercise and speaking.
-</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
-
-        self.requestLessonStart.emit(prompt)
-
-        # Safety timeout: if AI doesn't send set_exercise within 60s, recover.
-        # Long intros can easily exceed 30s.
-        QTimer.singleShot(60000, self._lesson_loading_timeout)
+    # Exercises in a lesson on a single milestone.
+    SINGLE_DRILL_EXERCISES = 12
 
     @Slot(str, str)
     def start_single_drill(self, track_name: str, milestone_id: str):
-        """Starts a session strictly focused on a single milestone."""
-        if self.isLoading:
+        """Starts a short lesson on one milestone."""
+        self._set_coach_needed(True)
+
+        if track_name == "theory" and milestone_id == "circle_of_fifths":
+            self._start_circle_tutorial("")
+            return
+        if track_name == "theory" and milestone_id == "dominant_motion":
+            self._start_dominant_motion()
             return
 
-        self._set_coach_needed(True)
+        meta = self._milestone_meta(track_name, milestone_id)
+        block = {
+            "track": track_name,
+            "milestone_id": milestone_id,
+            "milestone_title": meta.get("title", milestone_id),
+            "milestone_description": meta.get("description", ""),
+            "exercise_types": meta.get("exercise_types", ["chord"]),
+            "target_keys": meta.get("target_keys", []),
+            "target_chords": meta.get("target_chords", []),
+            "step_count": self.SINGLE_DRILL_EXERCISES,
+        }
+        sequencer = LessonSequencer({"blocks": [block]}, hints={milestone_id: meta},
+                                    library=self._song_library(), dev_mode=self._dev_mode())
+        self._begin_lesson(sequencer, self._student_context())
+
+    # ── Lesson plumbing ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _dev_mode() -> bool:
+        return os.environ.get("DEV_MODE", "false").lower() in ("true", "1", "yes")
+
+    def _milestone_meta(self, track: str, milestone_id: str) -> dict:
+        if not self.curriculum:
+            return {}
+        return dict(self.curriculum.get_milestone_meta(track, milestone_id) or {})
+
+    def _song_library(self) -> list:
+        """The student's imported songs, for repertoire blocks."""
+        if not self.music21 or not hasattr(self.music21, "get_user_song_summaries"):
+            return []
+        try:
+            return list(self.music21.get_user_song_summaries() or [])
+        except Exception as e:
+            print(f"ChordTrainer: Could not read the song library: {e}")
+            return []
+
+    def _student_context(self) -> str:
+        """What the coach is told about the student when a lesson starts."""
+        context = ""
+        try:
+            context = (self.curriculum.get_curriculum_context() if self.curriculum
+                       else self.db.get_coach_context())
+            terms = self.db.get_learned_term_names()
+            if terms:
+                context += f"\nAlready explained terms (do not explain these again): {', '.join(terms)}\n"
+        except Exception as e:
+            print(f"ChordTrainer: Could not build the student context: {e}")
+        return context
+
+    def _reset_for_lesson(self):
+        """The state every kind of lesson starts from."""
         self._is_lesson_mode = True
         self._is_lesson_complete = False
+        self._lesson_end_pending = False
         self._lesson_progress = 0
         self._lesson_total = 0
-        self._lesson_playlist = []
         self._lesson_blocks = []
-
-        self._estimated_gen_ms = 3000.0  
-        self._loading_status_text = "PREPARING DRILL..."
-        self._set_state(LessonState.LOADING)
-
         self._active_pitches.clear()
         self._session_stats.clear()
         self._struggled_items.clear()
-        self._pending_exercise = None
         self._consecutive_successes = 0
         self._consecutive_struggles = 0
+        self._ignore_midi_until = 0.0
+        self._sequencer = None
+        self._set_concept_card({})
 
-        user_context = self.db.get_coach_context()
-        
-        target_keys = []
-        target_chords = []
-        milestone_title = milestone_id
-        if self.curriculum:
-            meta = self.curriculum._get_milestone_meta(track_name, milestone_id)
-            if meta:
-                milestone_title = meta.get("title", milestone_id)
-                target_keys = meta.get("target_keys", [])
-                target_chords = meta.get("target_chords", [])
+    def _begin_lesson(self, sequencer: LessonSequencer, student_context: str = ""):
+        """Starts a sequenced lesson and presents its first exercise."""
+        self._reset_for_lesson()
+        self._sequencer = sequencer
+        self._lesson_exercise_count = 0
+        self._last_lesson_type = None
+        try:
+            self._seen_types_at_start = set(self.db.get_seen_exercise_intros() or [])
+        except Exception:
+            self._seen_types_at_start = set()
+        self._lesson_student_context = student_context
+        self._pending_coach_note = ""
+        self._exercise_struggled = False
+        self._struggle_tip_given = False
 
-        blocks_text = "The user has elected to run a SINGLE FOCUSED LESSON, bypassing the standard curriculum.\n"
-        blocks_text += f"You will assign exactly ONE type of exercise over and over (approx 10-15 reps) until they master it, then call end_lesson.\n\n"
-        blocks_text += f"Target Drill: {milestone_title} (track: '{track_name}', milestone_id: '{milestone_id}')\n"
-        if target_keys:
-            blocks_text += f"- Allowed Keys: {target_keys}\n"
-        if target_chords:
-            blocks_text += f"- Allowed Chords: {target_chords}\n"
+        self._set_state(LessonState.USER_PLAYING)
+        self.lessonStateChanged.emit()
+        self._advance_lesson()
 
-        self._lesson_roadmap = blocks_text
+    def _start_circle_tutorial(self, student_context: str):
+        """The scripted Circle of Fifths introduction. Steps advance on Continue."""
+        self._reset_for_lesson()
+        if not self._is_circle_of_fifths_mode:
+            self._is_circle_of_fifths_mode = True
+            self.isCircleOfFifthsModeChanged.emit(True)
+        self._circle_tutorial_step = 1
+        self._set_state(LessonState.USER_PLAYING)
+        self.lessonStateChanged.emit()
 
-        is_circle_tutorial = (track_name == "theory" and milestone_id == "circle_of_fifths")
-        is_dominant_motion = (track_name == "theory" and milestone_id == "dominant_motion")
+        prompt = self._get_circle_tutorial_prompt(1, student_context)
+        if not self._coach_say(prompt):
+            self.resume_lesson()  # no coach: go straight to the Continue button
 
-        if is_circle_tutorial or is_dominant_motion:
-            if not self._is_circle_of_fifths_mode:
-                self._is_circle_of_fifths_mode = True
-                self.isCircleOfFifthsModeChanged.emit(True)
+    def _start_dominant_motion(self):
+        """The scripted V→I resolution trainer."""
+        self._reset_for_lesson()
+        if not self._is_circle_of_fifths_mode:
+            self._is_circle_of_fifths_mode = True
+            self.isCircleOfFifthsModeChanged.emit(True)
+        self._is_dominant_motion_mode = True
+        self._dominant_motion_step = 0
+        self._dominant_motion_hint_sent = False
+        self._set_state(LessonState.USER_PLAYING)
+        self.lessonStateChanged.emit()
 
-        if is_circle_tutorial:
-            # Initialize the step-by-step tutorial at step 1.
-            # _get_circle_tutorial_prompt() will DIRECTLY push the visual state from Python
-            # and return a voice-only narration prompt for the AI.
-            self._circle_tutorial_step = 1
-            prompt = self._get_circle_tutorial_prompt(1)
+        prompt = self._advance_dominant_motion(intro=True)
+        if not self._coach_say(prompt):
+            self.resume_lesson()
 
-        elif is_dominant_motion:
-            self._is_dominant_motion_mode = True
-            self._dominant_motion_step = 0
-            self._dominant_motion_hint_sent = False
-            prompt = self._advance_dominant_motion(intro=True)
+    @Slot(bool)
+    def set_coach_available(self, available: bool):
+        """Whether prompts to the coach will be heard. Set from the live connection."""
+        self._coach_available = bool(available)
 
-        else:
-            prompt = f"""<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>
-START A NEW LESSON. [INITIAL_LOAD]
+    def _coach_say(self, prompt: Optional[str], wait: bool = True) -> bool:
+        """
+        Sends `prompt` to the coach. With `wait`, input pauses until the coach
+        has finished (resume_lesson) or, if no audio starts within
+        SPEECH_START_TIMEOUT_MS, until the timeout.
 
-{user_context}
+        Returns True if the lesson is now waiting for the coach. Without a
+        coach nothing is sent and nothing waits — callers carry straight on.
+        """
+        if not prompt or not self._coach_available:
+            return False
+        self.speakInstruction.emit(prompt)
+        if not wait or not self.isActive:
+            return False
+        if self._state != LessonState.AI_SPEAKING:
+            self._set_state(LessonState.AI_SPEAKING)
+        self._speech_start_timer.start()
+        return True
 
-{blocks_text}
+    @Slot()
+    def _on_speech_start_timeout(self):
+        if self.isPausedForSpeech and not self._ai_is_currently_speaking:
+            print("ChordTrainer: Coach did not start speaking in time; carrying on.")
+            self.resume_lesson()
 
-INSTRUCTIONS:
-1. You MUST call the `set_exercise` tool right now to assign the first exercise. Do NOT forget to call the tool.
-2. Speak a brief welcome, AND explicitly explain how to perform the very first exercise so the student knows what to do.
-3. Wait for me to report the student's performance before calling the tool again.
-4. When they finish an exercise, I will send you a report. Decide the next step (advance, repeat, or simplify) and call `set_exercise` again.
-5. When the user has completed enough reps (about 10-15) and demonstrated mastery, call `end_lesson`.
-6. You MUST REMAIN COMPLETELY SILENT between exercises of the SAME type. Do NOT provide any micro-affirmations or commentary. Just call `set_exercise` immediately.
-7. Only speak longer sentences when giving feedback on significant struggles, or ending.
-
-Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal, song_application
-Available chord_type_name values: Major, Minor, Diminished, Augmented, Major7, Minor7, Dominant7
-
-Start the lesson now by calling set_exercise and speaking.
-</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
-
-        self.requestLessonStart.emit(prompt)
-        QTimer.singleShot(60000, self._lesson_loading_timeout)
+    def _set_concept_card(self, card: Dict[str, str]):
+        if card != self._concept_card:
+            self._concept_card = dict(card)
+            self.conceptCardChanged.emit()
 
     def _get_circle_tutorial_prompt(self, step: int, user_context: str = "") -> str:
         # ── Step visual data (deterministic, applied from Python) ───────────
@@ -984,9 +973,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._target_hands = []
         self._pedal_type = ""
         self._is_holding = False
-        self._pending_exercise = None
         self._consecutive_successes = 0
-        
+        # Free play is not a lesson: nothing sequenced, nothing waiting on the coach.
+        self._sequencer = None
+        self._lesson_end_pending = False
+        self._speech_start_timer.stop()
+        self._set_concept_card({})
+
         self._is_lesson_mode = False
         self._is_lesson_complete = False
         self._set_state(LessonState.LOADING)
@@ -1011,16 +1004,28 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._set_state(LessonState.USER_PLAYING)
         print(f"ChordTrainer: start_song('{piece_name}') successfully initialized.")
 
-    @Slot(dict)
-    def receive_exercise(self, exercise_data: dict):
-        """Called when the AI model emits a set_exercise tool call.
+    def present_exercise(self, exercise: dict) -> bool:
+        """
+        Puts an exercise in front of the student straight away, replacing any
+        current one. `exercise` has the shape LessonSequencer yields.
 
-        Validates the exercise and either applies it immediately (if loading
-        or no active exercise) or queues it in _pending_exercise to prevent
-        rapid-fire tool calls from overwriting the current exercise.
-        """        
+        Returns False if it was rejected (an unknown chord type, an empty
+        progression) or could not be set up (a song that would not load).
+        """
+        exercise_data = self._normalise_exercise(dict(exercise))
+        if exercise_data is None:
+            return False
+        if not self.isActive:
+            self._set_state(LessonState.USER_PLAYING)
+        return self._apply_exercise(exercise_data)
+
+    def _normalise_exercise(self, exercise_data: dict) -> Optional[dict]:
+        """
+        Fills defaults, resolves chord-type aliases and inversions, and rejects
+        what the trainer cannot play. Returns None for a rejected exercise.
+        """
         ex_type = exercise_data.get("exercise_type", "chord")
-        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Received exercise from AI: {exercise_data.get('exercise_name', 'Unknown')} (type={ex_type})")
+        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Exercise: {exercise_data.get('exercise_name', 'Unknown')} (type={ex_type})")
 
         # Apply defaults based on exercise type
         exercise_data.setdefault("hand", "right")
@@ -1033,7 +1038,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         # Validate chord type if applicable
         if ex_type in ("chord", "hands_together", "sustain_pedal", "listen") and "chord_type_name" in exercise_data:
             c_type = exercise_data["chord_type_name"]
-            # Normalize AI shorthand aliases to canonical names
+            # Normalize shorthand aliases to canonical names
             if c_type in self.CHORD_TYPE_ALIASES:
                 c_type = self.CHORD_TYPE_ALIASES[c_type]
                 exercise_data["chord_type_name"] = c_type
@@ -1042,9 +1047,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 exercise_data["intervals"] = [0]
                 exercise_data["chord_type_name"] = "" # Normalize empty/NA to single notes
             elif c_type not in self.CHORD_TYPES:
-                print(f"ChordTrainer: Unknown chord type '{c_type}', rejecting exercise and unlocking")
-                self.exerciseRequestUnlocked.emit()  # Clear _exercise_pending to prevent deadlock
-                return
+                print(f"ChordTrainer: Unknown chord type '{c_type}', rejecting exercise")
+                return None
             else:
                 exercise_data["intervals"] = self.CHORD_TYPES[c_type]
 
@@ -1063,103 +1067,125 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         if ex_type == "progression":
             prog_steps = exercise_data.get("progression_steps", [])
             if not prog_steps:
-                self.exerciseRequestUnlocked.emit()  # Clear _exercise_pending to prevent deadlock
-                return
+                return None
             for ps in prog_steps:
                 ct = ps.get("chord_type_name", "Major")
-                # Normalize aliases in progression steps too
                 if ct in self.CHORD_TYPE_ALIASES:
                     ct = self.CHORD_TYPE_ALIASES[ct]
                     ps["chord_type_name"] = ct
                 if ct not in self.CHORD_TYPES:
-                    print(f"ChordTrainer: Unknown chord type '{ct}' in progression, rejecting and unlocking")
-                    self.exerciseRequestUnlocked.emit()  # Clear _exercise_pending to prevent deadlock
-                    return
-          # If this is the first exercise (loading state), apply immediately
-        if self.isLoading:
-            self._set_state(LessonState.USER_PLAYING)
-            self._apply_exercise(exercise_data)
-            return
+                    print(f"ChordTrainer: Unknown chord type '{ct}' in progression, rejecting")
+                    return None
+        return exercise_data
 
-        # We received the response, the UI no longer needs to wait/blur
-        if self.isWaitingForAi:
-            self._set_state(LessonState.USER_PLAYING) # Ensure active if recovering from something
-            self._apply_exercise(exercise_data)
-            return
-
-        # If we weren't waiting for the AI (e.g. timeout recovery), ensure we are active now
-        if not self.isActive:
-            print("ChordTrainer: Exercise arrived while inactive (recovery). Setting active=True.")
-            self._set_state(LessonState.USER_PLAYING)
-
-        # If we already have an active exercise (with a target) and aren't waiting for the AI, 
-        # queue this one for later to avoid interrupting the current rep.
-        if self.isActive and self._target_chord_name != "":
-            print(f"ChordTrainer: Queuing exercise '{exercise_data.get('exercise_name')}' (current: '{self._exercise_name}')")
-            self._pending_exercise = exercise_data
-            return
-
-        # Otherwise apply immediately
-        self._apply_exercise(exercise_data)
-
-    def _lesson_loading_timeout(self):
-        """Safety valve: if the AI hasn't sent set_exercise within 15 seconds, recover."""
-        if self.isLoading:
-            print("ChordTrainer: Lesson loading timeout — AI did not send exercise in 15s")
-            self._loading_status_text = ""
-            self._set_state(LessonState.IDLE)
-            self.apiConnectivityChanged.emit(False)
-
-    def _apply_exercise(self, exercise_data: dict):
-        """Apply a validated exercise: update progress, blocks, and set up the target."""
+    def _apply_exercise(self, exercise_data: dict) -> bool:
+        """Apply a validated exercise: set up the target, then update progress and blocks."""
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Applying exercise to UI: {exercise_data.get('exercise_name', 'Unknown')}")
         # Clear song-complete state so the overlay dismisses
         if self._song_completed:
             self._song_completed = False
             self._ignore_midi_until = 0.0
             self.songCompletedChanged.emit()
-        # Record the exercise intro
-        self.db.record_exercise_intro(exercise_data.get("exercise_type", "chord"))
-
-        # Increment progress
-        self._lesson_progress += 1
-        self._lesson_total = self._lesson_progress  # Grows as exercises arrive
 
         # Update current milestone context
         self._current_track = str(exercise_data.get("track", ""))
         self._current_milestone_id = str(exercise_data.get("milestone_id", ""))
-
-        # Update exercise name
         self._exercise_name = str(exercise_data.get("exercise_name", self._exercise_name))
-
-        # Incrementally update lesson blocks for the sidebar
-        self._update_lesson_blocks(exercise_data)
 
         # Store current step data for performance tracking
         self._current_step_data = exercise_data.copy()
 
-        # Apply the exercise
-        self.lessonStateChanged.emit()
         self._apply_step(exercise_data)
+        if exercise_data.get("exercise_type") == "song_application" and not self._song_steps:
+            return False  # the piece did not load
 
-    @Slot(str)
-    def receive_lesson_end(self, feedback: str):
-        """Called when the AI model emits an end_lesson tool call."""
-        print(f"ChordTrainer: Lesson end tool received. AI Speaking: {self._ai_is_currently_speaking}")
+        self.db.record_exercise_intro(exercise_data.get("exercise_type", "chord"))
+        self._lesson_progress += 1
+        self._lesson_total = self._lesson_progress  # Grows as exercises arrive
+        self._update_lesson_blocks(exercise_data)
+        self.lessonStateChanged.emit()
+        return True
 
-        # If AI is speaking, don't show the completion screen yet.
-        # It will be triggered by resume_lesson when speech finishes.
-        if self._ai_is_currently_speaking:
-            self._lesson_end_pending = True
-            print("ChordTrainer: AI is still speaking final feedback. Deferring lesson end display.")
+    # ── The lesson loop ──────────────────────────────────────────────────
+
+    # Exercises tried in a row before a lesson gives up looking for one that
+    # can be presented (songs can fail to load).
+    MAX_PRESENT_ATTEMPTS = 10
+
+    def _advance_lesson(self):
+        """Presents the sequencer's next exercise, or ends the lesson."""
+        if self._sequencer is None:
+            self._conclude_lesson()
             return
 
+        result = {"struggled": self._exercise_struggled}
+        for _ in range(self.MAX_PRESENT_ATTEMPTS):
+            exercise = self._sequencer.next_exercise(result)
+            if exercise is None:
+                break
+            if self._present_lesson_exercise(exercise):
+                return
+            result = {"failed": True}
+
+        note, self._pending_coach_note = self._pending_coach_note, ""
+        self._conclude_lesson(coach_prompts.lesson_summary(
+            self._lesson_exercise_count, self._sequencer.struggled, self._sequencer.block_titles, note))
+
+    def _present_lesson_exercise(self, exercise: dict) -> bool:
+        """Has the coach introduce `exercise` if it is worth a word, then presents it."""
+        spec = self._sequencer.current_block_spec() if self._sequencer else {}
+        prompt = coach_prompts.choose_intro(
+            exercise,
+            first_in_lesson=self._lesson_exercise_count == 0,
+            previous_type=self._last_lesson_type,
+            seen_types=self._seen_types_at_start,
+            struggle_streak=self._consecutive_struggles,
+            tip_given=self._struggle_tip_given,
+            block_titles=self._sequencer.block_titles if self._sequencer else [],
+            student_context=self._lesson_student_context,
+            milestone_description=spec.get("milestone_description", ""),
+            note=self._pending_coach_note,
+        )
+        waiting = self._coach_say(prompt)
+        if prompt and self._consecutive_struggles >= 2:
+            self._struggle_tip_given = True
+
+        if not self.present_exercise(exercise):
+            return False
+
+        ex_type = exercise.get("exercise_type", "chord")
+        self._pending_coach_note = ""
+        self._lesson_exercise_count += 1
+        self._last_lesson_type = ex_type
+        self._seen_types_at_start.add(ex_type)
+        self._exercise_struggled = False
+
+        # Nobody is about to speak, so whatever setup deferred until the coach
+        # finished (a listen preview, a metronome start) happens now.
+        if not waiting and not self.isPausedForSpeech:
+            self._resume_after_speech()
+        return True
+
+    def _conclude_lesson(self, prompt: Optional[str] = None):
+        """Ends the lesson, after the coach's closing words if there are any."""
+        if self._coach_say(prompt):
+            self._lesson_end_pending = True
+            return
+        if self._ai_is_currently_speaking:
+            # Let whatever is being said finish; resume_lesson finalizes.
+            self._lesson_end_pending = True
+            return
         self._finalize_lesson_end()
 
     def _finalize_lesson_end(self):
         """Actually marks the lesson as complete and updates UI state."""
         print("ChordTrainer: Finalizing lesson completion.")
         self._is_lesson_complete = True
+        self._lesson_end_pending = False
+        self._sequencer = None
+        self._speech_start_timer.stop()
+        self._ignore_midi_until = 0.0
+        self._set_concept_card({})
         self._set_state(LessonState.IDLE)
         self.activeChanged.emit(False)
 
@@ -1187,12 +1213,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     @Slot()
     def notify_visual_received(self):
-        """Unlocks loading/wait states when a non-exercise tool (e.g. theory visual) arrives."""
+        """Unlocks the loading state when a theory visual arrives."""
         if self.isLoading:
-            print("ChordTrainer: Visual tool received during loading. Clearing loading lock.")
-            self._set_state(LessonState.USER_PLAYING)
-        elif self.isWaitingForAi:
-            print("ChordTrainer: Visual tool received during AI wait. Clearing wait lock.")
+            print("ChordTrainer: Visual received during loading. Clearing loading lock.")
             self._set_state(LessonState.USER_PLAYING)
 
     def _update_lesson_blocks(self, exercise_data: dict):
@@ -1223,142 +1246,34 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 "endStep": self._lesson_progress,
             })
 
-    def _request_next_exercise(self, context: str = ""):
-        """Send performance data to the AI model and request the next exercise."""
-        if self.isWaitingForAi:
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: IGNORING _request_next_exercise because a request is already in flight")
-            return
-
-        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Requesting NEXT exercise from AI...")
-        
-        # Build performance report from session stats
-        stats_lines = []
-        for chord, latencies in self._session_stats.items():
-            if latencies:
-                avg_lat = sum(latencies) / len(latencies)
-                stats_lines.append(f"- {chord}: {len(latencies)} attempts, avg {avg_lat:.0f}ms")
-
-        report = f"<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>Student completed exercise #{self._lesson_progress}."
-
-        last_type = ""
-        if self._current_step_data:
-            last_name = self._current_step_data.get("exercise_name", "")
-            last_type = self._current_step_data.get("exercise_type", "")
-            report += f" Last: '{last_name}' (type={last_type})."
-
-        # Include specific last-chord performance for the model
-        if self._target_chord_name:
-            last_latencies = self._session_stats.get(self._target_chord_name, [])
-            if last_latencies:
-                report += f" Last chord latency: {last_latencies[-1]:.0f}ms."
-            report += f" Wrong notes this step: {self._wrong_notes_count}."
-
-            # Update history
-            if self._exercise_name not in self._exercise_history:
-                 self._exercise_history.append(self._exercise_name)
-                 if len(self._exercise_history) > 8:
-                     self._exercise_history.pop(0)
-
-        history_text = ", ".join(self._exercise_history)
-        report += f"\nRecent exercise history (DO NOT REPEAT THESE): {history_text}."
-
-        if context:
-            report += f" {context}"
-
-        if stats_lines:
-            report += f"\nRecent performance:\n" + "\n".join(stats_lines[-5:])  # Last 5 items
-
-        report += f"\n\nCRITICAL INSTRUCTION: If you assign another '{last_type}' exercise, you MUST BE COMPLETELY SILENT. Do NOT speak - just call set_exercise."
-        report += " Provide a 1-3 word micro-affirmation ONLY every 5 reps to keep up energy. "
-        report += " Only speak longer sentences for a DIFFERENT exercise type or if the student significantly struggled."
-        report += "</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
-
-        # Set waiting flag so the incoming exercise is applied immediately instead of queued
-        self._set_state(LessonState.AWAITING_EXERCISE)
-
-        self.reportPerformance.emit(report)
-
-    def _compute_lesson_blocks(self):
-        """Build a stable block summary from the current playlist for the sidebar.
-
-        Groups consecutive steps by Milestone Title or Type.
-        Each block tracks its cumulative step range so the QML sidebar can
-        determine which block is active based on lessonProgress.
-        """
-        blocks = []
-        cumulative = 0
-        for step in self._lesson_playlist:
-            track = step.get("track", "")
-            milestone_id = step.get("milestone_id", "")
-            ex_type = step.get("exercise_type", "chord")
-
-            group_title = ""
-            if hasattr(self, 'curriculum') and self.curriculum and track and milestone_id:
-                group_title = self.curriculum.get_milestone_title(track, milestone_id)
-            if not group_title:
-                group_title = f"{ex_type.capitalize()} Drills"
-
-            # Group consecutive steps with the same aggregated title
-            if blocks and blocks[-1]["name"] == group_title:
-                blocks[-1]["stepCount"] += 1
-                blocks[-1]["endStep"] = cumulative + 1
-            else:
-                blocks.append({
-                    "track": track,
-                    "name": group_title,
-                    "type": ex_type,
-                    "stepCount": 1,
-                    "startStep": cumulative + 1,  # 1-indexed to match lessonProgress
-                    "endStep": cumulative + 1,
-                })
-            cumulative += 1
-
-        self._lesson_blocks = blocks
-
     @Slot()
-    def begin_lesson(self):
-        """Called from UI when user clicks Begin."""
-        if not self._lesson_playlist or not self.isWaitingToBegin:
+    def continueConcept(self):
+        """The student has read the theory card on screen and pressed Continue."""
+        if not self._concept_card:
             return
-
-        
-        self._set_state(LessonState.USER_PLAYING)
-        self.activeChanged.emit(self.isActive)
-        self.lessonStateChanged.emit()
-        self._next_chord()
+        self._set_concept_card({})
+        if self.curriculum:
+            self.curriculum.complete_exercise(self._exercise_name, True,
+                                              self._current_track, self._current_milestone_id)
+        if self._is_lesson_mode:
+            self._next_chord()
 
     @Slot()
     def start_review_session(self):
-        """Starts a mini-lesson focusing only on struggled items."""
-        if not self._struggled_items:
+        """Starts a mini-lesson replaying the exercises the student struggled with."""
+        exercises = []
+        for item in self._struggled_items:
+            step = dict(item.get("chord_data") or {})
+            if not step:
+                continue
+            step["exercise_name"] = f"Review: {step.get('exercise_name', item.get('name', 'Previous Task'))}"
+            exercises.append(step)
+        if not exercises:
             return
 
-        print(f"ChordTrainer: Starting review session with {len(self._struggled_items)} items")
-
-        # Build a playlist from struggled items
-        review_playlist = []
-        for item in self._struggled_items:
-            # item["chord_data"] is the original AI-generated step
-            step = item["chord_data"].copy()
-            # Clean up metadata if needed
-            step["exercise_name"] = f"Review: {step.get('exercise_name', 'Previous Task')}"
-            step["spoken_instruction"] = f"Let's try {item['name']} again. Focus on accuracy."
-            review_playlist.append(step)
-
-        # Swap playlist and start
-        self._lesson_playlist = review_playlist
-        # Clear struggled items for the new review run so we can track them again
-        self._struggled_items = []
-
-        self._lesson_progress = 0
-        self._lesson_total = len(self._lesson_playlist)
-        self._is_lesson_mode = True
-        self._is_lesson_complete = False
-        self._set_state(LessonState.USER_PLAYING)
-        self._compute_lesson_blocks()
-        self.activeChanged.emit(True)
-        self.lessonStateChanged.emit()
-        self._next_chord()
+        print(f"ChordTrainer: Starting review session with {len(exercises)} items")
+        self._set_coach_needed(True)
+        self._begin_lesson(LessonSequencer.from_exercises(exercises), "")
 
     @Slot()
     def stop_session(self):
@@ -1372,7 +1287,11 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             print("ChordTrainer: stop_session called. Returning to IDLE.")
             self._set_state(LessonState.IDLE)
             self._is_lesson_complete = False
-            
+            self._sequencer = None
+            self._lesson_end_pending = False
+            self._speech_start_timer.stop()
+            self._set_concept_card({})
+
             self._require_key_release_before_eval = False
             self._ignore_midi_until = 0.0
             if self.metronome:
@@ -1401,14 +1320,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self.targetChordChanged.emit(self._target_chord_name)
             self._hold_tick_timer.stop()
             self._is_holding = False
-            self._pending_exercise = None
             self._consecutive_successes = 0
-            
+
             # Reset Circle mode if it was on
             if self._is_circle_of_fifths_mode:
                 self._is_circle_of_fifths_mode = False
                 self.isCircleOfFifthsModeChanged.emit(False)
-                
+
             self.activeChanged.emit(False)
             self.lessonStateChanged.emit()
 
@@ -1419,52 +1337,14 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._consecutive_struggles = 0
         self.stop_session()
 
-    def get_resume_context(self) -> str:
-        """Build a prompt for the AI to resume a lesson after reconnection."""
-        lines = ["<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>RESUME LESSON after connection drop."]
-        if hasattr(self, '_lesson_roadmap') and self._lesson_roadmap:
-            lines.append("STILL ACTIVE SESSION ROADMAP (Plan):")
-            lines.append(self._lesson_roadmap)
-            lines.append("\n" + "-"*20 + "\n")
-
-        lines.append(f"Current overall lesson progress: step #{self._lesson_progress}")
-        lines.append(f"Last exercise reached: '{self._exercise_name}' (type={self._exercise_type})")
-
-        if self._current_step_data:
-            lines.append(f"Most recent exercise state data: {self._current_step_data}")
-
-        # Include recent performance
-        stats_lines = []
-        for chord, latencies in list(self._session_stats.items())[-5:]:
-            if latencies:
-                avg_lat = sum(latencies) / len(latencies)
-                stats_lines.append(f"- {chord}: {len(latencies)} attempts, avg {avg_lat:.0f}ms")
-        if stats_lines:
-            lines.append("Recent performance summary:\n" + "\n".join(stats_lines))
-
-        lines.append("\nCRITICAL: You MUST follow the VARIETY RULE. Do not assign the same exercise twice in a row. Call set_exercise immediately for the next step.")
-        lines.append("</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>")
-        return "\n".join(lines)
-
     def _next_chord(self):
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: _next_chord called")
         if self._is_lesson_mode:
-            # In single-model mode: apply queued exercise if one arrived while we were busy,
-            # otherwise send performance data and wait for the model's next tool call.
             self._target_chord_name = ""
             self._target_intervals.clear()
             self._target_pitches = []
             self._target_hands = []
-
-            if self._pending_exercise:
-                exercise = self._pending_exercise
-                self._pending_exercise = None
-                 # Clear lock if we had a pending exercise ready
-                print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
-                self._apply_exercise(exercise)
-            else:
-                self._request_next_exercise()
-            return
+            self._advance_lesson()
         else:
             self._apply_random_step()
 
@@ -1475,13 +1355,14 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         exercise_type = str(chord_data.get("exercise_type", "chord")) # type: ignore
         self._exercise_type = exercise_type
         self._current_hand = str(chord_data.get("hand", "right")) # type: ignore
+        if exercise_type != "theory_concept":
+            self._set_concept_card({})
 
-        # Pause input evaluation until speech finishes in lesson mode.
-        # We only force the pause if the AI is ACTUALLY currently speaking 
-        # (e.g. Turn 1 speaking concept intro, then Turn 2 calling set_exercise).
-        # If the AI turn finished before the tool call arrived, we don't pause.
-        if self._is_lesson_mode and self._ai_is_currently_speaking:
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: AI is speaking, pausing input (isPausedForSpeech=True) for {self._exercise_name}")
+        # Pause input evaluation until speech finishes in lesson mode: either
+        # the coach is talking already, or it has just been asked to introduce
+        # this exercise and the lesson is waiting for it.
+        if self._is_lesson_mode and (self._ai_is_currently_speaking or self.isPausedForSpeech):
+            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speaking, pausing input (isPausedForSpeech=True) for {self._exercise_name}")
             self._set_state(LessonState.AI_SPEAKING)
 
             # If the user is currently holding keys, force them to release before evaluating this new step
@@ -1506,6 +1387,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._setup_steady_pulse_target(chord_data)
         elif exercise_type == "song_application":
             self._setup_song_target(chord_data)
+        elif exercise_type == "theory_concept":
+            self._setup_concept_card(chord_data)
         else:
             # Original chord behavior
             root_idx = chord_data.get("root_idx", 0)
@@ -1518,6 +1401,22 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             octave = chord_data.get("octave", 4)
             preview = chord_data.get("preview_chord", False)
             self._setup_target(root_idx, chord_type_name, intervals, octave, preview_chord=preview)
+
+    def _setup_concept_card(self, chord_data):
+        """A theory card: title and explanation on screen, Continue to move on. Nothing to play."""
+        name = str(chord_data.get("exercise_name", ""))
+        self._target_chord_name = name
+        self._target_chord_type = "Concept"
+        self._target_formula_text = ""
+        self._target_intervals = set()
+        self._target_pitches = []
+        self._target_hands = []
+        self._target_fingers = []
+        self._scrolling_notes = []
+        self.scrollingNotesChanged.emit()
+        self.targetFingersChanged.emit()
+        self._set_concept_card({"title": name, "body": str(chord_data.get("concept_body", ""))})
+        self.targetChordChanged.emit(self._target_chord_name)
 
     def _apply_random_step(self):
         root_idx = random.randint(0, 11)
@@ -1733,7 +1632,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self.songTitleChanged.emit()
             self.songKeyChanged.emit()
             self.songKeySharpsChanged.emit()
-            self._set_state(LessonState.IDLE)
+            # In a lesson the sequencer moves on to another exercise; dropping
+            # to IDLE would flash the dashboard between the two.
+            if not self._is_lesson_mode:
+                self._set_state(LessonState.IDLE)
             return
             
         self._exercise_type = "song_application"
@@ -2393,7 +2295,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     @Slot(str)
     def handle_ear_training_answer(self, quality: str):
         """Validates a user's ear training selection."""
-        if self._exercise_type != "listen" or self.isWaitingForAi or self.isPausedForSpeech:
+        if self._exercise_type != "listen" or self.isPausedForSpeech:
             return
 
         is_correct = (quality.lower() == self._target_formula_text.lower())
@@ -2403,6 +2305,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         else:
             print(f"ChordTrainer: Ear Training WRONG. User picked {quality}, expected {self._target_formula_text}")
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordFailed (wrong answer)")
+            self._exercise_struggled = True
             self.chordFailed.emit()
             # Optionally replay the sound as feedback
             self.replay_preview()
@@ -2570,7 +2473,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
     def pause_for_speech(self):
         """Called immediately when AI audio playback starts to instantly blur UI."""
         self._ai_is_currently_speaking = True
-        if self._is_lesson_mode and (self.isWaitingForAi or self.isActive):
+        self._speech_start_timer.stop()
+        if self._is_lesson_mode and self.isActive:
             if not self.isPausedForSpeech:
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: AI Audio started, pausing for speech (isPausedForSpeech=True)")
                 self._set_state(LessonState.AI_SPEAKING)
@@ -2578,11 +2482,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     @Slot()
     def resume_lesson(self):
-        """Called when AI finishes speaking. Applies pending exercise if queued,
-        plays deferred listen preview, or resets paused state."""
+        """Called when the coach finishes speaking (or, with no coach, in its
+        place). Ends a lesson waiting on its closing words, or unpauses input
+        and runs whatever setup was deferred until the coach was done."""
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach speech finished, resuming lesson. Pending end: {self._lesson_end_pending}")
         self._ai_is_currently_speaking = False
-        should_check_immediately = False
+        self._speech_start_timer.stop()
 
         if self._lesson_end_pending:
             self._lesson_end_pending = False
@@ -2602,7 +2507,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                     print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence complete (step 7 finished). Finalizing lesson directly.")
                     self._is_circle_of_fifths_mode = False
                     self.isCircleOfFifthsModeChanged.emit(False)
-                    self.receive_lesson_end("Completed Circle of Fifths introduction.")
+                    self._conclude_lesson()
                     self._circle_tutorial_step = 8
                 elif 0 < self._circle_tutorial_step < 7:
                     print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence paused at step {self._circle_tutorial_step}. Waiting for user continue.")
@@ -2628,14 +2533,17 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence complete. Finalizing lesson directly.")
                 self._is_circle_of_fifths_mode = False
                 self.isCircleOfFifthsModeChanged.emit(False)
-                self.receive_lesson_end("Completed Circle of Fifths introduction.")
+                self._conclude_lesson()
                 self._circle_tutorial_step = 8
             else:
                 self._circle_tutorial_step += 1
                 prompt = self._get_circle_tutorial_prompt(self._circle_tutorial_step)
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence advancing to step {self._circle_tutorial_step}")
-                self.speakBrief.emit(prompt)
-                
+                # The next Continue appears when the narration ends — at once
+                # if there is no coach to narrate.
+                if not self._coach_say(prompt):
+                    self.resume_lesson()
+
                 # We delay the native MIDI chord playback by 1000ms so it sounds right as the visual wheel finishes spinning
                 QTimer.singleShot(1000, lambda: self._play_circle_step_midi(self._circle_tutorial_step))
 
@@ -2810,32 +2718,18 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self.speakBrief.emit(hint_prompt)
 
     def _resume_after_speech(self):
-        """General post-speech resume logic for normal (non-circle) lessons."""
+        """
+        Unpauses input and runs whatever was deferred until the coach finished:
+        a listen preview, a metronome start, a check of keys already held.
+        Also runs straight after presenting an exercise nobody is going to
+        introduce, since then there is nothing to wait for.
+        """
         should_check_immediately = False
-
-        # Safety fallback: If the AI spoke its feedback but dropped the tool call, unlock the system so the user can continue
-        if self.isWaitingForAi:
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: AI finished turn but no exercise received. Unlocking request state and clearing blur.")
-            
-            self._set_state(LessonState.USER_PLAYING)  # Clear blur if turn is done by moving state away from AWAITING_EXERCISE
-            self.exerciseRequestUnlocked.emit()
-            # Actively nudge the AI to send the tool call it forgot
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Sending nudge prompt to request set_exercise.")
-            self.speakBrief.emit(
-                "<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
-                "You spoke but did not call a tool. "
-                "Please call set_exercise for the next exercise, or end_lesson if the session is complete. "
-                "Do NOT speak — just call the tool."
-                "</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
-            )
 
         if self.isPausedForSpeech:
             print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Unpausing speech (isPausedForSpeech=False)")
             self._set_state(LessonState.USER_PLAYING)
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged")
             self.lessonStateChanged.emit()
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Input unlocked.")
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
             self.inputReady.emit()
             # Defer _check_input until metronome and pending exercises are handled
             should_check_immediately = not self._require_key_release_before_eval
@@ -2845,7 +2739,6 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._listen_preview_pending = False
             if self._target_pitches:
                 print(f"ChordTrainer: Coach done, playing deferred MIDI preview: {self._target_pitches}")
-                self._listen_preview_pending_midi = self._target_pitches # Temporarily store for play_midi_preview
                 self._play_midi_preview(self._target_pitches)
 
         # Start deferred metronome now that the coach is done talking
@@ -2854,45 +2747,10 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             # If metronome is starting, skip immediate input evaluation to prevent "pre-hits"
             should_check_immediately = False
 
-        # If an exercise arrived while the AI was speaking AND the student
-        # isn't currently working on one, apply it now.
-        if self._pending_exercise and self._is_lesson_mode and not self._target_chord_name:
-            exercise = self._pending_exercise
-            self._pending_exercise = None
-            print(f"ChordTrainer: Applying queued exercise: {exercise.get('exercise_name', '?')}")
-            self._apply_exercise(exercise)
-            should_check_immediately = False # Apply exercise will handle its own input check
-
-        # Finally, perform immediate evaluation if still appropriate
         if should_check_immediately:
-            print("ChordTrainer: Performing deferred immediate input evaluation.")
             self._check_input()
         elif self._require_key_release_before_eval:
-             print("ChordTrainer: Skipping immediate evaluation because key release lock is active.")
-
-        # Failsafe: If the AI finished speaking but forgot to call set_exercise, 
-        # or it hasn't arrived yet, nudge it.
-        if self._is_lesson_mode and not self._is_lesson_complete and not self.isCircleOfFifthsMode and (self.isLoading or not self._target_chord_name):
-            print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Coach finished speaking but no exercise is active. Arming 3s failsafe timer.")
-            QTimer.singleShot(3000, self._check_failsafe)
-
-    def _check_failsafe(self):
-        """Called 3 seconds after audio completes. If no chord is active, the tool call never arrived or was rejected."""
-        if self._is_lesson_mode and not self._is_lesson_complete and not self._target_chord_name:
-            if self.isLoading:
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Failsafe timer popped (Initial Load)! Re-prompting AI for missing set_exercise.")
-                self.requestLessonStart.emit("[System: You forgot to call the set_exercise tool. Please call it now to start the session.]")
-            else:
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Failsafe timer popped (Mid-Lesson)! Nudging AI for missing tool call.")
-                # Force the pause flag to False so the nudge can actually be "heard" by the Coordinator dispatch
-                self._set_state(LessonState.USER_PLAYING)
-                self.lessonStateChanged.emit()
-                self.speakBrief.emit(
-                    "<SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
-                    "The student finished their turn but you did not call a tool for the next step. "
-                    "Please call set_exercise now."
-                    "</SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"
-                )
+            print("ChordTrainer: Skipping immediate evaluation because key release lock is active.")
 
     def _advance_progression_chord(self):
         """Sets up the current chord within a progression sequence."""
@@ -3074,7 +2932,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                         self._is_dominant_motion_mode = False
                         self._is_circle_of_fifths_mode = False
                         self.isCircleOfFifthsModeChanged.emit(False)
-                        self.receive_lesson_end("Completed Dominant Motion (V→I) exercise.")
+                        self._conclude_lesson()
                     elif getattr(self, '_wrong_chord_needs_hint', False):
                         self._wrong_chord_needs_hint = False
                         self._dominant_motion_hint(wrong_pitches=self._wrong_chord_pitches_snapshot)
@@ -3282,6 +3140,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
             if is_valid_count and active_intervals != self._target_intervals:
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordFailed (wrong notes)")
+                self._exercise_struggled = True
                 self.chordFailed.emit()
                 latency_ms = (time.time() - self._prompt_time) * 1000.0
                 self.db.record_chord_attempt(self._target_chord_name, False, latency_ms, 
@@ -3361,11 +3220,13 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         # --- Inter-exercise commentary streak tracking ---
         if is_struggle:
+            self._exercise_struggled = True
             self._consecutive_successes = 0
             self._consecutive_struggles += 1
         else:
             self._consecutive_struggles = 0
             self._consecutive_successes += 1
+            self._struggle_tip_given = False
 
         # Notify UI
         display_name = self._target_chord_name
@@ -3485,7 +3346,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self.scrollBeatChanged.emit(self._scroll_beat)
         self._emit_scroll_anchor(self._scroll_beat, bpm / 60.0, active=bpm > 0, snap=True)
         if self.metronome:
-            if self._ai_is_currently_speaking:
+            if self._ai_is_currently_speaking or self.isPausedForSpeech:
                 self.metronome.defer_start(bpm)
             else:
                 self.metronome.start(bpm)

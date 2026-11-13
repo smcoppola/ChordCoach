@@ -19,12 +19,10 @@ class AppCoordinator(QObject):
         if self.chord_trainer.isActive:
             self.chord_trainer.stop_session()
         
-        # We need to silence any audio that the Gemini model is currently playing back
-        # and clear any pending locks so a future session start isn't blocked.
+        # Silence anything the coach is still saying.
         if self.gemini.connected:
             self.gemini.stop_current_audio()
-            self.gemini.clear_exercise_pending()
-            
+
         self._eval_intro_pending = False
         self._arch_intro_pending = False
         self.evalIntroPendingChanged.emit(False)
@@ -49,21 +47,16 @@ class AppCoordinator(QObject):
         self.hw_service.midiNoteReceived.connect(self._dispatch_midi_note)
         self.hw_service.sustainPedalChanged.connect(self.chord_trainer.handle_pedal_event)
         
-        # --- Wire AI ↔ Chord Trainer (Single-Model Architecture) ---
-        # Lesson flow: trainer requests → coordinator sends to gemini → gemini tools → trainer receives
-        self.chord_trainer.requestLessonStart.connect(self.gemini.send_prompt)
-        self.chord_trainer.reportPerformance.connect(self.gemini.clear_exercise_pending)
-        self.chord_trainer.reportPerformance.connect(self.gemini.send_performance_report)
-        self.chord_trainer.exerciseRequestUnlocked.connect(self.gemini.clear_exercise_pending)
+        # --- Wire AI ↔ Chord Trainer ---
+        # The trainer sequences lessons itself; the coach only speaks. The
+        # trainer needs to know whether anyone is listening, so it neither
+        # waits for a coach that is not there nor talks over one that is.
         self.chord_trainer.speakInstruction.connect(self.gemini.send_prompt)
         self.chord_trainer.speakBrief.connect(self.gemini.send_prompt)  # Non-blocking commentary (no pause)
-        self.gemini.exerciseReceived.connect(self._on_exercise_received)
+        self.gemini.connectionStatusChanged.connect(self.chord_trainer.set_coach_available)
+        self.chord_trainer.set_coach_available(bool(getattr(self.gemini, "connected", False)))
         self.gemini.theoryVisualReceived.connect(self._on_ai_theory_visual_received)
-        self.gemini.lessonEndReceived.connect(self._on_lesson_end_received)
-        
-        # Play happy/sad tone when the lesson API connectivity check succeeds/fails
-        self.chord_trainer.apiConnectivityChanged.connect(self._on_api_connectivity)
-        
+
         # --- AI Connection State Handlers ---
         self.gemini.aiStartedSpeaking.connect(self.chord_trainer.pause_for_speech)
         self.gemini.aiFinishedSpeaking.connect(self.chord_trainer.resume_lesson)
@@ -114,20 +107,6 @@ class AppCoordinator(QObject):
             self._active_midi_pitches.discard(pitch)
 
     @Slot(dict)
-    def _on_exercise_received(self, exercise_data: dict):
-        """Guard: only forward tool-call exercises to the trainer if evaluation is NOT running
-        and we're not in circle tutorial mode."""
-        if self.evaluation.isRunning or self._eval_intro_pending:
-            print(f"Coordinator: Ignoring set_exercise during evaluation — {exercise_data.get('exercise_name', '?')}")
-            self.gemini.clear_exercise_pending()  # Prevent deadlock from rejected exercise
-            return
-        if self.chord_trainer.isCircleOfFifthsMode:
-            print(f"Coordinator: IGNORING AI set_exercise during circle tutorial — {exercise_data.get('exercise_name', '?')}")
-            self.gemini.clear_exercise_pending()
-            return
-        self.chord_trainer.receive_exercise(exercise_data)
-
-    @Slot(dict)
     def _on_ai_theory_visual_received(self, visual_data: dict):
         """Handle AI-generated update_theory_visual tool calls.
         GATED: Ignored during circle tutorial mode since Python drives visuals directly."""
@@ -144,18 +123,6 @@ class AppCoordinator(QObject):
         
         # Forward the full dict — CircleOfFifthsService.set_tutorial_state_v2 handles all params
         self.theoryVisualUpdated.emit(visual_data)
-
-    @Slot(str)
-    def _on_lesson_end_received(self, feedback: str):
-        """Guard: only forward lesson-end to the trainer if evaluation is NOT running
-        and we're not in circle tutorial mode (Python controls lesson end there)."""
-        if self.evaluation.isRunning or self._eval_intro_pending:
-            print("Coordinator: Ignoring end_lesson during evaluation.")
-            return
-        if self.chord_trainer.isCircleOfFifthsMode:
-            print("Coordinator: IGNORING AI end_lesson during circle tutorial (Python controls lesson flow).")
-            return
-        self.chord_trainer.receive_lesson_end(feedback)
 
     @Slot(bool)
     def _on_circle_mode_changed(self, active: bool):
@@ -190,32 +157,23 @@ class AppCoordinator(QObject):
             self._is_reconnecting = False
             self.isReconnectingChanged.emit(False)
             
-            # If we just reconnected during an active lesson, re-send context
-            if was_reconnecting and self.chord_trainer.isActive and self.chord_trainer.isLessonMode:
-                if self.chord_trainer.isCircleOfFifthsMode:
-                    # Circle tutorial: re-send the current step's narration prompt
-                    step = getattr(self.chord_trainer, '_circle_tutorial_step', 1)
-                    print(f"Coordinator: Reconnected during circle tutorial — re-sending step {step} prompt.")
-                    resume_prompt = self.chord_trainer._get_circle_tutorial_prompt(step)
-                    if resume_prompt:
-                        self.gemini.send_prompt(resume_prompt)
-                else:
-                    print("Coordinator: Reconnected during active lesson — re-sending context.")
-                    self._sync_coach_settings()
-                    resume_prompt = self.chord_trainer.get_resume_context()
+            # A lesson carries on by itself across a reconnect — the trainer
+            # sequences it — so only the scripted circle tutorial, whose step
+            # narration may have been cut off, needs anything re-sent.
+            if (was_reconnecting and self.chord_trainer.isActive and self.chord_trainer.isLessonMode
+                    and self.chord_trainer.isCircleOfFifthsMode):
+                step = getattr(self.chord_trainer, '_circle_tutorial_step', 1)
+                print(f"Coordinator: Reconnected during circle tutorial — re-sending step {step} prompt.")
+                resume_prompt = self.chord_trainer._get_circle_tutorial_prompt(step)
+                if resume_prompt:
                     self.gemini.send_prompt(resume_prompt)
+            elif was_reconnecting and self.chord_trainer.isActive and self.chord_trainer.isLessonMode:
+                self._sync_coach_settings()
             elif not self.chord_trainer.isActive and not self.evaluation.isRunning:
                 self._sync_coach_settings()
         elif not connected and self.hw_service.is_connected:
             if not self._is_reconnecting:
                 self.hw_service.play_sad_tone()
-    
-    @Slot(bool)
-    def _on_api_connectivity(self, confirmed: bool):
-        if confirmed:
-            self.hw_service.play_happy_tone()
-        else:
-            self.hw_service.play_sad_tone()
     
     @Slot(int, int)
     def _on_ai_reconnecting(self, attempt: int, max_attempts: int):
@@ -277,7 +235,8 @@ class AppCoordinator(QObject):
         if not self.settings.hasCompletedOnboarding:
             print("Coordinator: Evaluation finished during onboarding — skipping auto lesson start.")
             return
-        if self.gemini.connected and not self.chord_trainer.isActive:
+        # Lessons are sequenced locally, so this no longer waits on the coach.
+        if not self.chord_trainer.isActive:
             print("Coordinator: Evaluation finished. Starting new lesson plan generation.")
             self._sync_coach_settings()
             self.chord_trainer.start_lesson_plan()

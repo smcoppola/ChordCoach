@@ -79,18 +79,12 @@ def test_restore_happens_even_when_already_idle(trainer, monkeypatch):
 
 
 def test_starting_a_lesson_restores_the_coach(trainer, monkeypatch):
-    """A lesson is entirely coach-driven, so it must never begin released."""
+    """A lesson wants the coach to introduce and comment, so it never begins released."""
     monkeypatch.setattr(trainer, "_apply_step", lambda step: None)
     trainer.start_song("some-piece")
     assert trainer.coachNeeded is False
 
-    monkeypatch.setattr(trainer, "_build_lesson_prompt", lambda *a, **k: "go", raising=False)
-    try:
-        trainer.start_lesson_plan(10)
-    except Exception:
-        # The prompt-building path pulls in curriculum state this bare trainer
-        # does not have. The engagement flip happens first, which is the point.
-        pass
+    trainer.start_lesson_plan(10)
 
     assert trainer.coachNeeded is True
 
@@ -117,12 +111,8 @@ def test_replaying_a_piece_does_not_rerelease(trainer, monkeypatch):
 class _StubTrainer(QObject):
     """Just the surface AppCoordinator touches for this behaviour."""
     coachNeededChanged = Signal(bool)
-    requestLessonStart = Signal(str)
-    reportPerformance = Signal(dict)
-    exerciseRequestUnlocked = Signal()
     speakInstruction = Signal(str)
     speakBrief = Signal(str)
-    apiConnectivityChanged = Signal(bool)
     isCircleOfFifthsModeChanged = Signal(bool)
     theoryVisualDirect = Signal(dict)
     midiOutRequested = Signal(list)
@@ -144,11 +134,12 @@ class _StubTrainer(QObject):
     def resume_lesson(self, *a, **k):
         pass
 
+    def set_coach_available(self, *a, **k):
+        pass
+
 
 class _StubGemini(QObject):
-    exerciseReceived = Signal(dict)
     theoryVisualReceived = Signal(dict)
-    lessonEndReceived = Signal()
     aiStartedSpeaking = Signal()
     aiFinishedSpeaking = Signal()
     connectionStatusChanged = Signal(bool)
@@ -168,12 +159,6 @@ class _StubGemini(QObject):
         self.resumed += 1
 
     def send_prompt(self, *a, **k):
-        pass
-
-    def clear_exercise_pending(self, *a, **k):
-        pass
-
-    def send_performance_report(self, *a, **k):
         pass
 
 

@@ -72,7 +72,7 @@ Hardware C++ extension (chordcoach_hw) — sub-ms MIDI I/O
 
 **Dual MIDI Strategy:** Input uses the C++ `chordcoach_hw` pybind11 extension (zero-latency controller keypress detection). Output uses a ctypes wrapper calling RtMidi DLL directly (bypasses Python overhead for metronome/chord preview).
 
-**Gemini Tool-Calling:** AI responses contain JSON function calls (`set_exercise`, `update_theory_visual`, `end_lesson`). `AppCoordinator` parses and routes these to the appropriate service. Exercises are gated — not accepted during Evaluation mode or Circle of Fifths tutorial.
+**Local lesson sequencing:** `LessonSequencer` (`src/logic/services/lesson_sequencer.py`) chooses every exercise of a lesson from the curriculum plan, so lessons run the same with or without a coach connection. The coach (Gemini) only speaks: `coach_prompts.py` builds what it is asked to say (lesson intro, new exercise types, struggle tips, theory cards, the goodbye), and `ChordTrainerService._coach_say` pauses input while it talks — or carries straight on when no coach is connected. Gemini's only tool is `update_theory_visual`, ignored during the scripted Circle of Fifths tutorial. Optional per-milestone hints for the sequencer (`inversions`, `hand`, `single_notes`, `pedal_type`, `progressions`, `follow_up`) live in `src/resources/curriculum_tracks.json`.
 
 **Music21 Lazy Loading:** `Music21Service` imports music21 on first use. All analysis (key detection, Roman numeral analysis, difficulty scoring, transposition) is synchronous. No background threading around music21 calls.
 
@@ -82,8 +82,8 @@ Hardware C++ extension (chordcoach_hw) — sub-ms MIDI I/O
 
 1. MIDI keypress → C++ `chordcoach_hw` → `MidiHardwareService`
 2. `AppCoordinator._dispatch_midi_note()` routes to `ChordTrainerService` or `EvaluationService`
-3. `ChordTrainerService` compares input vs. exercise spec, sends metrics to Gemini
-4. Gemini responds with tool calls → `AppCoordinator` routes → services update state → Qt signals → QML updates
+3. `ChordTrainerService` compares input vs. exercise spec and records the attempt
+4. On completion it asks its `LessonSequencer` for the next exercise (repeat or simplify after a struggle) and, when worth a word, prompts the coach → services update state → Qt signals → QML updates
 
 ### Important Files
 

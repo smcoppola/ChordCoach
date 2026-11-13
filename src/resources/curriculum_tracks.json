@@ -97,7 +97,9 @@
             ],
             "target_chords": [],
             "min_attempts_to_advance": 8,
-            "min_accuracy_to_advance": 0.80
+            "min_accuracy_to_advance": 0.80,
+            "hand": "left",
+            "single_notes": true
         },
         {
             "id": "hands_together",
@@ -141,7 +143,8 @@
                 "G Major"
             ],
             "min_attempts_to_advance": 12,
-            "min_accuracy_to_advance": 0.75
+            "min_accuracy_to_advance": 0.75,
+            "inversions": [0, 1, 2]
         },
         {
             "id": "sustain_direct",
@@ -161,7 +164,8 @@
                 "G Major"
             ],
             "min_attempts_to_advance": 8,
-            "min_accuracy_to_advance": 0.75
+            "min_accuracy_to_advance": 0.75,
+            "pedal_type": "direct"
         },
         {
             "id": "sustain_legato",
@@ -182,7 +186,8 @@
                 "A Minor"
             ],
             "min_attempts_to_advance": 10,
-            "min_accuracy_to_advance": 0.70
+            "min_accuracy_to_advance": 0.70,
+            "pedal_type": "legato"
         },
         {
             "id": "extended_chords",
@@ -220,7 +225,8 @@
             "target_keys": [],
             "target_chords": [],
             "min_attempts_to_advance": 1,
-            "min_accuracy_to_advance": 0.0
+            "min_accuracy_to_advance": 0.0,
+            "follow_up": {"exercise_type": "pentascale", "target_keys": ["C"]}
         },
         {
             "id": "major_formula",
@@ -234,7 +240,8 @@
             "target_keys": [],
             "target_chords": [],
             "min_attempts_to_advance": 1,
-            "min_accuracy_to_advance": 0.0
+            "min_accuracy_to_advance": 0.0,
+            "follow_up": {"exercise_type": "chord", "target_chords": ["C Major", "F Major", "G Major"]}
         },
         {
             "id": "minor_formula",
@@ -248,7 +255,8 @@
             "target_keys": [],
             "target_chords": [],
             "min_attempts_to_advance": 1,
-            "min_accuracy_to_advance": 0.0
+            "min_accuracy_to_advance": 0.0,
+            "follow_up": {"exercise_type": "chord", "target_chords": ["A Minor", "D Minor", "E Minor"]}
         },
         {
             "id": "inversion_theory",
@@ -262,7 +270,8 @@
             "target_keys": [],
             "target_chords": [],
             "min_attempts_to_advance": 1,
-            "min_accuracy_to_advance": 0.0
+            "min_accuracy_to_advance": 0.0,
+            "follow_up": {"exercise_type": "chord", "target_chords": ["C Major"], "inversions": [0, 1, 2]}
         },
         {
             "id": "v_to_i_listen",
@@ -298,7 +307,8 @@
             ],
             "target_chords": [],
             "min_attempts_to_advance": 5,
-            "min_accuracy_to_advance": 0.70
+            "min_accuracy_to_advance": 0.70,
+            "progressions": [{"numerals": ["I", "IV", "V", "I"]}, {"numerals": ["I", "V", "vi", "IV"]}]
         },
         {
             "id": "circle_of_fifths",
@@ -317,7 +327,8 @@
             ],
             "target_chords": [],
             "min_attempts_to_advance": 5,
-            "min_accuracy_to_advance": 0.70
+            "min_accuracy_to_advance": 0.70,
+            "follow_up": {"exercise_type": "chord"}
         },
         {
             "id": "nashville_numbers",
@@ -335,7 +346,8 @@
             ],
             "target_chords": [],
             "min_attempts_to_advance": 3,
-            "min_accuracy_to_advance": 0.70
+            "min_accuracy_to_advance": 0.70,
+            "progressions": [{"numerals": ["1", "4", "5", "1"]}, {"numerals": ["1", "5", "6", "4"]}]
         },
         {
             "id": "minor_progressions",
@@ -356,7 +368,8 @@
                 "G Major"
             ],
             "min_attempts_to_advance": 8,
-            "min_accuracy_to_advance": 0.75
+            "min_accuracy_to_advance": 0.75,
+            "progressions": [{"key": "Am", "numerals": ["i", "VI", "III", "VII"]}]
         }
     ],
     "repertoire": [
@@ -381,6 +394,7 @@
             ],
             "min_attempts_to_advance": 8,
             "min_accuracy_to_advance": 0.80,
+            "progressions": [{"key": "C", "numerals": ["I", "V", "vi", "IV"]}],
             "suggested_pieces": [
                 "essenFolksong/erk5.abc::7",
                 "airdsAirs/book1.abc::13",

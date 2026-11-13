@@ -7,6 +7,13 @@ src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
+# Live-API scripts that happen to match test_*.py. They define no tests, but
+# importing one runs its setup — including replacing PySide6.QtMultimedia
+# classes with mocks for the whole process, which makes later QML component
+# creation crash with an access violation. Run them by hand instead:
+#   python tests/test_onboarding_flow.py
+collect_ignore = ["test_onboarding_flow.py"]
+
 
 def _create_qt_app():
     """

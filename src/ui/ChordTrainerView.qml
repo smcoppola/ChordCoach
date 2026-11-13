@@ -25,8 +25,11 @@ Rectangle {
     property bool isLoading: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isLoading : false
     property string loadingStatusText: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.loadingStatusText : ""
     property bool isPausedForSpeech: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isPausedForSpeech : false
-    property bool isWaitingForAi: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.isWaitingForAi : false
-    
+
+    // Theory card ({title, body}); empty when there is none. Read with Continue.
+    property var conceptCard: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.conceptCard : ({})
+    property bool hasConceptCard: !!(conceptCard && conceptCard.title)
+
     // Song Metadata
     property string songTitle: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songTitle : ""
     property string songComposer: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.songComposer : ""
@@ -49,7 +52,7 @@ Rectangle {
         ? appState.chordTrainer.coachNeeded : true
     property bool isReconnecting: coachNeeded
         && ((typeof appState !== "undefined" && appState !== null) ? appState.isReconnecting : false)
-    property bool isOverlayVisible: isWaitingForAi || isPausedForSpeech || isLessonComplete || isSongCompleted || isLoading || isReconnecting
+    property bool isOverlayVisible: hasConceptCard || isPausedForSpeech || isLessonComplete || isSongCompleted || isLoading || isReconnecting
 
     
     onIsPausedForSpeechChanged: {
@@ -884,7 +887,7 @@ Rectangle {
         anchors.fill: parent
         z: 100
         color: Qt.rgba(0.11, 0.11, 0.12, 0.5)
-        visible: root.isOverlayVisible && !root.isLessonComplete && !root.isLoading && !root.isReconnecting
+        visible: root.isOverlayVisible && !root.isLessonComplete && !root.isLoading && !root.isReconnecting && !root.hasConceptCard
 
         onVisibleChanged: {
             var d = new Date();
@@ -917,6 +920,83 @@ Rectangle {
                             PauseAnimation { duration: (3 - modelData) * 200 }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Theory card — a new idea explained on screen (and aloud, if the coach is
+    // connected). Nothing to play; Continue moves the lesson on.
+    Rectangle {
+        id: conceptCardOverlay
+        anchors.centerIn: parent
+        width: Math.min(700 * mainWindow.uiScale, parent.width * 0.9)
+        height: conceptColumn.implicitHeight + 64 * mainWindow.uiScale
+        color: "#1c1c1e"
+        border.color: "#00BCD4"
+        border.width: Math.max(1, 1 * mainWindow.uiScale)
+        radius: 12 * mainWindow.uiScale
+        visible: root.hasConceptCard && !root.isLessonComplete
+        z: 120
+
+        ColumnLayout {
+            id: conceptColumn
+            anchors.centerIn: parent
+            width: parent.width - 64 * mainWindow.uiScale
+            spacing: 18 * mainWindow.uiScale
+
+            Text {
+                text: "NEW IDEA"
+                font.pixelSize: 13 * mainWindow.uiScale
+                font.bold: true
+                font.letterSpacing: 2 * mainWindow.uiScale
+                color: "#00BCD4"
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Text {
+                text: root.hasConceptCard ? root.conceptCard.title : ""
+                font.pixelSize: 28 * mainWindow.uiScale
+                font.bold: true
+                color: "#ffffff"
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                Layout.fillWidth: true
+            }
+
+            Text {
+                text: root.hasConceptCard ? (root.conceptCard.body || "") : ""
+                font.pixelSize: 18 * mainWindow.uiScale
+                color: "#cccccc"
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                lineHeight: 1.25
+                Layout.fillWidth: true
+            }
+
+            Button {
+                text: "CONTINUE  ▶"
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: 8 * mainWindow.uiScale
+
+                background: Rectangle {
+                    implicitWidth: 220 * mainWindow.uiScale
+                    implicitHeight: 50 * mainWindow.uiScale
+                    color: parent.down ? "#1E88E5" : "#2196F3"
+                    radius: 25 * mainWindow.uiScale
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: "#ffffff"
+                    font.pixelSize: 15 * mainWindow.uiScale
+                    font.bold: true
+                    font.letterSpacing: 2
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: {
+                    if (appState && appState.chordTrainer)
+                        appState.chordTrainer.continueConcept()
                 }
             }
         }
