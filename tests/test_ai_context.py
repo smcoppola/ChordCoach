@@ -80,7 +80,7 @@ class _FakeDB:
     def get_recent_sessions(self, limit=3):
         return []
 
-    def count_songs_due_for_review(self, decay_hours=48):
+    def count_due_reviews(self, now=None):
         return self.review_count
 
 
@@ -307,69 +307,27 @@ def test_shipped_repertoire_milestones_have_suggested_pieces():
 
 
 # ── reviewQueueCount ────────────────────────────────────────────────
+# The count comes from the SM-2 schedule (review_items); see test_review_schedule.py.
 
-def _insert_song(db, filepath, mastery, played_at):
-    with sqlite3.connect(db.db_path) as conn:
-        conn.execute(
-            "INSERT INTO songs (filepath, title, last_played, play_count, mastery_score)"
-            " VALUES (?, ?, ?, 1, ?)",
-            (filepath, filepath, played_at.isoformat(), mastery),
-        )
-        conn.commit()
-
-
-def test_review_count_only_includes_stale_started_songs(tmp_path):
-    db = DatabaseManager(tmp_path / "review.db")
-    now = datetime.now()
-    _insert_song(db, "user::stale-1", 40.0, now - timedelta(hours=72))
-    _insert_song(db, "user::fresh-1", 40.0, now - timedelta(hours=2))
-    _insert_song(db, "user::never-scored-1", 0.0, now - timedelta(hours=72))
-
-    assert db.count_songs_due_for_review(decay_hours=48) == 1
-
-
-def test_review_count_collapses_difficulty_variants(tmp_path):
-    db = DatabaseManager(tmp_path / "variants.db")
-    now = datetime.now()
-    # One song, three level variants, all stale — still one song to review
-    _insert_song(db, "user::multi-1", 30.0, now - timedelta(hours=72))
-    _insert_song(db, "user::multi-1::L2", 20.0, now - timedelta(hours=96))
-    _insert_song(db, "user::multi-1::L3", 10.0, now - timedelta(hours=80))
-
-    assert db.count_songs_due_for_review(decay_hours=48) == 1
-
-    # A recent play on any variant takes the whole song out of the queue
-    _insert_song(db, "user::multi-1::L4", 10.0, now - timedelta(hours=1))
-    assert db.count_songs_due_for_review(decay_hours=48) == 0
-
-
-def test_review_count_is_read_only(tmp_path):
-    db = DatabaseManager(tmp_path / "readonly.db")
-    _insert_song(db, "user::stale-1", 40.0, datetime.now() - timedelta(hours=72))
-
-    db.count_songs_due_for_review(decay_hours=48)
-
-    with sqlite3.connect(db.db_path) as conn:
-        mastery = conn.execute(
-            "SELECT mastery_score FROM songs WHERE filepath = 'user::stale-1'"
-        ).fetchone()[0]
-    assert mastery == pytest.approx(40.0), "the count must not apply decay"
-
-
-def test_review_queue_property_reflects_the_database(tmp_path, tracks_dir):
+def test_review_queue_property_reflects_the_schedule(tmp_path, tracks_dir):
     db = DatabaseManager(tmp_path / "prop.db")
     svc = CurriculumService(db, tracks_dir, _FakeMusic21())
 
     assert svc.reviewQueueCount == 0
 
-    _insert_song(db, "user::stale-1", 40.0, datetime.now() - timedelta(hours=72))
+    # Reviewed three days ago, scheduled one day out: due two days ago.
+    db.record_review("song", "user::stale-1", 5, now=datetime.now() - timedelta(days=3))
+    assert svc.reviewQueueCount == 1
+
+    # Reviewed just now: not due again until tomorrow.
+    db.record_review("chord", "C Major", 5)
     assert svc.reviewQueueCount == 1
 
 
 def test_review_queue_property_survives_a_failing_database(tracks_dir):
     class _BrokenDB(_FakeDB):
-        def count_songs_due_for_review(self, decay_hours=48):
-            raise sqlite3.OperationalError("no such table: songs")
+        def count_due_reviews(self, now=None):
+            raise sqlite3.OperationalError("no such table: review_items")
 
     svc = CurriculumService(_BrokenDB(), tracks_dir, _FakeMusic21())
 

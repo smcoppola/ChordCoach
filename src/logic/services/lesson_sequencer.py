@@ -319,6 +319,61 @@ def simplify(ex: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+REVIEW_SPEC = {
+    "track": "review",
+    "milestone_id": "",
+    "milestone_title": "Review",
+    "milestone_description": "Spaced-repetition review of things learned in earlier lessons.",
+}
+DEV_MODE_REVIEWS = 2
+
+
+def review_exercises(items: Iterable[Dict[str, Any]],
+                     library: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Exercises for due SM-2 items ({item_type, item_id}): chords and songs."""
+    titles = {s.get("id"): s.get("title") for s in library or []}
+    out = []
+    for item in items:
+        kind, item_id = item.get("item_type"), str(item.get("item_id", ""))
+        if kind == "chord":
+            try:
+                root, quality = parse_chord(item_id)
+            except (ValueError, KeyError):
+                continue
+            ex = _base(REVIEW_SPEC, "chord", f"Review: {chord_label(root, quality)}")
+            ex.update({"root_idx": root, "chord_type_name": quality, "inversion": 0,
+                       "hand": "right", "octave": 4, "hold_ms": 0})
+            out.append(ex)
+        elif kind == "song" and item_id:
+            ex = _base(REVIEW_SPEC, "song_application",
+                       f"Review: {titles.get(item_id) or 'a piece you know'}")
+            ex["piece_name"] = item_id
+            out.append(ex)
+    return out
+
+
+class _FixedBlock:
+    """A block that plays a given list in order, once (reviews, review sessions)."""
+
+    def __init__(self, spec: Dict[str, Any], exercises: Iterable[Dict[str, Any]]):
+        self.spec = spec
+        self.queue = [dict(e) for e in exercises]
+        self.excluded: set = set()
+
+    def next(self) -> Optional[Dict[str, Any]]:
+        while self.queue:
+            ex = self.queue.pop(0)
+            if exercise_key(ex) not in self.excluded:
+                return ex
+        return None
+
+    def consumed(self, ex):
+        pass
+
+    def refund(self, ex):
+        pass
+
+
 # ── The sequencer ───────────────────────────────────────────────────────────
 
 class _Block:
@@ -393,6 +448,9 @@ class LessonSequencer:
     {"struggled": bool} once it was played, or {"failed": True} if it could not
     be presented (a song that would not load), which drops it and refunds its
     place. Returns None when the lesson is over.
+
+    Items in the plan's `review_items` (due SM-2 reviews) open the lesson as
+    a "Review" block.
     """
 
     def __init__(self, plan: Dict[str, Any], hints: Optional[Dict[str, Dict]] = None,
@@ -401,7 +459,14 @@ class LessonSequencer:
                  units_per_block: Optional[int] = None):
         self._rng = random.Random(seed)
         hints = hints or {}
-        self._blocks: List[_Block] = []
+        self._blocks: List[Any] = []
+
+        reviews = review_exercises(plan.get("review_items") or [], library)
+        if dev_mode:
+            reviews = reviews[:DEV_MODE_REVIEWS]
+        if reviews:
+            self._blocks.append(_FixedBlock(REVIEW_SPEC, reviews))
+
         for block in plan.get("blocks") or []:
             spec = dict(block)
             spec.update(hints.get(block.get("milestone_id", ""), {}))
@@ -413,9 +478,8 @@ class LessonSequencer:
                 units = int(block.get("step_count") or DEFAULT_UNITS)
             self._blocks.append(_Block(spec, library or [], units, self._rng))
 
-        self._fixed: List[Dict[str, Any]] = []
         self._current: Optional[Dict[str, Any]] = None
-        self._current_block: Optional[_Block] = None
+        self._current_block: Any = None
         self._repeat_count = 0
         self.history: List[Dict[str, Any]] = []
         self.struggled: List[str] = []
@@ -424,7 +488,7 @@ class LessonSequencer:
     def from_exercises(cls, exercises: Iterable[Dict[str, Any]]) -> "LessonSequencer":
         """A sequencer that plays a fixed list in order (e.g. a review of struggled items)."""
         seq = cls({"blocks": []})
-        seq._fixed = [dict(e) for e in exercises]
+        seq._blocks.append(_FixedBlock(REVIEW_SPEC, exercises))
         return seq
 
     @property
@@ -453,9 +517,6 @@ class LessonSequencer:
             self._repeat_count = 0
         else:
             self._repeat_count = 0
-
-        if self._fixed:
-            return self._emit(self._fixed.pop(0), None, repeat=0)
 
         while self._blocks:
             block = self._blocks[0]

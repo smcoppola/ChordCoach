@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from datetime import date, datetime, timedelta
 
+from logic.utils.sm2 import ReviewState, sm2_update
+
 class DatabaseManager:
     def __init__(self, db_path):
         self.db_path = Path(db_path) if db_path != ":memory:" else db_path
@@ -137,7 +139,22 @@ class DatabaseManager:
                     value TEXT NOT NULL
                 )
             ''')
-            
+
+            # SM-2 review schedule — one row per reviewable item (see logic/utils/sm2.py)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS review_items (
+                    item_type TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    ease REAL NOT NULL,
+                    interval_days INTEGER NOT NULL,
+                    repetitions INTEGER NOT NULL,
+                    due_at TIMESTAMP NOT NULL,
+                    last_reviewed TIMESTAMP NOT NULL,
+                    last_quality INTEGER NOT NULL,
+                    PRIMARY KEY (item_type, item_id)
+                )
+            ''')
+
             conn.commit()
 
     def record_song_play(self, filepath: str, title: str, mastery_gained: float):
@@ -431,43 +448,73 @@ class DatabaseManager:
         self.set_app_setting(self.SKILL_DECAY_DATE_KEY, stamp)
         return True
 
-    def get_stale_chords(self, decay_hours: int = SKILL_DECAY_HOURS) -> list:
-        """Practised chords not played within `decay_hours`. Read-only."""
-        cutoff_time = (datetime.now() - timedelta(hours=decay_hours)).isoformat()
+    # ── SM-2 review schedule ─────────────────────────────────────────
+
+    def record_review(self, item_type: str, item_id: str, quality: int,
+                      now: datetime | None = None) -> bool:
+        """
+        Grades one review of an item (0–5) and reschedules it with SM-2.
+
+        Only the first graded attempt of each calendar day counts: SM-2 assumes
+        one recall per review, and a chord played twenty times in one lesson
+        would otherwise be pushed months out in an afternoon. Returns True if
+        the schedule changed.
+        """
+        if not item_type or not item_id:
+            return False
+        now = now or datetime.now()
+        today = now.date().isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT name, last_played FROM chords
-                WHERE last_played < ? AND success_count > 0
-            ''', (cutoff_time,))
-            return [{"name": name, "last_played": last_played}
-                    for name, last_played in cursor.fetchall()]
+                SELECT ease, interval_days, repetitions, last_reviewed
+                FROM review_items WHERE item_type = ? AND item_id = ?
+            ''', (item_type, item_id))
+            row = cursor.fetchone()
+            if row and str(row[3])[:10] == today:
+                return False
+            state = ReviewState(*row[:3]) if row else ReviewState()
+            new = sm2_update(state, quality)
+            due = (now + timedelta(days=new.interval_days)).isoformat()
+            cursor.execute('''
+                INSERT OR REPLACE INTO review_items
+                    (item_type, item_id, ease, interval_days, repetitions,
+                     due_at, last_reviewed, last_quality)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (item_type, item_id, new.ease, new.interval_days, new.repetitions,
+                  due, now.isoformat(), int(quality)))
+            conn.commit()
+        return True
 
-    def count_songs_due_for_review(self, decay_hours: int = 48) -> int:
-        """
-        How many started songs have gone stale — same selection as the song half
-        of calculate_skill_decay, but read-only: it never writes a decayed score.
-        """
-        cutoff_time = (datetime.now() - timedelta(hours=decay_hours)).isoformat()
+    def get_due_reviews(self, now: datetime | None = None, item_type: str | None = None,
+                        limit: int | None = None) -> list:
+        """Items whose review is due, most overdue first."""
+        now = now or datetime.now()
+        query = '''
+            SELECT item_type, item_id, due_at, interval_days, last_quality
+            FROM review_items WHERE due_at <= ?
+        '''
+        params: list = [now.isoformat()]
+        if item_type:
+            query += " AND item_type = ?"
+            params.append(item_type)
+        query += " ORDER BY due_at ASC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(int(limit))
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT filepath, mastery_score, last_played FROM songs
-                WHERE last_played IS NOT NULL AND mastery_score > 0
-            ''')
-            rows = cursor.fetchall()
+            cursor.execute(query, params)
+            return [{"item_type": t, "item_id": i, "due_at": d,
+                     "interval_days": n, "last_quality": q}
+                    for t, i, d, n, q in cursor.fetchall()]
 
-        # Difficulty variants (`<id>::L<n>`) are rows of their own; collapse them
-        # so one library song counts once, using its most recent play.
-        by_song: dict = {}
-        for filepath, mastery, last_played in rows:
-            base = str(filepath).split("::L")[0]
-            agg = by_song.setdefault(base, {"mastery": 0.0, "last_played": ""})
-            agg["mastery"] = max(agg["mastery"], float(mastery or 0.0))
-            agg["last_played"] = max(agg["last_played"], str(last_played))
-
-        return sum(1 for agg in by_song.values()
-                   if agg["mastery"] > 0 and agg["last_played"] < cutoff_time)
+    def count_due_reviews(self, now: datetime | None = None) -> int:
+        now = now or datetime.now()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM review_items WHERE due_at <= ?', (now.isoformat(),))
+            return int(cursor.fetchone()[0])
 
     def reset_all_stats(self):
         """Clear all chord statistics and curriculum state."""
@@ -479,6 +526,7 @@ class DatabaseManager:
             cursor.execute('DELETE FROM learned_terms;')
             cursor.execute('DELETE FROM exercise_intros;')
             cursor.execute('DELETE FROM app_settings;')
+            cursor.execute('DELETE FROM review_items;')
             conn.commit()
 
     def has_completed_onboarding(self) -> bool:
@@ -587,20 +635,13 @@ class DatabaseManager:
                 for name, s, f in struggling:
                     context += f"- {name} (Success: {s}, Fail: {f})\n"
             
-            # Chords going stale. Read-only: decay itself is applied once a day
-            # by apply_daily_skill_decay, never as a side effect of reading.
-            decayed = self.get_stale_chords()
-            if decayed:
-                context += "\nDecayed Chords (Not practiced in 48+ hours):\n"
-                for item in decayed:
-                    try:
-                        dt = datetime.fromisoformat(item['last_played'])
-                        days_ago = (datetime.now() - dt).days
-                        time_str = f"{days_ago} days ago" if days_ago > 0 else "earlier today"
-                    except ValueError:
-                        time_str = "recently"
-                    context += f"- {item['name']} (Last played: {time_str})\n"
-                    
+            # What the SM-2 schedule says is due. Read-only.
+            due = self.get_due_reviews(limit=10)
+            if due:
+                context += "\nDue for review (spaced repetition):\n"
+                for item in due:
+                    context += f"- {item['item_type']}: {item['item_id']}\n"
+
             # Calculate global success/failure ratio
             cursor.execute('SELECT SUM(success_count), SUM(fail_count) FROM chords')
             global_stats = cursor.fetchone()

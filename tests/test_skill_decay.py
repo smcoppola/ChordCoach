@@ -39,12 +39,9 @@ def test_reading_the_coach_context_does_not_decay(tmp_path):
     before = _scores(db)
 
     for _ in range(5):
-        context = db.get_coach_context()
+        db.get_coach_context()
 
     assert _scores(db) == before
-    # Stale chords are still reported to the coach.
-    assert "Decayed Chords" in context
-    assert "C Major" in context
 
 
 def test_daily_decay_runs_once_per_day(tmp_path):
@@ -70,4 +67,3 @@ def test_fresh_items_do_not_decay(tmp_path):
     db.apply_daily_skill_decay(today=date(2026, 11, 13))
 
     assert _scores(db) == (50.0, 1)
-    assert db.get_stale_chords() == []

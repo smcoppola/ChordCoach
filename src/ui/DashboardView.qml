@@ -21,6 +21,34 @@ Rectangle {
     signal startSpecificDrill(string track, string milestoneId)
     signal openLibrary()
 
+    // Quick Review covers both: spaced-repetition items that are due, and
+    // what the student struggled with earlier in this app session.
+    readonly property int reviewsDue: (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine)
+        ? appState.curriculumEngine.reviewQueueCount : 0
+    readonly property int struggledCount: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer)
+        ? appState.chordTrainer.struggledItems.length : 0
+    readonly property int quickReviewCount: Math.min(reviewsDue, 10) + struggledCount
+
+    function quickReviewText() {
+        if (reviewsDue > 0 && struggledCount > 0)
+            return reviewsDue + (reviewsDue === 1 ? " review" : " reviews") + " due, plus "
+                + struggledCount + " from today.";
+        if (reviewsDue > 0)
+            return reviewsDue + (reviewsDue === 1 ? " review" : " reviews")
+                + " due. Revisit what you learned before it fades.";
+        if (struggledCount > 0)
+            return "Practice the " + struggledCount + (struggledCount === 1 ? " item" : " items")
+                + " you struggled with today.";
+        return "Nothing due yet. Reviews appear a day after you practise.";
+    }
+
+    // The count is read from the database when the dashboard appears, so it
+    // is current after a lesson or a review.
+    Component.onCompleted: {
+        if (typeof appState !== "undefined" && appState !== null && appState.curriculumEngine)
+            appState.curriculumEngine.refreshReviewQueue();
+    }
+
     // Imported songs get a difficulty chooser; catalog songs load directly
     function requestSongWithDifficulty(songId) {
         if (songId.indexOf("user::") === 0) {
@@ -90,28 +118,30 @@ Rectangle {
                 onClicked: durationPicker.open()
             }
             
-            // 2. Quick Review (Conditional)
+            // 2. Quick Review — due spaced-repetition items plus today's struggles
             ActionCard {
                 title: "Quick Review"
-                description: "Practice the items you struggled with today."
+                description: root.quickReviewText()
                 icon: "🎯"
                 accentColor: "#FF9800"
-                enabled: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
+                enabled: root.quickReviewCount > 0
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.startReview()
-                
+
                 Rectangle {
                     parent: parent
                     anchors.top: parent.top
                     anchors.right: parent.right
                     anchors.margins: -8 * mainWindow.uiScale
-                    width: 24 * mainWindow.uiScale; height: 24 * mainWindow.uiScale; radius: 12 * mainWindow.uiScale
+                    width: Math.max(24 * mainWindow.uiScale, badgeText.implicitWidth + 12 * mainWindow.uiScale)
+                    height: 24 * mainWindow.uiScale; radius: 12 * mainWindow.uiScale
                     color: "#F44336"
-                    visible: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length > 0 : false
-                    
+                    visible: root.quickReviewCount > 0
+
                     Text {
+                        id: badgeText
                         anchors.centerIn: parent
-                        text: (typeof appState !== "undefined" && appState !== null && appState.chordTrainer) ? appState.chordTrainer.struggledItems.length : 0
+                        text: root.quickReviewCount
                         color: "#ffffff"
                         font.bold: true
                         font.pixelSize: 12 * mainWindow.uiScale

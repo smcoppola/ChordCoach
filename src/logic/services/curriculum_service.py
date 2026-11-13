@@ -151,10 +151,12 @@ class CurriculumService(QObject):
                 "successes_so_far": 0,
             })
 
-        total_steps = sum(b["step_count"] for b in blocks)
+        review_items = self._due_review_items()
+        total_steps = sum(b["step_count"] for b in blocks) + len(review_items)
 
         self._session_plan = {
             "blocks": blocks,
+            "review_items": review_items,
             "total_estimated_steps": total_steps,
             "tracks": list(tracks_used) if tracks_used else ["technique"],
         }
@@ -170,6 +172,19 @@ class CurriculumService(QObject):
         self.curriculumChanged.emit() # Redraw curriculum sidebar with only active tracks
         print(f"CurriculumService: Planned session with {len(blocks)} blocks across {list(tracks_used)}, ~{total_steps} steps")
         return self._session_plan
+
+    # A lesson opens with at most this many due reviews; the rest wait.
+    MAX_REVIEW_CHORDS = 4
+    MAX_REVIEW_SONGS = 1
+
+    def _due_review_items(self) -> list:
+        """Due SM-2 items for a lesson's opening review block, most overdue first."""
+        try:
+            return (self.db.get_due_reviews(item_type="chord", limit=self.MAX_REVIEW_CHORDS)
+                    + self.db.get_due_reviews(item_type="song", limit=self.MAX_REVIEW_SONGS))
+        except Exception as e:
+            print(f"CurriculumService: Review lookup failed: {e}")
+            return []
 
     # ── Curriculum Context for Gemini ─────────────────────────────────
 
@@ -398,7 +413,7 @@ class CurriculumService(QObject):
 
     def _compute_review_queue(self) -> int:
         try:
-            return int(self.db.count_songs_due_for_review(decay_hours=48))
+            return int(self.db.count_due_reviews())
         except Exception as e:
             print(f"CurriculumService: Review queue lookup failed: {e}")
             return 0

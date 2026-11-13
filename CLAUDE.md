@@ -102,7 +102,7 @@ Hardware C++ extension (chordcoach_hw) — sub-ms MIDI I/O
 ### Curriculum & Data
 
 - `CurriculumService` manages 4 learning tracks (Technique, Theory, Repertoire, Ear/Listen)
-- SM-2 spaced repetition algorithm tracks chord/concept review
+- SM-2 spaced repetition (`src/logic/utils/sm2.py`, `review_items` table) schedules chords and songs: graded from latency, wrong notes or song accuracy, first attempt of each day only. Due items open each lesson as a "Review" block, and the dashboard's Quick Review card shows and runs them (plus anything struggled with earlier in the session). Mastery decay (`apply_daily_skill_decay`) is separate and still runs once a day.
 - All user data is local SQLite (`database/`)
 - Curriculum definitions loaded from `src/resources/` JSON files at startup
 

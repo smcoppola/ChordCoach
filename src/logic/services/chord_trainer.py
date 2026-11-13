@@ -7,9 +7,11 @@ from datetime import datetime
 from enum import Enum, auto
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
 from logic.services.rhythm_engine import RhythmEngine # type: ignore
-from logic.services.lesson_sequencer import LessonSequencer # type: ignore
+from logic.services.lesson_sequencer import LessonSequencer, review_exercises # type: ignore
 from logic.services import coach_prompts # type: ignore
+from logic.utils.sm2 import quality_for_chord, quality_for_song # type: ignore
 import music21
+import re
 
 class LessonState(Enum):
     IDLE = auto()               # Not in a lesson
@@ -179,6 +181,9 @@ class ChordTrainerService(QObject):
         self._concept_card: Dict[str, str] = {}
         self._song_steps: List[Dict] = []
         self._song_index = 0
+        # The chord the current target is, for the review schedule — "C Major",
+        # never a display name like "C Major (1st inv)" or "Listen to the chord".
+        self._review_chord = ""
 
         # If the coach was asked to speak but no audio arrives, stop waiting.
         self._speech_start_timer = QTimer(self)
@@ -1225,7 +1230,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         ex_type = exercise_data.get("exercise_type", "chord")
 
         group_title = ""
-        if hasattr(self, 'curriculum') and self.curriculum and track and milestone_id:
+        if track == "review":
+            group_title = "Review"
+        elif hasattr(self, 'curriculum') and self.curriculum and track and milestone_id:
             group_title = self.curriculum.get_milestone_title(track, milestone_id)
 
         if not group_title:
@@ -1258,10 +1265,23 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         if self._is_lesson_mode:
             self._next_chord()
 
+    # Due spaced-repetition items one Quick Review takes on; the rest wait.
+    QUICK_REVIEW_LIMIT = 10
+
     @Slot()
     def start_review_session(self):
-        """Starts a mini-lesson replaying the exercises the student struggled with."""
-        exercises = []
+        """
+        Quick Review: everything the SM-2 schedule says is due (most overdue
+        first, up to QUICK_REVIEW_LIMIT), then the exercises the student
+        struggled with earlier in this app session.
+        """
+        try:
+            due = self.db.get_due_reviews(limit=self.QUICK_REVIEW_LIMIT)
+        except Exception as e:
+            print(f"ChordTrainer: Could not read due reviews: {e}")
+            due = []
+        exercises = review_exercises(due, self._song_library())
+
         for item in self._struggled_items:
             step = dict(item.get("chord_data") or {})
             if not step:
@@ -2058,6 +2078,21 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         except Exception as e:
             print(f"ChordTrainer: Failed to record song play: {e}")
 
+        # A loop-only run never plays the whole piece, so it is not a review of it.
+        if not result.get("loopOnly"):
+            quality = quality_for_song(str(result.get("mode", "self_paced")),
+                                       int(result.get("wrongNotes", 0) or 0),
+                                       float(result.get("accuracy", 0.0) or 0.0))
+            try:
+                self.db.record_review("song", self._review_song_id(self._song_id), quality)
+            except Exception as e:
+                print(f"ChordTrainer: Could not record review of '{self._song_id}': {e}")
+
+    @staticmethod
+    def _review_song_id(song_id: str) -> str:
+        """The song a play counts for: difficulty variants (`<id>::L2`) review the song itself."""
+        return re.sub(r"::L\d+$", "", song_id)
+
     # ── QML control surface ─────────────────────────────────────────
 
     @Slot(str)
@@ -2406,6 +2441,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         base_pitch = (octave + 1) * 12 + root_idx
 
         self._target_chord_name = f"{root_name} {chord_type_name}".strip()
+        self._review_chord = f"{root_name} {chord_type_name}" if chord_type_name else ""
         # Add inversion label if applicable
         inversion = getattr(self, '_current_inversion', 0)
         if inversion == 1:
@@ -2769,6 +2805,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
         root_name = self.ROOT_NOTES[root_idx]
         self._target_chord_name = f"{root_name} {chord_type_name} ({numeral})" if numeral else f"{root_name} {chord_type_name}"
+        self._review_chord = f"{root_name} {chord_type_name}"
         self._target_chord_type = chord_type_name
 
         # Clamp octave based on current hand assignment
@@ -3143,8 +3180,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 self._exercise_struggled = True
                 self.chordFailed.emit()
                 latency_ms = (time.time() - self._prompt_time) * 1000.0
-                self.db.record_chord_attempt(self._target_chord_name, False, latency_ms, 
+                self.db.record_chord_attempt(self._target_chord_name, False, latency_ms,
                                            self._wrong_notes_count, False)
+                self._record_chord_review(False)
                 if self.curriculum:
                     self.curriculum.complete_exercise(self._target_chord_name, False, 
                                                      self._current_track, self._current_milestone_id)
@@ -3155,6 +3193,19 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                     self._wrong_chord_needs_hint = True
                     self._wrong_chord_pitches_snapshot = list(self._active_pitches)
                     self._waiting_for_release = True
+
+    # Exercise types whose target is a chord worth scheduling for review.
+    REVIEWABLE_CHORD_EXERCISES = ("chord", "hands_together", "sustain_pedal", "progression")
+
+    def _record_chord_review(self, success: bool, latency_ms: float = 0.0, wrong_notes: int = 0):
+        """Grades this attempt for the SM-2 schedule (first attempt of the day counts)."""
+        if self._exercise_type not in self.REVIEWABLE_CHORD_EXERCISES or not self._review_chord:
+            return
+        try:
+            self.db.record_review("chord", self._review_chord,
+                                  quality_for_chord(success, latency_ms, wrong_notes))
+        except Exception as e:
+            print(f"ChordTrainer: Could not record review of {self._review_chord}: {e}")
 
     @Slot()
     def _on_sustain_grace_timeout(self):
@@ -3189,8 +3240,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         print(f"ChordTrainer: SUCCESS! {self._target_chord_name} matched in {latency_ms:.1f}ms")
 
         # Record success in DB and local session stats
-        self.db.record_chord_attempt(self._target_chord_name, True, latency_ms, 
+        self.db.record_chord_attempt(self._target_chord_name, True, latency_ms,
                                    self._wrong_notes_count, self._is_simultaneous)
+        self._record_chord_review(True, latency_ms, self._wrong_notes_count)
         if self.curriculum:
             self.curriculum.complete_exercise(self._target_chord_name, True, 
                                              self._current_track, self._current_milestone_id)
