@@ -609,10 +609,6 @@ class ChordTrainerService(QObject):
     def loadingStatusText(self) -> str:  # type: ignore[reportRedeclaration]
         return self._loading_status_text
 
-    @Property(float, notify=loadingStatusChanged)
-    def estimatedGenerationMs(self) -> float:  # type: ignore[reportRedeclaration]
-        return self._estimated_gen_ms
-
     @Property(str, notify=targetChordChanged)
     def targetChordType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._target_chord_type
@@ -620,10 +616,6 @@ class ChordTrainerService(QObject):
     @Property(str, notify=targetChordChanged)
     def targetFormulaText(self) -> str:  # type: ignore[reportRedeclaration]
         return self._target_formula_text
-
-    @Property(str, notify=lessonStateChanged)
-    def exerciseType(self) -> str:  # type: ignore[reportRedeclaration]
-        return self._exercise_type
 
     @Property(list, notify=lessonStateChanged)
     def struggledItems(self):  # type: ignore[reportRedeclaration]
@@ -823,7 +815,7 @@ INSTRUCTIONS:
 7. Only speak longer sentences when introducing a NEW exercise type FOR THE FIRST TIME, giving feedback on significant struggles, or ending.
 
 Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal, song_application
-Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
+Available chord_type_name values: Major, Minor, Diminished, Augmented, Major7, Minor7, Dominant7
 
 Start the lesson now by calling set_exercise and speaking.
 </SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""
@@ -920,7 +912,7 @@ INSTRUCTIONS:
 7. Only speak longer sentences when giving feedback on significant struggles, or ending.
 
 Available exercise_type values: chord, pentascale, progression, listen, hands_together, sustain_pedal, song_application
-Available chord_type_name values: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7
+Available chord_type_name values: Major, Minor, Diminished, Augmented, Major7, Minor7, Dominant7
 
 Start the lesson now by calling set_exercise and speaking.
 </SYSTEM_DIRECTIVE_DO_NOT_SPEAK_THIS>"""

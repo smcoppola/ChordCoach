@@ -426,7 +426,7 @@ class GeminiService(QObject):
                                     },
                                     "chord_type_name": {
                                         "type": "STRING",
-                                        "description": "Chord quality: Major, Minor, Diminished, Augmented, Sus2, Sus4, Major7, Minor7, Dominant7"
+                                        "description": "Chord quality: Major, Minor, Diminished, Augmented, Major7, Minor7, Dominant7"
                                     },
                                     "hand": {
                                         "type": "STRING",

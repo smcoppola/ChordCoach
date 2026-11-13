@@ -1,7 +1,7 @@
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 class DatabaseManager:
     def __init__(self, db_path):
@@ -406,8 +406,42 @@ class DatabaseManager:
                  })
                  
             conn.commit()
-            
+
         return decayed_chords
+
+    # app_settings key holding the ISO date decay was last applied on.
+    SKILL_DECAY_DATE_KEY = "skill_decay_last_applied"
+    SKILL_DECAY_HOURS = 48
+    SKILL_DECAY_RATE = 0.90
+
+    def apply_daily_skill_decay(self, today: date | None = None) -> bool:
+        """
+        Runs calculate_skill_decay at most once per calendar day.
+
+        calculate_skill_decay multiplies every stale score but leaves
+        last_played alone, so the same items stay stale and are decayed again
+        on the next call. It used to run inside get_coach_context — a read that
+        happens several times per launch and once per lesson — which shrank
+        mastery on every one of those reads. Returns True if it ran.
+        """
+        stamp = (today or date.today()).isoformat()
+        if self.get_app_setting(self.SKILL_DECAY_DATE_KEY, "") == stamp:
+            return False
+        self.calculate_skill_decay(self.SKILL_DECAY_HOURS, self.SKILL_DECAY_RATE)
+        self.set_app_setting(self.SKILL_DECAY_DATE_KEY, stamp)
+        return True
+
+    def get_stale_chords(self, decay_hours: int = SKILL_DECAY_HOURS) -> list:
+        """Practised chords not played within `decay_hours`. Read-only."""
+        cutoff_time = (datetime.now() - timedelta(hours=decay_hours)).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT name, last_played FROM chords
+                WHERE last_played < ? AND success_count > 0
+            ''', (cutoff_time,))
+            return [{"name": name, "last_played": last_played}
+                    for name, last_played in cursor.fetchall()]
 
     def count_songs_due_for_review(self, decay_hours: int = 48) -> int:
         """
@@ -553,8 +587,9 @@ class DatabaseManager:
                 for name, s, f in struggling:
                     context += f"- {name} (Success: {s}, Fail: {f})\n"
             
-            # Get recently decayed chords
-            decayed = self.calculate_skill_decay(decay_hours=48, decay_rate=0.90)
+            # Chords going stale. Read-only: decay itself is applied once a day
+            # by apply_daily_skill_decay, never as a side effect of reading.
+            decayed = self.get_stale_chords()
             if decayed:
                 context += "\nDecayed Chords (Not practiced in 48+ hours):\n"
                 for item in decayed:

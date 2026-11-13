@@ -105,6 +105,8 @@ class AppState(QObject):
     def __init__(self):
         super().__init__()
         self.db = DatabaseManager(user_data_path / "database" / "userdata.db")
+        # Before anything reads mastery: services below cache it at construction.
+        self.db.apply_daily_skill_decay()
         self.settings = SettingsService(self.db, user_data_path)
         self.settings.setParent(self)
         
@@ -181,8 +183,9 @@ class AppState(QObject):
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
         self.hw_service.initialSearchComplete.connect(self._on_midi_initial_search_complete)
-        self.chord_trainer.midiOutRequested.connect(self.hw_service.play_chord_preview)
-        
+        # chord_trainer.midiOutRequested → hw_service.play_chord_preview is wired
+        # in AppCoordinator. Connecting it here as well sent every preview twice.
+
         # NOTE: Hardware initialisation and AI connection are deliberately
         # deferred until after the QML engine has loaded the UI.  On macOS,
         # calling CoreMIDI / CoreAudio APIs before the run-loop is active can
