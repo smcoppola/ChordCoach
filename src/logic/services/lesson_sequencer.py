@@ -124,6 +124,10 @@ def exercise_key(ex: Dict[str, Any]) -> tuple:
             return tuple(sorted((k, freeze(x)) for k, x in v.items()))
         if isinstance(v, (list, tuple)):
             return tuple(freeze(x) for x in v)
+        if isinstance(v, (set, frozenset)):
+            # Normalised exercises carry `intervals` as a set (struggled items
+            # are stored that way), and a set inside a key is unhashable.
+            return frozenset(freeze(x) for x in v)
         return v
     return tuple(sorted((k, freeze(v)) for k, v in ex.items() if k != "exercise_name"))
 

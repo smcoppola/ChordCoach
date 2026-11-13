@@ -233,6 +233,23 @@ def test_quick_review_plays_due_items_then_todays_struggles(trainer, db):
     assert db.count_due_reviews() == 0
 
 
+def test_quick_review_after_a_real_struggle(trainer):
+    """Struggled items keep the normalised exercise, `intervals` set and all."""
+    trainer.present_exercise({"exercise_type": "chord", "exercise_name": "C Major",
+                              "root_idx": 0, "chord_type_name": "Major", "inversion": 1})
+    for p in (61, 63, 66):  # three wrong notes on the way: a struggle
+        trainer.handle_midi_note(p, True)
+        trainer.handle_midi_note(p, False)
+    for p in trainer.targetPitches:
+        trainer.handle_midi_note(p, True)
+    assert isinstance(trainer.struggledItems[0]["chord_data"]["intervals"], set)
+
+    trainer.start_review_session()
+
+    assert trainer.exerciseName == "Review: C Major"
+    assert trainer.targetPitches == [64, 67, 72]  # still the 1st inversion
+
+
 def test_quick_review_with_nothing_to_review_does_not_start(trainer):
     trainer.start_review_session()
     assert not trainer.isActive
