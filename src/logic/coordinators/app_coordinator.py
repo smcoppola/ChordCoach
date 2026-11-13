@@ -162,9 +162,8 @@ class AppCoordinator(QObject):
             # narration may have been cut off, needs anything re-sent.
             if (was_reconnecting and self.chord_trainer.isActive and self.chord_trainer.isLessonMode
                     and self.chord_trainer.isCircleOfFifthsMode):
-                step = getattr(self.chord_trainer, '_circle_tutorial_step', 1)
-                print(f"Coordinator: Reconnected during circle tutorial — re-sending step {step} prompt.")
-                resume_prompt = self.chord_trainer._get_circle_tutorial_prompt(step)
+                print("Coordinator: Reconnected during circle tutorial — re-sending the current step.")
+                resume_prompt = self.chord_trainer.circle_tutorial_prompt()
                 if resume_prompt:
                     self.gemini.send_prompt(resume_prompt)
             elif was_reconnecting and self.chord_trainer.isActive and self.chord_trainer.isLessonMode:

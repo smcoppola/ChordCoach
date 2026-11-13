@@ -11,6 +11,7 @@ from logic.services.lesson_sequencer import LessonSequencer, review_exercises # 
 from logic.services import coach_prompts # type: ignore
 from logic.utils.sm2 import quality_for_chord, quality_for_song # type: ignore
 from logic.utils import chord_types # type: ignore
+from logic.services.circle_tutorial import CircleTutorial, DominantMotionDrill # type: ignore
 import music21
 import re
 
@@ -68,6 +69,9 @@ class ChordTrainerService(QObject):
 
     # How long a lesson waits for the coach to start talking after a prompt.
     SPEECH_START_TIMEOUT_MS = 8000
+
+    # For collaborators (circle_tutorial) that set the lesson state.
+    State = LessonState
 
     # The chord vocabulary (see logic/utils/chord_types.py).
     CHORD_TYPES = chord_types.CHORD_TYPES
@@ -197,33 +201,12 @@ class ChordTrainerService(QObject):
         self._speech_start_timer.setSingleShot(True)
         self._speech_start_timer.setInterval(self.SPEECH_START_TIMEOUT_MS)
         self._speech_start_timer.timeout.connect(self._on_speech_start_timeout)
-        self._is_circle_of_fifths_mode = False  # True while Circle of Fifths tutorial is the active lesson
-        self._waiting_for_user_continue = False
+        self._is_circle_of_fifths_mode = False  # True while a scripted circle lesson is running
 
-        # Dominant Motion Trainer (V→I) State
-        self._is_dominant_motion_mode = False
-        self._dominant_motion_step = 0
-        self._dominant_motion_hint_sent = False
-        self._circle_tutorial_step = 0  # 1-7 while the Circle of Fifths tutorial runs
-        self._wrong_chord_needs_hint = False
-        self._wrong_chord_pitches_snapshot = []
-        self._dominant_motion_complete = False  # Prevent duplicate hints per step
-        self._dominant_motion_hesitation_timer = QTimer(self)
-        self._dominant_motion_hesitation_timer.setSingleShot(True)
-        self._dominant_motion_hesitation_timer.setInterval(3000)  # 3 seconds
-        self._dominant_motion_hesitation_timer.timeout.connect(self._dominant_motion_hint)
+        # The scripted lessons on the Circle of Fifths view (see circle_tutorial.py)
+        self._circle = CircleTutorial(self)
+        self._dominant = DominantMotionDrill(self)
         self._playback_service = None
-
-        # V→I pairs: (V_key, I_key, V_root_idx, I_root_idx, shared_note)
-        # shared_note = the 5th of I chord = root of V chord
-        self.DOMINANT_MOTION_PAIRS = [
-            {"v_key": "G", "i_key": "C", "v_root": 7,  "i_root": 0,  "shared": "G"},
-            {"v_key": "D", "i_key": "G", "v_root": 2,  "i_root": 7,  "shared": "D"},
-            {"v_key": "A", "i_key": "D", "v_root": 9,  "i_root": 2,  "shared": "A"},
-            {"v_key": "C", "i_key": "F", "v_root": 0,  "i_root": 5,  "shared": "C"},
-            {"v_key": "E", "i_key": "A", "v_root": 4,  "i_root": 9,  "shared": "E"},
-            {"v_key": "B", "i_key": "E", "v_root": 11, "i_root": 4,  "shared": "B"},
-        ]
         
         self._target_pitches: List[int] = []
         self._prev_target_pitches: List[int] = []
@@ -585,7 +568,7 @@ class ChordTrainerService(QObject):
 
     @Property(bool, notify=waitingForUserContinueChanged)
     def isWaitingForUserContinue(self) -> bool:  # type: ignore[reportRedeclaration]
-        return self._waiting_for_user_continue
+        return self._circle.waiting_for_continue
 
     @Property(float, notify=lessonStateChanged)
     def holdProgress(self) -> float:  # type: ignore[reportRedeclaration]
@@ -682,6 +665,7 @@ class ChordTrainerService(QObject):
         # Free Practice Mode. Unlike free play this is coach-driven — it asks
         # for a chord and reacts to what is played — so the session stays up.
         self._set_coach_needed(True)
+        self._leave_scripted_lessons()
         self._is_lesson_mode = False
         self._exercise_name = "Free Practice"
         self._lesson_progress = 0
@@ -804,6 +788,8 @@ class ChordTrainerService(QObject):
         self._ignore_midi_until = 0.0
         self._sequencer = None
         self._set_concept_card({})
+        self._circle.reset()
+        self._dominant.reset()
 
     def _begin_lesson(self, sequencer: LessonSequencer, student_context: str = ""):
         """Starts a sequenced lesson and presents its first exercise."""
@@ -824,35 +810,32 @@ class ChordTrainerService(QObject):
         self.lessonStateChanged.emit()
         self._advance_lesson()
 
-    def _start_circle_tutorial(self, student_context: str):
-        """The scripted Circle of Fifths introduction. Steps advance on Continue."""
-        self._reset_for_lesson()
-        if not self._is_circle_of_fifths_mode:
-            self._is_circle_of_fifths_mode = True
-            self.isCircleOfFifthsModeChanged.emit(True)
-        self._circle_tutorial_step = 1
-        self._set_state(LessonState.USER_PLAYING)
-        self.lessonStateChanged.emit()
-
-        prompt = self._get_circle_tutorial_prompt(1, student_context)
-        if not self._coach_say(prompt):
-            self.resume_lesson()  # no coach: go straight to the Continue button
+    def _start_circle_tutorial(self, student_context: str = ""):
+        """The scripted Circle of Fifths introduction (see circle_tutorial.py)."""
+        self._circle.start()
 
     def _start_dominant_motion(self):
-        """The scripted V→I resolution trainer."""
-        self._reset_for_lesson()
-        if not self._is_circle_of_fifths_mode:
-            self._is_circle_of_fifths_mode = True
-            self.isCircleOfFifthsModeChanged.emit(True)
-        self._is_dominant_motion_mode = True
-        self._dominant_motion_step = 0
-        self._dominant_motion_hint_sent = False
-        self._set_state(LessonState.USER_PLAYING)
-        self.lessonStateChanged.emit()
+        """The scripted V→I resolution drill (see circle_tutorial.py)."""
+        self._dominant.start()
 
-        prompt = self._advance_dominant_motion(intro=True)
-        if not self._coach_say(prompt):
-            self.resume_lesson()
+    def _set_circle_mode(self, active: bool):
+        """Whether a scripted lesson owns the Circle of Fifths view."""
+        if active != self._is_circle_of_fifths_mode:
+            self._is_circle_of_fifths_mode = active
+            self.isCircleOfFifthsModeChanged.emit(active)
+
+    def _leave_scripted_lessons(self):
+        """
+        Ends any scripted circle lesson. A half-finished V→I drill left active
+        would capture the next lesson's chords as resolutions.
+        """
+        self._set_circle_mode(False)
+        self._circle.reset()
+        self._dominant.reset()
+
+    def circle_tutorial_prompt(self) -> str:
+        """Re-pushes the tutorial's current visual and returns its narration (after a reconnect)."""
+        return self._circle.prompt()
 
     @Slot(bool)
     def set_coach_available(self, available: bool):
@@ -889,43 +872,6 @@ class ChordTrainerService(QObject):
             self._concept_card = dict(card)
             self.conceptCardChanged.emit()
 
-    def _get_circle_tutorial_prompt(self, step: int, user_context: str = "") -> str:
-        # ── Step visual data (deterministic, applied from Python) ───────────
-        step_visuals = {
-            1: {"show_base": True, "show_major": False, "show_minor": False, "highlight_key": "", "revealed_keys": []},
-            2: {"show_base": True, "show_major": True, "show_minor": False, "highlight_key": "C", "revealed_keys": ["C"]},
-            3: {"show_base": True, "show_major": True, "show_minor": False, "highlight_key": "G", "revealed_keys": ["C", "G"]},
-            4: {"show_base": True, "show_major": True, "show_minor": False, "highlight_key": "D", "revealed_keys": ["C", "G", "D"]},
-            5: {"show_base": True, "show_major": True, "show_minor": False, "highlight_key": "F", "revealed_keys": ["C", "G", "D", "F"]},
-            6: {"show_base": True, "show_major": True, "show_minor": True, "highlight_key": "Am", "revealed_keys": ["C", "G", "D", "F", "Am"]},
-            7: {"show_base": True, "show_major": True, "show_minor": True, "highlight_key": "", "revealed_keys": ["ALL"]},
-        }
-
-        # ── Step voice scripts (sent to AI as voice-only narration) ─────────
-        step_scripts = {
-            1: "Welcome to the Circle of Fifths. This wheel maps out the relationship between every key in western music. Let's build it up together, one piece at a time.",
-            2: "C Major is at the very top. It has no sharps and no flats, making it the simplest key on the piano—just the white keys.",
-            3: "G Major is one step clockwise. Moving right takes us up a perfect fifth, and adds exactly one sharp to the key signature.",
-            4: "D Major is the next step clockwise. Following the pattern, it goes up another perfect fifth and has exactly two sharps.",
-            5: "F Major is one step counter-clockwise from C. Moving left takes us down a fifth, and adds one flat instead of a sharp.",
-            6: "A Minor is hiding on the inner ring. Every major key has a relative minor that shares the exact same notes. They are simply two sides of the same coin.",
-            7: "That completes our first look at the Circle of Fifths. Sharps accumulate clockwise, flats accumulate counter-clockwise, and every major key has a hidden relative minor. Great job today!",
-        }
-
-        if step not in step_visuals:
-            return ""
-
-        # 1. Directly push the visual state from Python (deterministic, no AI involvement)
-        self.theoryVisualDirect.emit(step_visuals[step])
-
-        # 2. Return a voice-only prompt for the AI (no tool call instructions)
-        voice_prompt = f"""<SYSTEM_DIRECTIVE_OVERRIDE>
-You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do NOT add any words, greetings, filler, or tool calls. Speak ONLY these exact words and then STOP:
-
-"{step_scripts[step]}"
-</SYSTEM_DIRECTIVE_OVERRIDE>"""
-        return voice_prompt
-
     @Slot(str)
     def start_song(self, piece_name: str):
         """Starts a free-play song exercise, skipping the AI coach."""
@@ -959,6 +905,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._lesson_end_pending = False
         self._speech_start_timer.stop()
         self._set_concept_card({})
+        self._leave_scripted_lessons()
 
         self._is_lesson_mode = False
         self._is_lesson_complete = False
@@ -1169,10 +1116,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         self._set_state(LessonState.IDLE)
         self.activeChanged.emit(False)
 
-        # Clear circle of fifths mode flag
-        if self._is_circle_of_fifths_mode:
-            self._is_circle_of_fifths_mode = False
-            self.isCircleOfFifthsModeChanged.emit(False)
+        self._set_circle_mode(False)
 
         if self.curriculum:
             self.curriculum.finish_session()
@@ -1317,10 +1261,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._is_holding = False
             self._consecutive_successes = 0
 
-            # Reset Circle mode if it was on
-            if self._is_circle_of_fifths_mode:
-                self._is_circle_of_fifths_mode = False
-                self.isCircleOfFifthsModeChanged.emit(False)
+            self._leave_scripted_lessons()
 
             self.activeChanged.emit(False)
             self.lessonStateChanged.emit()
@@ -2503,25 +2444,12 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             self._finalize_lesson_end()
             return
 
-        # If we are in the sequenced Circle of Fifths tutorial or Dominant Motion
+        # The scripted circle lessons handle their own narration.
         if self.isCircleOfFifthsMode:
-            if self._is_dominant_motion_mode:
-                # For Dominant Motion, immediately transition to USER_PLAYING and start timer
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Dominant Motion speech finished, awaiting user input.")
-                self._set_state(LessonState.USER_PLAYING)
-                self.lessonStateChanged.emit()
+            if self._dominant.active:
+                self._dominant.on_speech_finished()
             else:
-                if self._circle_tutorial_step == 7:
-                    # Final step just finished speaking — end the lesson directly (no Continue button)
-                    print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence complete (step 7 finished). Finalizing lesson directly.")
-                    self._is_circle_of_fifths_mode = False
-                    self.isCircleOfFifthsModeChanged.emit(False)
-                    self._conclude_lesson()
-                    self._circle_tutorial_step = 8
-                elif 0 < self._circle_tutorial_step < 7:
-                    print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence paused at step {self._circle_tutorial_step}. Waiting for user continue.")
-                    self._waiting_for_user_continue = True
-                    self.waitingForUserContinueChanged.emit(True)
+                self._circle.on_speech_finished()
             return
 
         # For normal (non-circle) lessons, run general post-speech resume logic
@@ -2529,202 +2457,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
 
     @Slot()
     def continueCircleTutorial(self):
-        """Called by QML when the user clicks the Continue button during the tutorial."""
-        if not self._waiting_for_user_continue:
-            return
-            
-        self._waiting_for_user_continue = False
-        self.waitingForUserContinueChanged.emit(False)
-        
-        if 0 < self._circle_tutorial_step <= 7:
-            if self._circle_tutorial_step == 7:
-                # Step 7 is the conclusion — after user clicks Continue, end the lesson directly
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence complete. Finalizing lesson directly.")
-                self._is_circle_of_fifths_mode = False
-                self.isCircleOfFifthsModeChanged.emit(False)
-                self._conclude_lesson()
-                self._circle_tutorial_step = 8
-            else:
-                self._circle_tutorial_step += 1
-                prompt = self._get_circle_tutorial_prompt(self._circle_tutorial_step)
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Circle sequence advancing to step {self._circle_tutorial_step}")
-                # The next Continue appears when the narration ends — at once
-                # if there is no coach to narrate.
-                if not self._coach_say(prompt):
-                    self.resume_lesson()
-
-                # We delay the native MIDI chord playback by 1000ms so it sounds right as the visual wheel finishes spinning
-                QTimer.singleShot(1000, lambda: self._play_circle_step_midi(self._circle_tutorial_step))
-
-    def _play_circle_step_midi(self, step: int):
-        pitches = []
-        if step == 2:
-            pitches = [60, 64, 67] # C Major
-        elif step == 3:
-            pitches = [67, 71, 74] # G Major
-        elif step == 4:
-            pitches = [62, 66, 69] # D Major
-        elif step == 5:
-            pitches = [65, 69, 72] # F Major
-        elif step == 6:
-            pitches = [69, 72, 76] # A Minor (relative minor of C)
-            
-        if pitches:
-            print(f"ChordTrainer: Playing native MIDI trace for step {step}: pitches {pitches}")
-            self.midiOutRequested.emit(pitches)
-
-    # ── Dominant Motion Trainer (V→I) ───────────────────────────────────────
-
-    def _advance_dominant_motion(self, intro: bool = False) -> str:
-        """Set up the next V→I pair: circle visual, target chord, AI narration.
-        Returns the voice prompt for the AI."""
-        pair = self.DOMINANT_MOTION_PAIRS[self._dominant_motion_step]
-        v_key = pair["v_key"]
-        i_key = pair["i_key"]
-        i_root = pair["i_root"]
-        shared = pair["shared"]
-
-        print(f"ChordTrainer: Dominant Motion step {self._dominant_motion_step + 1}/{len(self.DOMINANT_MOTION_PAIRS)}: {v_key}→{i_key}")
-
-        # Reset hint state for this step
-        self._dominant_motion_hint_sent = False
-
-        # 1. Push circle visual: show all keys, highlight V, arrow V→I
-        visual_state = {
-            "show_base": True,
-            "show_major": True,
-            "show_minor": False,
-            "highlight_key": v_key,
-            "revealed_keys": ["ALL"],
-            "highlighted_chords": [v_key],
-            "arrows": [{"from": v_key, "to": i_key, "color": "#4CAF50"}],
-        }
-        self.theoryVisualDirect.emit(visual_state)
-
-        # 2. Update lesson progress
-        self._lesson_progress = self._dominant_motion_step + 1
-        self._lesson_total = len(self.DOMINANT_MOTION_PAIRS)
-
-        # 3. Set the target chord to the I chord (Major triad)
-        self._exercise_type = "chord"
-        self._exercise_name = f"Resolve {v_key} → {i_key}"
-        self._current_hand = "right"
-        self._required_hold_ms = 0
-        self._current_inversion = 0
-        self._setup_target(i_root, "Major", {0, 4, 7}, 4)
-
-        # 4. Play the V chord as a MIDI preview so the user hears the "tension"
-        v_root_pitch = 60 + pair["v_root"]  # octave 4
-        v_pitches = [v_root_pitch, v_root_pitch + 4, v_root_pitch + 7]
-        self.midiOutRequested.emit(v_pitches)
-
-        # Timer is started later in resume_lesson when AI speech finishes
-
-        # 6. Build voice prompt
-        if intro:
-            self.db.record_dominant_motion_play()
-            play_count = self.db.get_dominant_motion_play_count()
-            
-            attempts = 0
-            successes = 0
-            if self.curriculum:
-                for ms in self.db.get_curriculum_state("theory"):
-                    if ms["milestone_id"] == "dominant_motion":
-                        attempts = ms.get("attempts", 0)
-                        successes = ms.get("successes", 0)
-                        break
-            
-            accuracy = (successes / attempts * 100) if attempts > 0 else 0.0
-
-            voice_prompt = f"""<SYSTEM_DIRECTIVE_OVERRIDE>
-Generate a brief, engaging voice introduction to the Dominant Motion (V→I) exercise.
-Context:
-- The user has played this specific drill {play_count} times before.
-- Their historical success rate on this drill is {accuracy:.0f}% ({successes}/{attempts} attempts).
-
-Instructions:
-1. If this is their 1st or 2nd time playing, explicitly explain how to determine the answer: "Look at the Circle of Fifths. To find the resolution, move one step counter-clockwise." Mention that V→I is the strongest pull in Western music (tension and release).
-2. If they've played it many times, skip the basic mechanical rules and just offer a quick encouraging word based on their accuracy (e.g. if accuracy is low, "Let's work on recognizing that resolution", if high, "You're mastering this, let's keep it going").
-3. Keep it conversational and brief.
-4. Always end your phrase with EXACTLY: "Let's start: resolve {v_key} Major to its tonic."
-5. Do NOT use tool calls, do NOT output markdown, do NOT output emojis. Generate ONLY spoken text.
-</SYSTEM_DIRECTIVE_OVERRIDE>"""
-            return voice_prompt
-        else:
-            scripts = [
-                f"Now resolve {v_key} Major.",
-                f"{v_key} Major. Where does it want to go?",
-                f"Here's {v_key}. Find the resolution.",
-                f"{v_key} to... you tell me.",
-                f"Resolve {v_key}.",
-            ]
-            import random as _rng
-            script = _rng.choice(scripts)
-
-            voice_prompt = f"""<SYSTEM_DIRECTIVE_OVERRIDE>
-You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do NOT add any words, greetings, filler, or tool calls. Speak ONLY these exact words and then STOP:
-
-"{script}"
-</SYSTEM_DIRECTIVE_OVERRIDE>"""
-            return voice_prompt
-
-    def _advance_dominant_motion_next(self):
-        """Called after key release to advance to the next V→I pair."""
-        self._waiting_for_release = False
-        prompt = self._advance_dominant_motion()
-        self.speakBrief.emit(prompt)
-
-    def _dominant_motion_hint(self, wrong_pitches: list | None = None):
-        """Show a hint: highlight the shared note and send AI voice tip."""
-        if self._dominant_motion_hint_sent:
-            return
-        self._dominant_motion_hint_sent = True
-
-        pair = self.DOMINANT_MOTION_PAIRS[self._dominant_motion_step]
-        v_key = pair["v_key"]
-        i_key = pair["i_key"]
-        shared = pair["shared"]
-
-        print(f"ChordTrainer: Dominant Motion hint — shared note {shared} between {v_key} and {i_key}")
-
-        # Update visual: add the I key as a second highlight + keep arrow
-        visual_state = {
-            "show_base": True,
-            "show_major": True,
-            "show_minor": False,
-            "highlight_key": i_key,
-            "revealed_keys": ["ALL"],
-            "highlighted_chords": [v_key, i_key],
-            "arrows": [{"from": v_key, "to": i_key, "color": "#4CAF50"}],
-        }
-        self.theoryVisualDirect.emit(visual_state)
-
-        # Play the I chord as a hint
-        i_root_pitch = 60 + pair["i_root"]
-        i_pitches = [i_root_pitch, i_root_pitch + 4, i_root_pitch + 7]
-        self.midiOutRequested.emit(i_pitches)
-
-        if wrong_pitches:
-            # Generate AI Analysis for the specific mistake
-            played_names = [self.ROOT_NOTES[p % 12] for p in wrong_pitches]
-            hint_prompt = f"""<SYSTEM_DIRECTIVE_OVERRIDE>
-The user was asked to resolve {v_key} Major to {i_key} Major.
-However, they played these notes instead: {', '.join(played_names)}.
-
-Analyze their mistake gently in one conversational sentence (e.g., "You played a D minor instead of a C Major", or "That was close, but you played an F# instead of G").
-Then, tell them the correct answer is {i_key} Major, and mention that '{shared}' is the shared note between them to help them find it.
-Keep the entire response under 3 sentences. Generate ONLY spoken text. Do NOT use tool calls, markdown, or emojis.
-</SYSTEM_DIRECTIVE_OVERRIDE>"""
-        else:
-            # Generic hesitation hint
-            hint_script = f"The answer is {i_key} Major. {shared} is the note they share. Try playing {i_key} Major now."
-            hint_prompt = f"""<SYSTEM_DIRECTIVE_OVERRIDE>
-You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do NOT add any words, greetings, filler, or tool calls. Speak ONLY these exact words and then STOP:
-
-"{hint_script}"
-</SYSTEM_DIRECTIVE_OVERRIDE>"""
-            
-        self.speakBrief.emit(hint_prompt)
+        """Called by QML when the user clicks Continue during the circle tutorial."""
+        self._circle.advance()
 
     def _resume_after_speech(self):
         """
@@ -2936,18 +2670,8 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         if self._waiting_for_release:
             if len(self._active_pitches) == 0:
                 self._waiting_for_release = False
-                if self._is_dominant_motion_mode:
-                    if self._dominant_motion_complete:
-                        self._dominant_motion_complete = False
-                        self._is_dominant_motion_mode = False
-                        self._is_circle_of_fifths_mode = False
-                        self.isCircleOfFifthsModeChanged.emit(False)
-                        self._conclude_lesson()
-                    elif self._wrong_chord_needs_hint:
-                        self._wrong_chord_needs_hint = False
-                        self._dominant_motion_hint(wrong_pitches=self._wrong_chord_pitches_snapshot)
-                    else:
-                        QTimer.singleShot(700, lambda: self._advance_dominant_motion_next())
+                if self._dominant.active:
+                    self._dominant.on_keys_released()
                 elif self._exercise_type == "pentascale":
                     if self._pentascale_index < len(self._pentascale_sequence):
                         # Still in the pentascale sequence — just continue, don't call _next_chord
@@ -3121,9 +2845,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                 else:
                     # Wrong notes entirely. Start the "You missed" timer for red flash.
                     # For Dominant Motion, trigger immediately to give reactive red flash
-                    if self._is_dominant_motion_mode:
+                    if self._dominant.active:
                         if not self._wrong_chord_timer.isActive():
-                            self._wrong_chord_timer.start(100) # Fast trigger for DM
+                            self._wrong_chord_timer.start(self._dominant.WRONG_CHORD_MS)
                     elif len(self._active_pitches) == len(self._target_pitches):
                         # Standard lesson still requires right count for red flash
                         if not self._wrong_chord_timer.isActive():
@@ -3145,7 +2869,7 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
             is_valid_count = len(self._active_pitches) == len(self._target_pitches)
             
             # Dominant Motion triggers on ANY wrong note count to be reactive
-            if self._is_dominant_motion_mode:
+            if self._dominant.active:
                 is_valid_count = len(self._active_pitches) > 0
 
             if is_valid_count and active_intervals != self._target_intervals:
@@ -3160,12 +2884,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
                     self.curriculum.complete_exercise(self._target_chord_name, False, 
                                                      self._current_track, self._current_milestone_id)
 
-                # Dominant Motion: wrong chord → trigger hint
-                if self._is_dominant_motion_mode and not self._dominant_motion_hint_sent:
-                    self._dominant_motion_hesitation_timer.stop() # Stop hesitation timer
-                    self._wrong_chord_needs_hint = True
-                    self._wrong_chord_pitches_snapshot = list(self._active_pitches)
-                    self._waiting_for_release = True
+                # Dominant Motion: wrong chord → hint once the keys are up
+                if self._dominant.active:
+                    self._dominant.on_wrong_chord(list(self._active_pitches))
 
     # Exercise types whose target is a chord worth scheduling for review.
     REVIEWABLE_CHORD_EXERCISES = ("chord", "hands_together", "sustain_pedal", "progression")
@@ -3277,18 +2998,9 @@ You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do
         # Short pause before advancing to avoid double-triggers (non-blocking)
         # The _waiting_for_release pattern below handles the actual gating
 
-        # Handle dominant motion advancement (takes priority over normal lesson flow)
-        if self._is_dominant_motion_mode:
-            self._dominant_motion_hesitation_timer.stop()
-            self._dominant_motion_step += 1
-            if self._dominant_motion_step >= len(self.DOMINANT_MOTION_PAIRS):
-                # All pairs complete
-                print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Dominant Motion exercise complete. Waiting for release.")
-                self._dominant_motion_complete = True
-                self._waiting_for_release = True
-            else:
-                # Wait for release then advance to next pair
-                self._waiting_for_release = True
+        # The V→I drill moves on by itself (takes priority over the lesson flow)
+        if self._dominant.active:
+            self._dominant.on_chord_complete()
             return
 
         # Handle progression sub-step advancement

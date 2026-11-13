@@ -112,6 +112,47 @@ def lesson_summary(exercises_done: int, struggled: Iterable[str],
     )
 
 
+# ── Scripted lessons (see circle_tutorial.py) ──────────────────────────────
+# These keep their original wording, including the override marker, which
+# asks the coach to read a script rather than speak for itself.
+
+def verbatim(script: str) -> str:
+    """Asks the coach to read `script` aloud word for word."""
+    return f"""<SYSTEM_DIRECTIVE_OVERRIDE>
+You are a strict Text-to-Speech engine. Recite the following phrase VERBATIM. Do NOT add any words, greetings, filler, or tool calls. Speak ONLY these exact words and then STOP:
+
+"{script}"
+</SYSTEM_DIRECTIVE_OVERRIDE>"""
+
+
+def dominant_motion_intro(play_count: int, successes: int, attempts: int, v_key: str) -> str:
+    accuracy = (successes / attempts * 100) if attempts > 0 else 0.0
+    return f"""<SYSTEM_DIRECTIVE_OVERRIDE>
+Generate a brief, engaging voice introduction to the Dominant Motion (V→I) exercise.
+Context:
+- The user has played this specific drill {play_count} times before.
+- Their historical success rate on this drill is {accuracy:.0f}% ({successes}/{attempts} attempts).
+
+Instructions:
+1. If this is their 1st or 2nd time playing, explicitly explain how to determine the answer: "Look at the Circle of Fifths. To find the resolution, move one step counter-clockwise." Mention that V→I is the strongest pull in Western music (tension and release).
+2. If they've played it many times, skip the basic mechanical rules and just offer a quick encouraging word based on their accuracy (e.g. if accuracy is low, "Let's work on recognizing that resolution", if high, "You're mastering this, let's keep it going").
+3. Keep it conversational and brief.
+4. Always end your phrase with EXACTLY: "Let's start: resolve {v_key} Major to its tonic."
+5. Do NOT use tool calls, do NOT output markdown, do NOT output emojis. Generate ONLY spoken text.
+</SYSTEM_DIRECTIVE_OVERRIDE>"""
+
+
+def dominant_motion_mistake(v_key: str, i_key: str, played_names: Iterable[str], shared: str) -> str:
+    return f"""<SYSTEM_DIRECTIVE_OVERRIDE>
+The user was asked to resolve {v_key} Major to {i_key} Major.
+However, they played these notes instead: {', '.join(played_names)}.
+
+Analyze their mistake gently in one conversational sentence (e.g., "You played a D minor instead of a C Major", or "That was close, but you played an F# instead of G").
+Then, tell them the correct answer is {i_key} Major, and mention that '{shared}' is the shared note between them to help them find it.
+Keep the entire response under 3 sentences. Generate ONLY spoken text. Do NOT use tool calls, markdown, or emojis.
+</SYSTEM_DIRECTIVE_OVERRIDE>"""
+
+
 def choose_intro(ex: Dict[str, Any], *, first_in_lesson: bool, previous_type: Optional[str],
                  seen_types: Iterable[str], struggle_streak: int, tip_given: bool,
                  block_titles: Iterable[str], student_context: str = "",
