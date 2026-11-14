@@ -38,7 +38,15 @@ class ChordTrainerService(QObject):
     pentascaleNoteHit = Signal(int, str) # index, feedback (Fast, Slow, Perfect!)
     chordFailed = Signal()
     lessonStateChanged = Signal()
-    mistakeActiveChanged = Signal(bool)
+    # Narrow notifiers for the properties that change most. lessonStateChanged
+    # re-emits all of them (see __init__), so a broad change still refreshes
+    # everything; the hot paths — every key event, every hold-progress tick —
+    # emit only their own.
+    mistakeChanged = Signal()          # mistakeActive
+    holdProgressChanged = Signal()     # holdProgress
+    exerciseChanged = Signal()         # exerciseName, exerciseType, currentHand, requiredHoldMs, progressionNumerals
+    lessonProgressChanged = Signal()   # lessonProgress, lessonTotal, lessonBlocks
+    struggledItemsChanged = Signal()   # struggledItems
     loadingStatusChanged = Signal()
     speakInstruction = Signal(str)
     speakBrief = Signal(str)              # Non-blocking brief coach commentary
@@ -89,6 +97,9 @@ class ChordTrainerService(QObject):
 
     def __init__(self, db_manager, curriculum_service=None, settings_manager=None, music21_service=None):
         super().__init__()
+        for narrow in (self.mistakeChanged, self.holdProgressChanged, self.exerciseChanged,
+                       self.lessonProgressChanged, self.struggledItemsChanged):
+            self.lessonStateChanged.connect(narrow)
         self.db = db_manager
         self.curriculum = curriculum_service
         self.settings = settings_manager
@@ -446,7 +457,7 @@ class ChordTrainerService(QObject):
         # Only while the current exercise is a pedal drill; '' hides the pedal lane.
         return self._exercise.pedal_type if self.isActive else ""
 
-    @Property(str, notify=lessonStateChanged)
+    @Property(str, notify=exerciseChanged)
     def exerciseName(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercise_name
 
@@ -454,11 +465,11 @@ class ChordTrainerService(QObject):
     def isPausedForSpeech(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state == LessonState.AI_SPEAKING
 
-    @Property(int, notify=lessonStateChanged)
+    @Property(int, notify=lessonProgressChanged)
     def lessonProgress(self) -> int:  # type: ignore[reportRedeclaration]
         return self._lesson_progress
 
-    @Property(int, notify=lessonStateChanged)
+    @Property(int, notify=lessonProgressChanged)
     def lessonTotal(self) -> int:  # type: ignore[reportRedeclaration]
         return self._lesson_total
 
@@ -467,7 +478,7 @@ class ChordTrainerService(QObject):
         """{title, body} of the theory card on screen, or {} when there is none."""
         return dict(self._concept_card)
 
-    @Property(list, notify=lessonStateChanged)
+    @Property(list, notify=lessonProgressChanged)
     def lessonBlocks(self) -> list:  # type: ignore[reportRedeclaration]
         return self._lesson_blocks
 
@@ -479,7 +490,7 @@ class ChordTrainerService(QObject):
     def isWaitingToBegin(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._state == LessonState.WAITING_TO_BEGIN
 
-    @Property(str, notify=lessonStateChanged)
+    @Property(str, notify=exerciseChanged)
     def currentHand(self):  # type: ignore[reportRedeclaration]
         return self._current_hand
 
@@ -498,7 +509,7 @@ class ChordTrainerService(QObject):
         """
         return self._coach_needed
 
-    @Property(str, notify=lessonStateChanged)
+    @Property(str, notify=exerciseChanged)
     def exerciseType(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercise_type
 
@@ -514,11 +525,11 @@ class ChordTrainerService(QObject):
     def isWaitingForUserContinue(self) -> bool:  # type: ignore[reportRedeclaration]
         return self._circle.waiting_for_continue
 
-    @Property(float, notify=lessonStateChanged)
+    @Property(float, notify=holdProgressChanged)
     def holdProgress(self) -> float:  # type: ignore[reportRedeclaration]
         return self._hold_progress
 
-    @Property(int, notify=lessonStateChanged)
+    @Property(int, notify=exerciseChanged)
     def requiredHoldMs(self) -> int:  # type: ignore[reportRedeclaration]
         return self._required_hold_ms
 
@@ -538,7 +549,7 @@ class ChordTrainerService(QObject):
     def targetFormulaText(self) -> str:  # type: ignore[reportRedeclaration]
         return self._target_formula_text
 
-    @Property(list, notify=lessonStateChanged)
+    @Property(list, notify=struggledItemsChanged)
     def struggledItems(self):  # type: ignore[reportRedeclaration]
         """List of items where user performance was below threshold."""
         return self._struggled_items
@@ -548,7 +559,7 @@ class ChordTrainerService(QObject):
     def pentascaleBeatCount(self) -> int:  # type: ignore[reportRedeclaration]
         return self.metronome.beatCount if self.metronome else 0
 
-    @Property(list, notify=lessonStateChanged)
+    @Property(list, notify=exerciseChanged)
     def progressionNumerals(self) -> list:  # type: ignore[reportRedeclaration]
         return self._exercises["progression"].numerals
 
@@ -560,7 +571,7 @@ class ChordTrainerService(QObject):
     def scaleName(self) -> str:  # type: ignore[reportRedeclaration]
         return self._exercises["pentascale"].scale_name
 
-    @Property(bool, notify=lessonStateChanged)
+    @Property(bool, notify=mistakeChanged)
     def mistakeActive(self) -> bool:  # type: ignore[reportRedeclaration]
         """Determines if the student is currently holding any notes that are NOT in the target set."""
         if not self.isActive or self._is_lesson_complete or len(self._active_pitches) == 0:
@@ -1618,7 +1629,7 @@ class ChordTrainerService(QObject):
             return
 
         self._check_input()
-        self.lessonStateChanged.emit()
+        self.mistakeChanged.emit()
 
     def _check_input(self):
         """Checks the held keys against the current exercise."""
@@ -1747,7 +1758,7 @@ class ChordTrainerService(QObject):
                 self._hold_progress = 0.0
                 self._hold_tick_timer.stop()
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged")
-                self.lessonStateChanged.emit() # update progress bar to 0
+                self.holdProgressChanged.emit() # progress bar back to 0
 
     def _on_hold_tick(self):
         """Timer callback to update the visual hold progress bar"""
@@ -1763,8 +1774,7 @@ class ChordTrainerService(QObject):
             self._complete_chord()
         else:
             self._hold_progress = elapsed / self._required_hold_ms
-        print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting lessonStateChanged (progress bar)")
-        self.lessonStateChanged.emit() # update progress bar
+        self.holdProgressChanged.emit()
 
     def _complete_chord(self):
         latency_ms = (time.time() - self._prompt_time) * 1000.0

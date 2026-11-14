@@ -92,7 +92,11 @@ Hardware C++ extension (chordcoach_hw) — sub-ms MIDI I/O
 | `src/app.py` | Entry point; initializes all services and AppState QObject |
 | `src/core/bootstrap.py` | Path resolution, logging setup, frozen binary support |
 | `src/logic/coordinators/app_coordinator.py` | Orchestrates AI ↔ services ↔ hardware |
-| `src/logic/services/chord_trainer.py` | Lesson state machine (~133KB, largest file) |
+| `src/logic/services/chord_trainer.py` | Lesson state machine and the QML surface for practice: current target, held keys, holds, coach pauses |
+| `src/logic/services/exercises/` | One handler per exercise type (setup, input check, what follows success) |
+| `src/logic/services/song_session.py` | The piece being played: steps, practice prefs, rhythm mode, scoring |
+| `src/logic/services/circle_tutorial.py` | Scripted Circle of Fifths tutorial and V→I drill |
+| `src/logic/services/lesson_sequencer.py` | Chooses each lesson's exercises from the curriculum plan |
 | `src/logic/services/gemini_service.py` | Gemini WebSocket client with auto-reconnect |
 | `src/logic/services/database_manager.py` | SQLite schema + ORM for user sessions/progress |
 | `src/logic/services/music21_service.py` | Music theory analysis wrapper |
