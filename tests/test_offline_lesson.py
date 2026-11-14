@@ -74,7 +74,7 @@ def make_trainer(qapp, tmp_path, monkeypatch):
     yield make
     for t in made:
         t.stop_session()
-        t._rhythm_engine.stop()
+        t._song.engine.stop()
 
 
 def press(trainer, *pitches):

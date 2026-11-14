@@ -117,7 +117,7 @@ def trainer(qapp):
     t.set_playback_service(StubPlayback())
     t.rec = Recorder(t)
     yield t
-    t._rhythm_engine.stop()
+    t._song.engine.stop()
     t._hold_tick_timer.stop()
 
 
@@ -354,7 +354,7 @@ def test_song_tolerates_a_note_held_over_from_the_last_step(trainer):
     release(trainer, C4)
     press(trainer, D4)  # E4 still down
     assert not trainer.mistakeActive
-    assert trainer._song_wrong_notes == 0
+    assert trainer._song.wrong_notes == 0
     assert trainer.targetPitches == [D4]
 
     release(trainer, E4)
@@ -365,7 +365,7 @@ def test_song_counts_wrong_notes(trainer):
     trainer.start_song("user::three-steps")
     press(trainer, B4)
     assert trainer.mistakeActive
-    assert trainer._song_wrong_notes == 1
+    assert trainer._song.wrong_notes == 1
     assert trainer.targetPitches == [C4, E4]
 
 

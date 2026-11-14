@@ -374,4 +374,4 @@ def test_trainer_recovers_from_a_bad_song_application_exercise(service, tmp_user
     })
 
     assert trainer._state != LessonState.IDLE
-    assert trainer._song_title == "Real Song"
+    assert trainer._song.title == "Real Song"

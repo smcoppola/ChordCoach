@@ -439,7 +439,7 @@ def test_duplicate_rows_do_not_duplicate_notes(service, song):
 def test_editing_the_song_in_play_is_refused(service, song):
     class _Trainer:
         isActive = True
-        _song_id = song
+        songId = song
 
     service.set_chord_trainer(_Trainer())
     before = _stored(service, song)["steps"]
@@ -453,11 +453,33 @@ def test_editing_the_song_in_play_is_refused(service, song):
 def test_a_different_song_in_play_does_not_block_editing(service, song):
     class _Trainer:
         isActive = True
-        _song_id = "user::other-9"
+        songId = "user::other-9"
 
     service.set_chord_trainer(_Trainer())
 
     assert service.save_user_song_notes(song, service.get_user_song_notes(song)) == ""
+
+
+def test_the_real_trainer_blocks_editing_and_deleting_its_song(qapp, service, song):
+    # The fakes above stand in for the trainer's public surface; this pins
+    # that the real one exposes the song in play the way the guards read it.
+    from logic.services.chord_trainer import ChordTrainerService
+
+    service._load_user_songs()  # delete_user_song looks the song up in the library
+    trainer = ChordTrainerService(None, None, None, service)
+    service.set_chord_trainer(trainer)
+    try:
+        trainer.start_song(song + "::L2")  # a difficulty variant still counts
+        assert trainer.isActive
+
+        before = _stored(service, song)["steps"]
+        msg = service.save_user_song_notes(song, service.get_user_song_notes(song))
+        assert "Stop practising" in msg
+        assert _stored(service, song)["steps"] == before
+        assert "Stop practising" in service.delete_user_song(song)
+    finally:
+        trainer.stop_session()
+        trainer._song.engine.stop()
 
 
 def test_difficulty_level_suffix_resolves_to_the_base_song(service, song):

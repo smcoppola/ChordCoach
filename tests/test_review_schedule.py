@@ -135,7 +135,7 @@ def trainer(qapp, db):
     t = ChordTrainerService(db, None, None, music21)
     yield t
     t.stop_session()
-    t._rhythm_engine.stop()
+    t._song.engine.stop()
 
 
 def _play(trainer, exercise):
@@ -190,19 +190,19 @@ def test_ear_training_and_scales_are_not_scheduled(trainer, db):
 
 
 def test_a_finished_song_reviews_the_song_not_its_difficulty_variant(trainer, db):
-    trainer._song_id = "user::tune::L2"
-    trainer._record_song_completion(2.0, {"mode": "self_paced", "wrongNotes": 1})
+    trainer._song.song_id = "user::tune::L2"
+    trainer._song.record_completion(2.0, {"mode": "self_paced", "wrongNotes": 1})
     assert _row(db, "song", "user::tune")[4] == 4
     assert _row(db, "song", "user::tune::L2") is None
 
 
 def test_corpus_tune_indexes_are_kept(trainer):
-    assert trainer._review_song_id("essenFolksong/erk5.abc::7") == "essenFolksong/erk5.abc::7"
+    assert trainer._song.review_song_id("essenFolksong/erk5.abc::7") == "essenFolksong/erk5.abc::7"
 
 
 def test_a_loop_only_run_is_not_a_review(trainer, db):
-    trainer._song_id = "user::tune"
-    trainer._record_song_completion(1.0, {"mode": "rhythm", "accuracy": 0.9, "loopOnly": True})
+    trainer._song.song_id = "user::tune"
+    trainer._song.record_completion(1.0, {"mode": "rhythm", "accuracy": 0.9, "loopOnly": True})
     assert _row(db, "song", "user::tune") is None
 
 

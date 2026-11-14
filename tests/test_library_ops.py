@@ -49,7 +49,7 @@ class _FakeTrainer:
     """Stand-in for ChordTrainerService's active-song state."""
 
     def __init__(self, song_id="", active=False):
-        self._song_id = song_id
+        self.songId = song_id
         self.isActive = active
 
 

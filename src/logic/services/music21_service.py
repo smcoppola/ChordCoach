@@ -1250,7 +1250,7 @@ class Music21Service(QObject):
     # sequentially per hand — two groups sharing an offset get concatenated and
     # the second one's offset is discarded. Steps carry per-note `durations[]`
     # and `hands[]`, so beat, duration and hand are all natively expressible,
-    # and steps are what _setup_song_target renders AND what it hands to
+    # and steps are what SongSession.setup renders AND what it hands to
     # PlaybackService.load(), so one edit fixes notation and playback together.
 
     # Per-note parallel arrays that must survive an edit round trip.
@@ -1409,7 +1409,7 @@ class Music21Service(QObject):
         trainer = self._chord_trainer
         if trainer is not None:
             try:
-                if bool(trainer.isActive) and self._base_song_id(str(getattr(trainer, "_song_id", "") or "")) == base_id:
+                if bool(trainer.isActive) and self._base_song_id(str(trainer.songId or "")) == base_id:
                     return "Stop practising this song before editing it."
             except Exception as e:
                 print(f"Music21Service: Could not check the active song: {e}")
@@ -1697,7 +1697,7 @@ class Music21Service(QObject):
         trainer = self._chord_trainer
         if trainer is not None:
             try:
-                if bool(trainer.isActive) and self._base_song_id(str(getattr(trainer, "_song_id", "") or "")) == base_id:
+                if bool(trainer.isActive) and self._base_song_id(str(trainer.songId or "")) == base_id:
                     return "Stop practising this song before deleting it."
             except Exception as e:
                 print(f"Music21Service: Could not check the active song: {e}")

@@ -6,14 +6,13 @@ from typing import Set, List, Dict, Tuple, Optional
 from datetime import datetime
 from enum import Enum, auto
 from PySide6.QtCore import QObject, Signal, Slot, Property, QTimer, Qt # type: ignore
-from logic.services.rhythm_engine import RhythmEngine # type: ignore
 from logic.services.lesson_sequencer import LessonSequencer, review_exercises # type: ignore
 from logic.services import coach_prompts # type: ignore
-from logic.utils.sm2 import quality_for_chord, quality_for_song # type: ignore
+from logic.utils.sm2 import quality_for_chord # type: ignore
 from logic.utils import chord_types # type: ignore
 from logic.services.circle_tutorial import CircleTutorial, DominantMotionDrill # type: ignore
+from logic.services.song_session import SongSession # type: ignore
 import music21
-import re
 
 class LessonState(Enum):
     IDLE = auto()               # Not in a lesson
@@ -128,32 +127,10 @@ class ChordTrainerService(QObject):
         self._last_anchor_time: float = 0.0
         self._scrolling_notes: list = []
         self._scroll_bpm: int = 0
-        self._song_title: str = ""
-        self._song_key: str = ""
-        self._song_key_sharps: int = 0
-        self._song_composer: str = ""
-        self._song_completed: bool = False
-        self._song_end_beat: float = 0.0
 
-        # ── Phase 4: dual pacing (self-paced ⟷ rhythm) ──
-        # Self-paced is the permanent default: a song the user has never played
-        # always starts here, and its code path is untouched by rhythm mode.
-        self._song_id: str = ""
-        self._pacing_mode: str = "self_paced"   # "self_paced" | "rhythm"
-        self._practice_hands: str = "both"      # "both" | "right" | "left"
-        self._song_note_states: List[str] = []  # aligned with _scrolling_notes
-        self._song_tempo_map: List[Dict] = []
-        self._song_barlines: List[float] = []
-        self._song_wrong_notes: int = 0
-        self._song_result: Dict = {}
-        self._rhythm_sn_index: List[int] = []   # engine note index → scrollingNotes index
-        self._rhythm_loop_only: bool = False
-
-        self._rhythm_engine = RhythmEngine(self)
-        self._rhythm_engine.beatChanged.connect(self._on_rhythm_beat)
-        self._rhythm_engine.noteStateChanged.connect(self._on_rhythm_note_state)
-        self._rhythm_engine.metronomeTick.connect(self._on_rhythm_metronome_tick)
-        self._rhythm_engine.finished.connect(self._on_rhythm_finished)
+        # The piece being played: its steps, pacing mode, rhythm engine and
+        # last result (see song_session.py).
+        self._song = SongSession(self)
 
         # Dashboard and Performance Review
         self._struggled_items: List[Dict] = []
@@ -190,8 +167,6 @@ class ChordTrainerService(QObject):
         self._exercise_struggled = False       # anything went wrong during the current exercise
         self._struggle_tip_given = False
         self._concept_card: Dict[str, str] = {}
-        self._song_steps: List[Dict] = []
-        self._song_index = 0
         # The chord the current target is, for the review schedule — "C Major",
         # never a display name like "C Major (1st inv)" or "Listen to the chord".
         self._review_chord = ""
@@ -339,32 +314,6 @@ class ChordTrainerService(QObject):
         bpm = float(self.metronome.bpm) if self.metronome else 0.0
         self._emit_scroll_anchor(pos, bpm / 60.0, active=bpm > 0)
 
-    def _on_song_finished(self):
-        """Called 1.5 s after the last song note is played."""
-        # Self-paced completion: a small fixed gain, docked per wrong note.
-        # (Rhythm mode records from _on_rhythm_finished instead — it never
-        # reaches _complete_chord, which is what schedules this callback.)
-        if self._pacing_mode == "self_paced":
-            mastery = max(1.0, 3.0 - float(self._song_wrong_notes))
-            self._record_song_completion(
-                mastery_gained=mastery,
-                result={
-                    "mode": "self_paced",
-                    "wrongNotes": self._song_wrong_notes,
-                    "masteryGained": mastery,
-                },
-            )
-
-        if not self._is_lesson_mode:
-            # Free-play song — just return to the home screen
-            print(f"ChordTrainer: Song '{self._song_title}' complete (free-play). Returning to home.")
-            self.stop_session()
-            return
-
-        # Lesson song — the coach acknowledges it while introducing what comes next.
-        self._pending_coach_note = coach_prompts.note_song_finished(self._song_title or "the piece")
-        self._next_chord()
-
     def _set_state(self, new_state: LessonState):
         if self._state == new_state:
             return
@@ -442,39 +391,39 @@ class ChordTrainerService(QObject):
 
     @Property(str, notify=songTitleChanged)
     def songTitle(self) -> str:  # type: ignore[reportRedeclaration]
-        return self._song_title
+        return self._song.title
 
     @Property(str, notify=songKeyChanged)
     def songKey(self) -> str:  # type: ignore[reportRedeclaration]
-        return self._song_key
+        return self._song.key
 
     @Property(int, notify=songKeySharpsChanged)
     def songKeySharps(self) -> int:  # type: ignore[reportRedeclaration]
-        return self._song_key_sharps
+        return self._song.key_sharps
 
     @Property(str, notify=songComposerChanged)
     def songComposer(self) -> str:  # type: ignore[reportRedeclaration]
-        return self._song_composer
+        return self._song.composer
 
     @Property(bool, notify=songCompletedChanged)
     def isSongCompleted(self) -> bool:  # type: ignore[reportRedeclaration]
-        return self._song_completed
+        return self._song.completed
 
     # ── Phase 4: dual pacing ────────────────────────────────────────
 
     @Property(str, notify=pacingModeChanged)
     def pacingMode(self) -> str:  # type: ignore[reportRedeclaration]
         """"self_paced" (the default for every unplayed song) or "rhythm"."""
-        return self._pacing_mode
+        return self._song.pacing_mode
 
     @Property(bool, notify=pacingModeChanged)
     def isRhythmMode(self) -> bool:  # type: ignore[reportRedeclaration]
-        return self._pacing_mode == "rhythm"
+        return self._song.pacing_mode == "rhythm"
 
     @Property(str, notify=practiceHandsChanged)
     def practiceHands(self) -> str:  # type: ignore[reportRedeclaration]
         """Which hand the student is playing: "both", "right" or "left"."""
-        return self._practice_hands
+        return self._song.practice_hands
 
     @Property(list, notify=songNoteStatesChanged)
     def songNoteStates(self) -> list:  # type: ignore[reportRedeclaration]
@@ -487,16 +436,16 @@ class ChordTrainerService(QObject):
         Empty in self-paced mode, which is what keeps the renderer's per-note
         colouring off on the protected path.
         """
-        return self._song_note_states
+        return self._song.note_states
 
     @Property(dict, notify=songResultChanged)
     def songResult(self) -> dict:  # type: ignore[reportRedeclaration]
         """Summary of the last completed run, for the completion overlay."""
-        return self._song_result
+        return self._song.result
 
     @Property(str, notify=songTitleChanged)
     def songId(self) -> str:  # type: ignore[reportRedeclaration]
-        return self._song_id
+        return self._song.song_id
 
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:  # type: ignore[reportRedeclaration]
@@ -884,15 +833,15 @@ class ChordTrainerService(QObject):
             self.metronome.stop()
 
         # A song change fully resets the rhythm engine before anything reloads.
-        self._rhythm_engine.stop()
+        self._song.engine.stop()
 
-        self._song_id = piece_name
-        self._load_song_practice_prefs(piece_name)
+        self._song.song_id = piece_name
+        self._song.load_prefs(piece_name)
 
 
         self._target_chord_name = ""
         self._target_intervals.clear()
-        # Rebind rather than clear in place: in song mode _advance_song_chord
+        # Rebind rather than clear in place: in song mode SongSession.advance_step
         # aliases the current step's own pitches/hands lists, so mutating these
         # would empty the loaded (and cached) song data itself.
         self._target_pitches = []
@@ -1009,8 +958,8 @@ class ChordTrainerService(QObject):
         """Apply a validated exercise: set up the target, then update progress and blocks."""
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Applying exercise to UI: {exercise_data.get('exercise_name', 'Unknown')}")
         # Clear song-complete state so the overlay dismisses
-        if self._song_completed:
-            self._song_completed = False
+        if self._song.completed:
+            self._song.completed = False
             self._ignore_midi_until = 0.0
             self.songCompletedChanged.emit()
 
@@ -1023,7 +972,7 @@ class ChordTrainerService(QObject):
         self._current_step_data = exercise_data.copy()
 
         self._apply_step(exercise_data)
-        if exercise_data.get("exercise_type") == "song_application" and not self._song_steps:
+        if exercise_data.get("exercise_type") == "song_application" and not self._song.steps:
             return False  # the piece did not load
 
         self.db.record_exercise_intro(exercise_data.get("exercise_type", "chord"))
@@ -1123,7 +1072,7 @@ class ChordTrainerService(QObject):
 
         self._target_chord_name = ""
         self._target_intervals.clear()
-        # Rebind rather than clear in place: in song mode _advance_song_chord
+        # Rebind rather than clear in place: in song mode SongSession.advance_step
         # aliases the current step's own pitches/hands lists, so mutating these
         # would empty the loaded (and cached) song data itself.
         self._target_pitches = []
@@ -1237,9 +1186,9 @@ class ChordTrainerService(QObject):
                 self.metronome.stop()
 
             # Leaving a session must fully reset rhythm state.
-            self._rhythm_engine.stop()
-            self._song_note_states = []
-            self._rhythm_sn_index = []
+            self._song.engine.stop()
+            self._song.note_states = []
+            self._song.sn_index = []
             self.songNoteStatesChanged.emit()
 
 
@@ -1248,10 +1197,10 @@ class ChordTrainerService(QObject):
             self._target_pitches = []
             self._target_hands = []
             self._pedal_type = ""
-            self._song_title = ""
-            self._song_composer = ""
-            self._song_key = ""
-            self._song_completed = False
+            self._song.title = ""
+            self._song.composer = ""
+            self._song.key = ""
+            self._song.completed = False
             self.songTitleChanged.emit()
             self.songComposerChanged.emit()
             self.songKeyChanged.emit()
@@ -1285,7 +1234,7 @@ class ChordTrainerService(QObject):
             self._apply_random_step()
 
     def _apply_step(self, chord_data):
-        self._song_completed = False
+        self._song.completed = False
         self.songCompletedChanged.emit()
         self._required_hold_ms = int(chord_data.get("hold_ms", 0)) # type: ignore
         exercise_type = str(chord_data.get("exercise_type", "chord")) # type: ignore
@@ -1322,7 +1271,7 @@ class ChordTrainerService(QObject):
         elif exercise_type == "steady_pulse":
             self._setup_steady_pulse_target(chord_data)
         elif exercise_type == "song_application":
-            self._setup_song_target(chord_data)
+            self._song.setup(chord_data)
         elif exercise_type == "theory_concept":
             self._setup_concept_card(chord_data)
         else:
@@ -1538,578 +1487,36 @@ class ChordTrainerService(QObject):
         # Set up the first chord in the progression
         self._advance_progression_chord()
 
-    def _setup_song_target(self, chord_data):
-        """Sets up a Music21 song playback exercise."""
-        piece_name = chord_data.get("piece_name", "bach/bwv1.6.mxl")
-
-        # Songs can also arrive from the AI coach, which never goes through
-        # start_song. Re-read the practice preferences whenever the piece
-        # changes so a previous song's rhythm mode is never inherited.
-        if piece_name != self._song_id:
-            self._song_id = piece_name
-            self._load_song_practice_prefs(piece_name)
-
-
-        # Load from the new service
-        assert self.music21 is not None, "Music21Service is not initialized!"
-        song_data = self.music21.load_song_as_steps(piece_name)
-        self._song_steps = song_data.get("steps", [])
-        
-        if not self._song_steps:
-            print(f"ChordTrainer: Failed to load {piece_name}")
-            self.statusMessageRequested.emit("error", f"Failed to load piece: {piece_name}")
-            
-            # Reset to IDLE so the user can try another song
-            self._exercise_type = "chord"
-            self._song_title = ""
-            self._song_key = ""
-            self._song_key_sharps = 0
-            self.songTitleChanged.emit()
-            self.songKeyChanged.emit()
-            self.songKeySharpsChanged.emit()
-            # In a lesson the sequencer moves on to another exercise; dropping
-            # to IDLE would flash the dashboard between the two.
-            if not self._is_lesson_mode:
-                self._set_state(LessonState.IDLE)
-            return
-            
-        self._exercise_type = "song_application"
-        self._song_title = song_data.get("title", "Unknown Piece")
-        self._song_key = song_data.get("key", "Unknown Key")
-        self._song_key_sharps = song_data.get("key_sharps", 0)
-        self._song_composer = song_data.get("composer", "Unknown Composer")
-        self.songTitleChanged.emit()
-        self.songKeyChanged.emit()
-        self.songKeySharpsChanged.emit()
-        self.songComposerChanged.emit()
-
-        self._song_tempo_map = song_data.get("tempo_map", []) or []
-
-        if self._playback_service:
-            self._playback_service.load(
-                steps=self._song_steps,
-                tempo_map=self._song_tempo_map,
-                time_signatures=song_data.get("time_signatures", []),
-                pedal_events=song_data.get("pedal_events", [])
-            )
-
-        self._song_index = 0
-        self._required_hold_ms = 0
-        self.lessonStateChanged.emit()
-
-        # Build scrolling notes for the whole song
-        sn = []
-        for step in self._song_steps:
-            offset = step['offset']
-            duration = step['duration']
-            
-            # 1. Rests
-            if 'rests' in step:
-                for r in step['rests']:
-                    sn.append({
-                        "is_rest": True,
-                        "duration_beats": float(r['duration']),
-                        "start_beat": float(offset),
-                        "hand": "R" if r['hand'] == "right" else "L"
-                    })
-            
-            # 2. Notes
-            if 'pitches' in step:
-                pitches = step['pitches']
-                hands = step['hands']
-                fingers = step.get('fingers', [1] * len(pitches))
-                ties = step.get('ties', [None] * len(pitches))
-                beams = step.get('beams', [None] * len(pitches))
-                spellings = step.get('spellings', [None] * len(pitches))
-                durations = step.get('durations', [duration] * len(pitches))
-                tuplets = step.get('tuplets', [None] * len(pitches))
-                
-                for i, p in enumerate(pitches):
-                    hand_tag = hands[i] if i < len(hands) else "right"
-                    f_num = fingers[i] if i < len(fingers) else 1
-                    t_val = ties[i] if i < len(ties) else None
-                    b_val = beams[i] if i < len(beams) else None
-                    s_val = spellings[i] if i < len(spellings) else None
-                    d_val = durations[i] if i < len(durations) else duration
-                    tuplet_val = tuplets[i] if i < len(tuplets) else None
-                    
-                    sn.append({
-                        "pitch": p,
-                        "spelling": s_val,
-                        "hand": "R" if hand_tag == "right" else "L",
-                        "finger": f_num,
-                        "tie": t_val,
-                        "beam": b_val,
-                        "start_beat": float(offset),
-                        "duration_beats": float(d_val),
-                        "tuplet": tuplet_val
-                    })
-
-        # 3. Time Signatures
-        time_sigs = song_data.get("time_signatures", [])
-        for ts in time_sigs:
-            sn.append({
-                "is_time_sig": True,
-                "start_beat": float(ts.get("offset", 0.0)),
-                "numerator": int(ts.get("numerator", 4)),
-                "denominator": int(ts.get("denominator", 4))
-            })
-
-        # 4. Dynamics
-        dynamics = song_data.get("dynamics", [])
-        for d in dynamics:
-            sn.append({
-                "is_dynamic": True,
-                "start_beat": float(d.get("offset", 0.0)),
-                "mark": str(d.get("mark", "p")),
-                "hand": "R" if d.get("hand") == "right" else "L"
-            })
-
-        # Compute song end beat for barlines fallback
-        if self._song_steps:
-            last = max(self._song_steps, key=lambda s: float(s['offset']) + float(s['duration']))
-            self._song_end_beat = float(last['offset']) + float(last['duration'])
-        else:
-            self._song_end_beat = 0.0
-
-        # 5. Barlines
-        barlines = song_data.get("barlines", [])
-        if not barlines and time_sigs:
-            from logic.utils.step_schema import compute_barlines
-            barlines = compute_barlines(time_sigs, self._song_end_beat)
-        self._song_barlines = sorted(float(b) for b in barlines)
-        for b in barlines:
-            sn.append({
-                "is_barline": True,
-                "start_beat": float(b),
-                "duration_beats": 0.0
-            })
-
-        # Ensure purely deterministic timeline ordering
-        sn.sort(key=lambda x: (x.get("start_beat", 0.0), not bool(x.get("is_time_sig", False)), not bool(x.get("is_dynamic", False)), not bool(x.get("is_barline", False)), x.get("pitch", 0)))
-
-        self._scrolling_notes = sn
-        self.scrollingNotesChanged.emit()
-
-        # Compute the beat position at which all notation has finished
-        if self._song_steps:
-            last = max(self._song_steps, key=lambda s: float(s['offset']) + float(s['duration']))
-            self._song_end_beat = float(last['offset']) + float(last['duration'])
-        else:
-            self._song_end_beat = 0.0
-
-        self._song_completed = False
-        self.songCompletedChanged.emit()
-
-        self._set_stepped_scroll_beat(0.0)
-
-        # User-driven pacing (no metronome)
-        self._scroll_bpm = 0
-        self.scrollBpmChanged.emit()
-
-        # Target chord name gives context
-        self._target_chord_name = f"Song: {self._song_title}"
-        self.targetChordChanged.emit(self._target_chord_name)
-
-        # ── Phase 4: pacing fork ────────────────────────────────────
-        # Everything above this point is shared by both modes. Below, the two
-        # paths are mutually exclusive: rhythm mode starts the engine and never
-        # touches _advance_song_chord / _check_chord, and self-paced mode runs
-        # exactly as it always has with an empty songNoteStates array.
-        self._song_wrong_notes = 0
-        self._song_result = {}
-        self.songResultChanged.emit()
-
-        # Steps the student is responsible for playing, after the hand filter.
-        # PlaybackService keeps the unfiltered list it was handed above, so the
-        # app can still play the other hand for a duet.
-        self._song_steps = self._filter_steps_for_practice_hands(self._song_steps)
-
-        # The filter can empty the list outright — a hand that never plays, or a
-        # section that is all rests. Say so instead of leaving the student in
-        # front of a sheet that will never accept a note.
-        if not self._song_steps:
-            print(f"ChordTrainer: '{self._song_title}' has nothing to play for hands='{self._practice_hands}'")
-            self.statusMessageRequested.emit(
-                "info", "Nothing to play here — try the other hand or 'both'.")
-            return
-
-        if self._pacing_mode == "rhythm":
-            self._start_rhythm_run()
-        else:
-            self._song_note_states = []
-            self._rhythm_sn_index = []
-            self.songNoteStatesChanged.emit()
-            # Set up the first step
-            self._advance_song_chord()
-
-    # ══════════════════════════════════════════════════════════════════
-    # Phase 4 — Dual pacing: self-paced (default) ⟷ rhythm
-    # ══════════════════════════════════════════════════════════════════
-
-    # ── Preference persistence ──────────────────────────────────────
-
-    def _is_user_song(self, song_id: str) -> bool:
-        return bool(song_id) and song_id.startswith("user::")
-
-    def _load_song_practice_prefs(self, song_id: str):
-        """
-        Restores this song's pacing mode and practice hands.
-
-        A song with no stored preference — i.e. one that has never been played —
-        always comes back as self-paced. That is a product guarantee, not a
-        fallback: rhythm mode is opt-in, per song, forever.
-        """
-        mode, hands = "self_paced", "both"
-        try:
-            if self._is_user_song(song_id) and self.music21:
-                mode = self.music21.get_user_song_pref(song_id, "practice_mode", "self_paced")
-                hands = self.music21.get_user_song_pref(song_id, "practice_hands", "both")
-            elif song_id and self.db:
-                mode = self.db.get_app_setting(f"practice_mode::{song_id}", "self_paced")
-                hands = self.db.get_app_setting(f"practice_hands::{song_id}", "both")
-        except Exception as e:
-            print(f"ChordTrainer: Could not read practice prefs for '{song_id}': {e}")
-
-        self._pacing_mode = mode if mode in ("self_paced", "rhythm") else "self_paced"
-        self._practice_hands = hands if hands in ("both", "right", "left") else "both"
-        self.pacingModeChanged.emit()
-        self.practiceHandsChanged.emit()
-        print(f"ChordTrainer: '{song_id}' practice mode='{self._pacing_mode}', hands='{self._practice_hands}'")
-
-    def _save_song_practice_pref(self, key: str, value: str):
-        if not self._song_id:
-            return
-        try:
-            if self._is_user_song(self._song_id) and self.music21:
-                self.music21.set_user_song_pref(self._song_id, key, value)
-            elif self.db:
-                self.db.set_app_setting(f"{key}::{self._song_id}", value)
-        except Exception as e:
-            print(f"ChordTrainer: Could not save practice pref '{key}': {e}")
-
-    # ── Hand filtering ──────────────────────────────────────────────
-
-    # Per-pitch parallel arrays carried on every v2 step; all must be sliced
-    # together so indices stay aligned after a hand filter.
-    _PER_PITCH_STEP_KEYS = ("pitches", "hands", "fingers", "spellings", "ties",
-                            "beams", "durations", "tuplets", "velocities")
-
-    def _filter_steps_for_practice_hands(self, steps):
-        """
-        Narrows each step to the hand the student is practising and drops every
-        step that leaves the student nothing to play.
-
-        Steps go empty two ways. A step whose notes all belong to the other hand
-        is how "LH-only steps are auto-skipped" falls out for free. A step that
-        never had pitches at all is a rest-only offset: both song loaders emit
-        one wherever a rest starts with no note sounding under it, and the
-        self-paced advance would otherwise park on it forever waiting for a
-        chord the keyboard cannot produce.
-
-        Dropping both here rather than in _advance_song_chord keeps _song_index
-        arithmetic — including end-of-song detection — over a list in which
-        every entry is playable. PlaybackService and _song_end_beat are
-        computed upstream from the unfiltered steps, so the accompaniment and
-        the notation still show the silence.
-        """
-        want = self._practice_hands if self._practice_hands in ("right", "left") else None
-
-        out = []
-        for step in steps or []:
-            pitches = step.get("pitches") or []
-            if not pitches:
-                continue
-
-            if want is None:
-                out.append(step)
-                continue
-
-            hands = step.get("hands", [])
-            keep = [i for i in range(len(pitches))
-                    if (hands[i] if i < len(hands) else "right") == want]
-            if not keep:
-                continue
-
-            new_step = dict(step)
-            for key in self._PER_PITCH_STEP_KEYS:
-                vals = step.get(key)
-                if isinstance(vals, list) and len(vals) == len(pitches):
-                    new_step[key] = [vals[i] for i in keep]
-            out.append(new_step)
-        return out
-
-    # ── Rhythm mode ─────────────────────────────────────────────────
-
-    def _build_rhythm_notes(self, scrolling_notes):
-        """
-        Builds the engine's note list from the already-sorted `scrolling_notes`
-        array, one entry per pitch, and records the index map back into it.
-
-        Deriving both from the same sorted array is what keeps `songNoteStates`
-        aligned index-for-index with `scrollingNotes`; Phase 2's `orig_i` then
-        carries those indices correctly through the renderer's culling.
-        """
-        notes = []
-        sn_index = []
-        want = self._practice_hands
-        hand_tag = {"right": "R", "left": "L"}.get(want)
-
-        for i, entry in enumerate(scrolling_notes):
-            if "pitch" not in entry or entry.get("is_rest"):
-                continue
-            # Notes of the hand the app is covering are shown but not scored.
-            if hand_tag and entry.get("hand") != hand_tag:
-                continue
-
-            notes.append({
-                "pitch": int(entry["pitch"]),
-                "start_beat": float(entry.get("start_beat", 0.0)),
-                "duration_beats": float(entry.get("duration_beats", 1.0)),
-                "hand": "right" if entry.get("hand") == "R" else "left",
-            })
-            sn_index.append(i)
-
-        self._rhythm_sn_index = sn_index
-        # Pseudo-items (barlines, rests, time sigs, dynamics) and unscored notes
-        # keep "", which the renderer treats as a no-op.
-        self._song_note_states = [""] * len(scrolling_notes)
-        for idx in sn_index:
-            self._song_note_states[idx] = "pending"
-        self.songNoteStatesChanged.emit()
-
-        return notes
-
-    def _rhythm_tempo(self) -> float:
-        """The piece's starting tempo, scaled by the user's playback tempo slider."""
-        from logic.services.playback_service import bpm_at
-        bpm = bpm_at(self._song_tempo_map, 0.0)
-        if self._playback_service:
-            bpm *= float(self._playback_service.tempoScale)
-        return max(20.0, bpm)
-
-    def _start_rhythm_run(self):
-        """Loads the engine with the current song and starts the 4-beat count-in."""
-        notes = self._build_rhythm_notes(self._scrolling_notes)
-
-        self._rhythm_engine.load(notes, self._rhythm_tempo(), count_in_beats=4)
-
-        # Respect an A/B loop if one is set: the run scores only that region and
-        # the mastery award is halved because it is not a full-piece play.
-        self._rhythm_loop_only = False
-        if self._playback_service:
-            a = float(self._playback_service.loopStartBeat)
-            b = float(self._playback_service.loopEndBeat)
-            if b > a >= 0:
-                self._rhythm_engine.set_loop(a, b)
-                self._rhythm_loop_only = True
-            else:
-                self._rhythm_engine.clear_loop()
-        else:
-            self._rhythm_engine.clear_loop()
-
-        self._scroll_beat = self._rhythm_engine.currentBeat
-        self.scrollBeatChanged.emit(self._scroll_beat)
-        # snap: the run begins at the count-in, which is a jump from wherever
-        # the playhead was parked.
-        self._emit_scroll_anchor(
-            self._scroll_beat, self._rhythm_tempo() / 60.0, active=True, snap=True
-        )
-
-        self._rhythm_engine.start()
-        print(f"ChordTrainer: Rhythm run started — {len(notes)} notes at "
-              f"{self._rhythm_tempo():.0f} BPM, loop_only={self._rhythm_loop_only}")
-
-    def _on_rhythm_beat(self, beat: float):
-        self._scroll_beat = beat
-        self.scrollBeatChanged.emit(beat)
-        self._emit_scroll_anchor(beat, self._rhythm_tempo() / 60.0, active=True)
-
-    def _on_rhythm_note_state(self, index: int, state: str):
-        if 0 <= index < len(self._rhythm_sn_index):
-            sn_i = self._rhythm_sn_index[index]
-            if 0 <= sn_i < len(self._song_note_states):
-                self._song_note_states[sn_i] = state
-                self.songNoteStatesChanged.emit()
-
-    def _on_rhythm_metronome_tick(self, beat_num: int, accent: bool):
-        # Routed straight to the hardware click by AppCoordinator. The generic
-        # `metronomeTick` signal is deliberately not reused: its handler derives
-        # a beat number from pentascale state that means nothing here.
-        self.rhythmCountInTick.emit(beat_num, accent)
-
-    def _on_rhythm_finished(self, accuracy: float, hits: int, misses: int):
-        """Scores the run, banks mastery and raises the completion overlay."""
-        # The clock has stopped, so stop the view extrapolating along it —
-        # otherwise the notation keeps scrolling past the end of the run.
-        self._emit_scroll_anchor(self._scroll_beat, 0.0, active=False, snap=True)
-
-        mastery = (accuracy ** 2) * 10.0
-        if self._rhythm_loop_only:
-            mastery /= 2.0
-
-        self._record_song_completion(
-            mastery_gained=mastery,
-            result={
-                "mode": "rhythm",
-                "accuracy": accuracy,
-                "hits": hits,
-                "misses": misses,
-                "loopOnly": self._rhythm_loop_only,
-                "masteryGained": mastery,
-            },
-        )
-
-        self._song_completed = True
-        self.songCompletedChanged.emit()
-        print(f"ChordTrainer: Rhythm run finished — {hits} hits / {misses} misses "
-              f"({accuracy*100:.0f}%), mastery +{mastery:.2f}")
-
-        # In a lesson the coach still gets its completion report. In free play
-        # the scorecard stays up until the student dismisses it — auto-returning
-        # would snatch away the "practice trouble spots" action.
-        if self._is_lesson_mode:
-            self._ignore_midi_until = time.time() + 99.0
-            QTimer.singleShot(1500, self._on_song_finished)
-
-    def _record_song_completion(self, mastery_gained: float, result: dict):
-        """Writes the play to the songs table and publishes the overlay summary."""
-        result = dict(result)
-        result["title"] = self._song_title
-        result["songId"] = self._song_id
-        self._song_result = result
-        self.songResultChanged.emit()
-
-        if not self._song_id:
-            return
-        try:
-            self.db.record_song_play(
-                filepath=self._song_id,
-                title=self._song_title or self._song_id,
-                mastery_gained=float(mastery_gained),
-            )
-            print(f"ChordTrainer: Recorded play of '{self._song_id}' (+{mastery_gained:.2f} mastery)")
-        except Exception as e:
-            print(f"ChordTrainer: Failed to record song play: {e}")
-
-        # A loop-only run never plays the whole piece, so it is not a review of it.
-        if not result.get("loopOnly"):
-            quality = quality_for_song(str(result.get("mode", "self_paced")),
-                                       int(result.get("wrongNotes", 0) or 0),
-                                       float(result.get("accuracy", 0.0) or 0.0))
-            try:
-                self.db.record_review("song", self._review_song_id(self._song_id), quality)
-            except Exception as e:
-                print(f"ChordTrainer: Could not record review of '{self._song_id}': {e}")
-
-    @staticmethod
-    def _review_song_id(song_id: str) -> str:
-        """The song a play counts for: difficulty variants (`<id>::L2`) review the song itself."""
-        return re.sub(r"::L\d+$", "", song_id)
-
-    # ── QML control surface ─────────────────────────────────────────
+    # ── Song controls (QML) — the work is SongSession's ──────────────
 
     @Slot(str)
     def set_pacing_mode(self, mode: str):
         """Switches between self-paced and rhythm practice for the current song."""
-        if mode not in ("self_paced", "rhythm") or mode == self._pacing_mode:
-            return
-
-        self._pacing_mode = mode
-        self.pacingModeChanged.emit()
-        self._save_song_practice_pref("practice_mode", mode)
-        self._restart_song_section()
+        self._song.set_pacing_mode(mode)
 
     @Slot(str)
     def set_practice_hands(self, mode: str):
         """Selects which hand the student plays ("both", "right", "left")."""
-        if mode not in ("both", "right", "left") or mode == self._practice_hands:
-            return
-
-        self._practice_hands = mode
-        self.practiceHandsChanged.emit()
-        self._save_song_practice_pref("practice_hands", mode)
-        self._restart_song_section()
-
-    def _restart_song_section(self):
-        """
-        Restarts the current piece under the new settings. Reloading through
-        start_song is deliberate: it re-reads the preferences we just saved and
-        resets every piece of derived state (engine, note states, index map,
-        step list, wrong-note count) in one place.
-        """
-        self._rhythm_engine.stop()
-        self._active_pitches.clear()
-
-        if self._exercise_type == "song_application" and self._song_id:
-            self.start_song(self._song_id)
+        self._song.set_practice_hands(mode)
 
     @Slot()
     def restart_song(self):
         """Replays the current piece from the top, keeping mode and hand settings."""
-        self._restart_song_section()
+        self._song.restart()
 
     @Slot()
     def stop_rhythm_run(self):
         """Ends a rhythm run early — the only way a loop-only run ever finishes."""
-        if self._rhythm_engine.isRunning:
-            self._rhythm_engine.finish_now()
+        self._song.stop_rhythm_run()
 
     @Slot()
     def toggle_rhythm_pause(self):
-        self._rhythm_engine.toggle_pause()
+        self._song.toggle_rhythm_pause()
 
     @Slot(result=int)
     def practice_trouble_spots(self) -> int:
-        """
-        Clusters this run's misses by measure and loops the worst one.
-
-        Returns the 1-based measure number, or 0 if there is nothing to drill.
-        """
-        if not self._playback_service:
-            return 0
-
-        bounds = self._measure_bounds()
-        if len(bounds) < 2:
-            return 0
-
-        # Tally misses per measure from the states array.
-        misses = [0] * (len(bounds) - 1)
-        for sn_i in self._rhythm_sn_index:
-            if sn_i >= len(self._song_note_states):
-                continue
-            if self._song_note_states[sn_i] != "miss":
-                continue
-            beat = float(self._scrolling_notes[sn_i].get("start_beat", 0.0))
-            m = self._measure_index_for_beat(bounds, beat)
-            if 0 <= m < len(misses):
-                misses[m] += 1
-
-        worst = max(range(len(misses)), key=lambda m: misses[m]) if misses else -1
-        if worst < 0 or misses[worst] == 0:
-            return 0
-
-        self._playback_service.setLoop(bounds[worst], bounds[worst + 1])
-        print(f"ChordTrainer: Trouble spot = measure {worst + 1} "
-              f"({misses[worst]} misses), loop {bounds[worst]}–{bounds[worst + 1]}")
-        return worst + 1
-
-    def _measure_bounds(self) -> List[float]:
-        """Measure boundaries in beats: [0, bar1, bar2, …, song_end]."""
-        bounds = [0.0]
-        for b in self._song_barlines:
-            if b > bounds[-1] + 1e-6:
-                bounds.append(float(b))
-        if self._song_end_beat > bounds[-1] + 1e-6:
-            bounds.append(float(self._song_end_beat))
-        return bounds
-
-    @staticmethod
-    def _measure_index_for_beat(bounds: List[float], beat: float) -> int:
-        for m in range(len(bounds) - 1):
-            if bounds[m] <= beat < bounds[m + 1]:
-                return m
-        return len(bounds) - 2
+        """Loops the measure this run missed most; returns its number, or 0."""
+        return self._song.practice_trouble_spots()
 
     def _setup_listen_target(self, chord_data):
         """Sets up an ear training exercise: plays a chord, user identifies it."""
@@ -2557,42 +1964,6 @@ class ChordTrainerService(QObject):
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting inputReady")
         self.inputReady.emit()
 
-    def _advance_song_chord(self):
-        """Sets up the current grouping of notes for a song."""
-        if self._song_index >= len(self._song_steps):
-            # Song complete
-            return
-            
-        self._prev_target_pitches = self._target_pitches
-        step = self._song_steps[self._song_index]
-        self._target_pitches = step['pitches']
-        self._target_hands = step['hands']
-        
-        # Pull fingers from the same source as scrolling notes to guarantee sync
-        self._target_fingers = step.get('fingers', [1] * len(self._target_pitches))
-        self.targetFingersChanged.emit()
-        
-        # Exact match required for songs, but intervals are meaningless here
-        self._target_intervals = set()
-        
-        # Advance the playhead in the UI
-        self._set_stepped_scroll_beat(float(step['offset']))
-        
-        # Reset tracking state
-        self._hold_progress = 0.0
-        self._is_holding = False
-        self._waiting_for_release = False
-        self._required_hold_ms = 0
-        self._hold_tick_timer.stop()
-        self._prompt_time = time.time()
-        self._wrong_notes_count = 0
-        self._first_note_time = 0.0
-        self._is_simultaneous = False
-        
-        print(f"ChordTrainer: Song step {self._song_index + 1}/{len(self._song_steps)} at offset {self._scroll_beat}, pitches={self._target_pitches}")
-        self.targetChordChanged.emit(self._target_chord_name)
-        self.inputReady.emit()
-
     @Slot(int, bool)
     def handle_midi_note(self, pitch: int, is_on: bool):
         """Called by AppState when a MIDI note event occurs."""
@@ -2621,12 +1992,12 @@ class ChordTrainerService(QObject):
         # ── Phase 4 pacing gate ─────────────────────────────────────
         # In rhythm mode the RhythmEngine owns scoring outright. Returning here
         # guarantees the engine path and the self-paced path (_check_input →
-        # _check_chord → _complete_chord → _advance_song_chord) can never both
+        # _check_chord → _complete_chord → SongSession.advance_step) can never both
         # run for the same note-on. _active_pitches is deliberately left alone:
         # it is the self-paced path's state, and leaving it empty also keeps
         # `mistakeActive` (and its whole-sheet dim) inert without modifying it.
-        if self._exercise_type == "song_application" and self._pacing_mode == "rhythm":
-            self._rhythm_engine.handle_midi_note(pitch, is_on)
+        if self._exercise_type == "song_application" and self._song.pacing_mode == "rhythm":
+            self._song.engine.handle_midi_note(pitch, is_on)
             return
 
         if is_on:
@@ -2637,7 +2008,7 @@ class ChordTrainerService(QObject):
             # the same legato reason `mistakeActive` tolerates them.
             if self._exercise_type == "song_application":
                 if pitch not in self._target_pitches and pitch not in self._prev_target_pitches:
-                    self._song_wrong_notes += 1
+                    self._song.wrong_notes += 1
 
             # Record first note time for simultaneity detection
             if self._first_note_time == 0.0:
@@ -2679,7 +2050,7 @@ class ChordTrainerService(QObject):
                     else:
                         QTimer.singleShot(700, self._next_chord)
                 elif self._exercise_type == "song_application":
-                    self._advance_song_chord()
+                    self._song.advance_step()
                 else:
                     QTimer.singleShot(700, self._next_chord)
             return
@@ -3016,15 +2387,15 @@ class ChordTrainerService(QObject):
             # else: progression complete, fall through to _next_chord
 
         if self._exercise_type == "song_application":
-            self._song_index += 1
-            if self._song_index < len(self._song_steps):
+            self._song.index += 1
+            if self._song.index < len(self._song.steps):
                 print("ChordTrainer: Advancing song immediately (Legato-Friendly)")
-                self._advance_song_chord()
+                self._song.advance_step()
                 return
             else:
                 # Last note played — advance beat past song end so all notes render gray
-                self._set_stepped_scroll_beat(self._song_end_beat + 0.5)
-                self._song_completed = True
+                self._set_stepped_scroll_beat(self._song.end_beat + 0.5)
+                self._song.completed = True
                 self.songCompletedChanged.emit()
                 # Only a lesson has an AI turn worth blocking for, and only
                 # _apply_exercise clears this window. In free play nothing ever
@@ -3032,8 +2403,8 @@ class ChordTrainerService(QObject):
                 # one. Mirrors the same guard on the rhythm path.
                 if self._is_lesson_mode:
                     self._ignore_midi_until = time.time() + 99.0  # until the AI responds
-                print(f"ChordTrainer: Song complete — '{self._song_title}'")
-                QTimer.singleShot(1500, self._on_song_finished)
+                print(f"ChordTrainer: Song complete — '{self._song.title}'")
+                QTimer.singleShot(1500, self._song.on_finished)
                 return
 
         if self._exercise_type == "listen":

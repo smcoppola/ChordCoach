@@ -8,7 +8,7 @@
 // affordable.
 //
 // The item format is NotationView's `scrollingNotes` contract. The reference
-// producer is _setup_song_target in logic/services/chord_trainer.py (the
+// producer is SongSession.setup in logic/services/song_session.py (the
 // barline/time-signature/sort details live there); the consumer is
 // _render_scrolling_array in ui/notation_view.py. This builder deliberately
 // emits a subset: the editor's rows carry no rests, dynamics, ties, beams,
@@ -133,7 +133,7 @@ QtObject {
 
     // --- Projection ----------------------------------------------------------
 
-    // Mirrors the ordering in _setup_song_target: by beat, then time signatures
+    // Mirrors the ordering in SongSession.setup: by beat, then time signatures
     // ahead of dynamics ahead of barlines ahead of notes, then by pitch. Only
     // the time-signature and note branches can occur here, but the full order is
     // kept so the two producers cannot drift.

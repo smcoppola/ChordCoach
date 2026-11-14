@@ -136,7 +136,7 @@ def trainer():
     svc.db_spy = db
     svc.music21_spy = music21
     yield svc
-    svc._rhythm_engine.stop()
+    svc._song.engine.stop()
 
 
 # ── Defaults ────────────────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ def test_mode_persists_per_user_song(trainer):
     fresh.set_playback_service(SpyPlayback())
     fresh.start_song("user::persist-me")
     assert fresh.pacingMode == "rhythm"
-    fresh._rhythm_engine.stop()
+    fresh._song.engine.stop()
 
 
 def test_mode_persists_for_corpus_songs_via_app_settings(trainer):
@@ -187,7 +187,7 @@ def test_mode_persists_for_corpus_songs_via_app_settings(trainer):
     fresh.set_playback_service(SpyPlayback())
     fresh.start_song("bach/bwv1.6.mxl")
     assert fresh.pacingMode == "rhythm"
-    fresh._rhythm_engine.stop()
+    fresh._song.engine.stop()
 
 
 def test_practice_hands_persist(trainer):
@@ -204,7 +204,7 @@ def test_right_hand_practice_drops_left_hand_pitches_from_targets(trainer):
     trainer.set_practice_hands("right")
 
     # Every remaining target is a RH pitch; the LH bass notes are gone.
-    for step in trainer._song_steps:
+    for step in trainer._song.steps:
         assert step["hands"] == ["right"]
         assert step["pitches"][0] >= 60
         assert len(step["fingers"]) == len(step["pitches"])
@@ -222,7 +222,7 @@ def test_steps_with_no_notes_for_the_practised_hand_are_skipped(trainer):
     trainer.start_song("user::skip-lh")
     trainer.set_practice_hands("right")
 
-    offsets = [s["offset"] for s in trainer._song_steps]
+    offsets = [s["offset"] for s in trainer._song.steps]
     assert 2.0 not in offsets
     assert offsets == [0.0, 1.0, 3.0]
 
@@ -244,8 +244,8 @@ def test_rest_only_steps_never_become_self_paced_targets(trainer):
 
     trainer.start_song("user::rest-gap")
 
-    assert all(s["pitches"] for s in trainer._song_steps)
-    assert 1.5 not in [s["offset"] for s in trainer._song_steps]
+    assert all(s["pitches"] for s in trainer._song.steps)
+    assert 1.5 not in [s["offset"] for s in trainer._song.steps]
     # The rest still draws — only the input gate skips it.
     assert any(n.get("is_rest") for n in trainer.scrollingNotes)
 
@@ -278,7 +278,7 @@ def test_a_song_with_nothing_playable_reports_instead_of_hanging(trainer):
 
     trainer.start_song("user::all-rests")
 
-    assert trainer._song_steps == []
+    assert trainer._song.steps == []
     assert not trainer._target_pitches
     assert messages, "the student was left with no feedback"
 
@@ -328,7 +328,7 @@ def test_starting_a_song_clears_a_stale_input_block(trainer):
     assert trainer._ignore_midi_until == 0.0
     for pitch in list(trainer._target_pitches):
         trainer.handle_midi_note(pitch, True)
-    assert trainer._song_index == 1, "the first chord of the replay was swallowed"
+    assert trainer._song.index == 1, "the first chord of the replay was swallowed"
 
 
 def test_leaving_a_session_clears_a_stale_input_block(trainer):
@@ -346,7 +346,7 @@ def test_rhythm_mode_starts_the_engine_and_populates_note_states(trainer):
     trainer.start_song("user::rhythm-1")
     trainer.set_pacing_mode("rhythm")
 
-    engine = trainer._rhythm_engine
+    engine = trainer._song.engine
     assert engine.isRunning
     assert engine.currentBeat == -4.0  # 4-beat count-in
     assert engine.tempoBpm == pytest.approx(90.0)  # from tempo_map[0]
@@ -362,24 +362,24 @@ def test_rhythm_tempo_follows_the_playback_tempo_scale(trainer):
     trainer.start_song("user::slow")
     trainer.set_pacing_mode("rhythm")
 
-    assert trainer._rhythm_engine.tempoBpm == pytest.approx(45.0)
+    assert trainer._song.engine.tempoBpm == pytest.approx(45.0)
 
 
 def test_rhythm_mode_gate_routes_input_away_from_the_self_paced_path(trainer):
     trainer.start_song("user::gate")
     trainer.set_pacing_mode("rhythm")
 
-    engine = trainer._rhythm_engine
+    engine = trainer._song.engine
     engine._current_beat = 0.0
 
-    before_index = trainer._song_index
+    before_index = trainer._song.index
     trainer.handle_midi_note(60, True)
 
     # Scored by the engine...
     assert engine.noteStates[engine.notes.index(
         next(n for n in engine.notes if n["pitch"] == 60))] == "hit"
     # ...and the self-paced machinery never moved.
-    assert trainer._song_index == before_index
+    assert trainer._song.index == before_index
     assert trainer._active_pitches == set()
     assert not trainer.mistakeActive
 
@@ -388,7 +388,7 @@ def test_note_states_reach_the_renderer_array_at_the_right_index(trainer):
     trainer.start_song("user::states")
     trainer.set_pacing_mode("rhythm")
 
-    engine = trainer._rhythm_engine
+    engine = trainer._song.engine
     engine._current_beat = 0.0
     trainer.handle_midi_note(60, True)
 
@@ -400,12 +400,12 @@ def test_note_states_reach_the_renderer_array_at_the_right_index(trainer):
 def test_switching_back_to_self_paced_stops_the_engine_and_clears_states(trainer):
     trainer.start_song("user::switch")
     trainer.set_pacing_mode("rhythm")
-    assert trainer._rhythm_engine.isRunning
+    assert trainer._song.engine.isRunning
 
     trainer.set_pacing_mode("self_paced")
-    assert not trainer._rhythm_engine.isRunning
+    assert not trainer._song.engine.isRunning
     assert list(trainer.songNoteStates) == []
-    assert trainer._rhythm_sn_index == []
+    assert trainer._song.sn_index == []
     assert trainer._target_pitches  # self-paced targets are live again
 
 
@@ -414,7 +414,7 @@ def test_rhythm_mode_only_scores_the_practised_hand(trainer):
     trainer.set_practice_hands("right")
     trainer.set_pacing_mode("rhythm")
 
-    engine = trainer._rhythm_engine
+    engine = trainer._song.engine
     assert len(engine.notes) == 4
     assert all(n["hand"] == "right" for n in engine.notes)
 
@@ -431,7 +431,7 @@ def test_rhythm_mastery_is_accuracy_squared_times_ten(trainer, accuracy, expecte
     trainer.start_song("user::mastery")
     trainer.set_pacing_mode("rhythm")
 
-    trainer._on_rhythm_finished(accuracy, 8, 0)
+    trainer._song.on_rhythm_finished(accuracy, 8, 0)
 
     assert len(trainer.db_spy.song_plays) == 1
     assert trainer.db_spy.song_plays[0]["mastery_gained"] == pytest.approx(expected)
@@ -443,9 +443,9 @@ def test_loop_only_rhythm_run_halves_the_mastery(trainer):
 
     trainer.start_song("user::loop")
     trainer.set_pacing_mode("rhythm")
-    assert trainer._rhythm_loop_only
+    assert trainer._song.loop_only
 
-    trainer._on_rhythm_finished(1.0, 4, 0)
+    trainer._song.on_rhythm_finished(1.0, 4, 0)
     assert trainer.db_spy.song_plays[0]["mastery_gained"] == pytest.approx(5.0)
 
 
@@ -459,9 +459,9 @@ def test_loop_only_rhythm_run_halves_the_mastery(trainer):
 def test_self_paced_mastery_is_three_minus_wrong_notes_floored_at_one(
         trainer, wrong_notes, expected):
     trainer.start_song("user::selfpaced-mastery")
-    trainer._song_wrong_notes = wrong_notes
+    trainer._song.wrong_notes = wrong_notes
 
-    trainer._on_song_finished()
+    trainer._song.on_finished()
 
     assert len(trainer.db_spy.song_plays) == 1
     assert trainer.db_spy.song_plays[0]["mastery_gained"] == pytest.approx(expected)
@@ -473,7 +473,7 @@ def test_record_song_play_is_called_once_per_completion_with_the_song_id(trainer
     trainer.start_song("user::once")
     trainer.set_pacing_mode("rhythm")
 
-    trainer._on_rhythm_finished(0.75, 6, 2)
+    trainer._song.on_rhythm_finished(0.75, 6, 2)
 
     assert len(trainer.db_spy.song_plays) == 1
     call = trainer.db_spy.song_plays[0]
@@ -483,8 +483,8 @@ def test_record_song_play_is_called_once_per_completion_with_the_song_id(trainer
 
 def test_corpus_completion_records_under_the_corpus_id(trainer):
     trainer.start_song("bach/bwv1.6.mxl")
-    trainer._song_wrong_notes = 0
-    trainer._on_song_finished()
+    trainer._song.wrong_notes = 0
+    trainer._song.on_finished()
 
     assert trainer.db_spy.song_plays[0]["filepath"] == "bach/bwv1.6.mxl"
 
@@ -493,7 +493,7 @@ def test_song_result_summary_is_published_for_the_overlay(trainer):
     trainer.start_song("user::overlay")
     trainer.set_pacing_mode("rhythm")
 
-    trainer._on_rhythm_finished(0.5, 4, 4)
+    trainer._song.on_rhythm_finished(0.5, 4, 4)
 
     result = trainer.songResult
     assert result["mode"] == "rhythm"
@@ -506,9 +506,9 @@ def test_song_result_summary_is_published_for_the_overlay(trainer):
 
 
 def test_completion_with_no_song_id_does_not_write_a_row(trainer):
-    trainer._song_id = ""
-    trainer._song_title = "Orphan"
-    trainer._record_song_completion(5.0, {"mode": "rhythm"})
+    trainer._song.song_id = ""
+    trainer._song.title = "Orphan"
+    trainer._song.record_completion(5.0, {"mode": "rhythm"})
 
     assert trainer.db_spy.song_plays == []
     assert trainer.songResult["mode"] == "rhythm"
@@ -522,10 +522,10 @@ def test_practice_trouble_spots_loops_the_worst_measure(trainer):
 
     # 2/4 time with a barline at beat 2 -> measure 1 = [0,2), measure 2 = [2,4).
     # Mark both notes of the second measure as missed.
-    engine = trainer._rhythm_engine
+    engine = trainer._song.engine
     for i, note in enumerate(engine.notes):
         if note["start_beat"] >= 2.0:
-            trainer._on_rhythm_note_state(i, "miss")
+            trainer._song.on_rhythm_note_state(i, "miss")
 
     measure = trainer.practice_trouble_spots()
 
