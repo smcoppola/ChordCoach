@@ -343,3 +343,54 @@ def test_engine_ignores_input_when_not_running(engine):
 
     engine.handle_midi_note(60, True)
     assert engine.noteStates[0] == "pending"
+
+
+# ── Notes handed over out of onset order ────────────────────────────────────
+# (onboarding's sequences.json lists the left hand after the right hand)
+
+def test_indices_are_the_callers_even_when_notes_are_out_of_order(engine):
+    notes = make_notes([(64, 0, 1), (62, 1, 1), (60, 2, 2), (48, 0, 4, "left")])
+    reported = []
+    engine.noteStateChanged.connect(lambda i, s: reported.append((i, s)))
+    engine.load(notes, 100, count_in_beats=0)
+    engine._is_running = True
+
+    assert engine.notes == notes  # not reordered
+    seek(engine, 0.0)
+    engine.handle_midi_note(48, True)
+    assert reported == [(3, "hit")]
+    assert engine.noteStates == ["pending", "pending", "pending", "hit"]
+
+
+def test_misses_sweep_in_onset_order_for_out_of_order_notes(engine):
+    notes = make_notes([(64, 0, 1), (62, 4, 1), (48, 0, 4, "left"), (48, 2, 1, "left")])
+    engine.load(notes, 100, count_in_beats=0)
+    engine._is_running = True
+
+    seek(engine, 1.0)   # past the window of both beat-0 notes
+    assert engine.noteStates == ["miss", "pending", "miss", "pending"]
+    seek(engine, 3.0)   # past beat 2
+    assert engine.noteStates == ["miss", "pending", "miss", "miss"]
+
+
+def test_the_earlier_of_two_same_pitch_notes_scores_first_whatever_the_list_order(engine):
+    notes = make_notes([(60, 0.5, 1), (60, 0.0, 1)])  # later one listed first
+    engine.load(notes, 100, count_in_beats=0)
+    engine._is_running = True
+    seek(engine, 0.25)
+    engine.handle_midi_note(60, True)
+    assert engine.noteStates == ["pending", "hit"]
+
+
+def test_loop_wrap_rewinds_the_sweep_for_out_of_order_notes(engine):
+    notes = make_notes([(62, 4, 1), (60, 0, 1), (64, 5, 1)])
+    engine.load(notes, 100, count_in_beats=0)
+    engine.set_loop(4.0, 6.0)
+    engine._is_running = True
+    seek(engine, 5.9)
+    assert engine.noteStates[0] == "miss" and engine.noteStates[2] == "miss"
+    engine._wrap_loop()
+    assert engine.noteStates == ["pending", "pending", "pending"]
+    seek(engine, 4.6)
+    assert engine.noteStates[0] == "miss"      # swept again on the second pass
+    assert engine.noteStates[1] == "pending"   # outside the loop: never scored

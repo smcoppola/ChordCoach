@@ -67,7 +67,9 @@ class RhythmEngine(QObject):
         # Metronome state (count-in only, as in the original evaluation flow)
         self._next_metronome_beat: int = 0
 
-        # Index of the earliest note whose hit window the playhead has not passed
+        # Position in `_order` of the earliest note whose hit window the
+        # playhead has not passed
+        self._order: List[int] = []
         self._miss_cursor: int = 0
 
         # Loop state
@@ -161,11 +163,15 @@ class RhythmEngine(QObject):
         """
         self.stop()
 
-        # Sorted by onset so the miss sweep can walk a cursor instead of
-        # rescanning every note on every 10 ms tick. The sort is stable, and
-        # both callers already hand over onset-ordered lists, so note indices
-        # (which `noteStateChanged` reports) are unaffected in practice.
-        self._notes = sorted(notes or [], key=lambda n: float(n.get("start_beat", 0.0)))
+        # Notes stay in the caller's order: note indices (noteStateChanged,
+        # noteStates) are the caller's indices, and the caller draws from them.
+        # Sorting the list itself once moved the onboarding left-hand notes —
+        # listed after the right hand in sequences.json — so hits lit up the
+        # wrong notes on screen. `_order` is the onset-sorted view the miss
+        # sweep walks with a cursor instead of rescanning every 10 ms tick.
+        self._notes = list(notes or [])
+        self._order = sorted(range(len(self._notes)),
+                             key=lambda i: float(self._notes[i].get("start_beat", 0.0)))
         self._note_states = ["pending"] * len(self._notes)
         self._active_held_keys.clear()
         self._tempo_bpm = float(tempo_bpm) if tempo_bpm else 100.0
@@ -323,8 +329,8 @@ class RhythmEngine(QObject):
         # Rewind the miss cursor to the top of the loop; the notes it already
         # walked past are pending again.
         self._miss_cursor = 0
-        while (self._miss_cursor < len(self._notes)
-               and float(self._notes[self._miss_cursor].get("start_beat", 0.0)) < self._loop_start):
+        while (self._miss_cursor < len(self._order)
+               and float(self._notes[self._order[self._miss_cursor]].get("start_beat", 0.0)) < self._loop_start):
             self._miss_cursor += 1
         self._update_accuracy()
         self.beatChanged.emit(self._current_beat)
@@ -349,7 +355,8 @@ class RhythmEngine(QObject):
         the shipped onboarding behaviour, and two same-pitch notes can only both
         be in window if they sit within 0.7 beats of each other.
         """
-        for i, note in enumerate(self._notes):
+        for i in self._order:  # earliest onset first
+            note = self._notes[i]
             if self._note_states[i] != "pending":
                 continue
             if int(note.get("pitch", -1)) != pitch:
@@ -390,8 +397,8 @@ class RhythmEngine(QObject):
 
         changed = []
         limit = self._current_beat - self.HIT_WINDOW_BEATS
-        while self._miss_cursor < len(self._notes):
-            i = self._miss_cursor
+        while self._miss_cursor < len(self._order):
+            i = self._order[self._miss_cursor]
             if float(self._notes[i].get("start_beat", 0.0)) >= limit:
                 break
             if self._note_states[i] == "pending" and self._in_scope(i):

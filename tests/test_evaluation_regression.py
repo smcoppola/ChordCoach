@@ -360,3 +360,74 @@ def test_input_is_ignored_when_not_running(service):
     service.stopEvaluation()
     service.handle_midi_note(60, True)  # must not raise or score
     assert list(service.noteStates) == []
+
+
+# ── Onboarding regressions found in testing (Nov 2026) ──────────────────────
+
+def _real_service():
+    from pathlib import Path
+    from unittest.mock import MagicMock
+    from logic.services.evaluation_service import EvaluationService
+    return EvaluationService(MagicMock(), Path(__file__).resolve().parent.parent)
+
+
+def test_note_states_line_up_with_the_notes_on_screen_at_every_level():
+    """
+    sequences.json lists left-hand notes after the right hand. The states the
+    view colours by must use the same order as the notes it draws, or a played
+    left-hand note lights up some right-hand note instead.
+    """
+    svc = _real_service()
+    svc._is_running = True
+    for level in range(1, len(svc._sequences) + 1):
+        svc._start_level(level)
+        shown = svc.sequenceNotes
+        for i, note in enumerate(shown):
+            svc._engine._current_beat = float(note["start_beat"])
+            svc.handle_midi_note(int(note["pitch"]), True)
+            svc.handle_midi_note(int(note["pitch"]), False)
+            assert svc.noteStates[i] == "hit", (
+                f"level {level}: playing note {i} ({note}) did not mark it hit; "
+                f"states={svc.noteStates}")
+        svc._engine.stop()
+    svc.stopEvaluation()
+
+
+def test_hot_cross_buns_left_hand_registers():
+    svc = _real_service()
+    svc._is_running = True
+    svc._start_level(3)
+    shown = svc.sequenceNotes
+    left = [i for i, n in enumerate(shown) if n["hand"] == "L"]
+    assert left, "level 3 should have left-hand notes"
+    first = min(left, key=lambda i: shown[i]["start_beat"])
+    svc._engine._current_beat = float(shown[first]["start_beat"])
+    svc.handle_midi_note(int(shown[first]["pitch"]), True)
+    assert svc.noteStates[first] == "hit"
+    assert [i for i, s in enumerate(svc.noteStates) if s == "hit"] == [first]
+    svc.stopEvaluation()
+
+
+def test_pause_stops_the_scrolling_view_and_resume_restarts_it():
+    svc = _real_service()
+    svc.startEvaluation()
+    assert svc.scrollAnchor["active"] and svc.scrollAnchor["bps"] > 0
+
+    svc.togglePause()
+    assert svc.paused
+    assert not svc.scrollAnchor["active"] and svc.scrollAnchor["bps"] == 0
+    assert svc.scrollAnchor["beat"] == svc.currentBeat  # parked where scoring stopped
+
+    svc.togglePause()
+    assert not svc.paused
+    assert svc.scrollAnchor["active"] and svc.scrollAnchor["bps"] > 0
+    svc.stopEvaluation()
+
+
+def test_resuming_after_the_spoken_intro_starts_the_view():
+    svc = _real_service()
+    svc.startEvaluation(True)  # held paused while the coach speaks
+    assert not svc.scrollAnchor["active"]
+    svc.resume()
+    assert svc.scrollAnchor["active"] and svc.scrollAnchor["bps"] > 0
+    svc.stopEvaluation()

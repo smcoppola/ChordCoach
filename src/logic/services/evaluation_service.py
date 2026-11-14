@@ -161,6 +161,7 @@ class EvaluationService(QObject):
         self._engine.toggle_pause()
         self._paused = self._engine.paused
         self.pausedChanged.emit()
+        self._sync_scroll_to_clock()
 
     @Slot()
     def restartLevel(self):
@@ -177,6 +178,7 @@ class EvaluationService(QObject):
             self._engine.resume()
             self._paused = self._engine.paused
             self.pausedChanged.emit()
+            self._sync_scroll_to_clock()
             print("EvaluationService: Resuming evaluation.")
 
     # ── Level Management ────────────────────────────────────────────
@@ -281,6 +283,17 @@ class EvaluationService(QObject):
             "seq": int(self._scroll_anchor["seq"]) + 1,
         }
         self.scrollAnchorChanged.emit()
+
+    def _sync_scroll_to_clock(self):
+        """
+        Tells the view the clock has stopped or restarted.
+
+        The view extrapolates along the last anchor and anchors are otherwise
+        only published from the engine's tick — which a pause stops. Without
+        this the notes kept scrolling through a pause while scoring stood still.
+        """
+        self._emit_scroll_anchor(self._engine.currentBeat,
+                                 active=self._is_running and not self._paused, snap=True)
 
     def _on_engine_note_state(self, _index: int, _state: str):
         self._accuracy = self._engine.accuracy

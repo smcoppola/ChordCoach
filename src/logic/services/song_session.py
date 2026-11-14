@@ -578,6 +578,12 @@ class SongSession:
 
     def toggle_rhythm_pause(self):
         self.engine.toggle_pause()
+        # The view extrapolates along the last anchor, and anchors otherwise
+        # come only from the engine's tick, which a pause stops: tell it.
+        running = self.engine.isRunning and not self.engine.paused
+        self._t._emit_scroll_anchor(self.engine.currentBeat,
+                                    self.rhythm_tempo() / 60.0 if running else 0.0,
+                                    active=running, snap=True)
 
     def practice_trouble_spots(self) -> int:
         """

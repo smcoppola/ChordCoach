@@ -540,3 +540,16 @@ def test_practice_trouble_spots_is_a_no_op_with_no_misses(trainer):
 
     assert trainer.practice_trouble_spots() == 0
     assert trainer._playback_service.loopStartBeat == -1.0
+
+
+def test_pausing_a_rhythm_run_stops_the_scrolling_view(trainer):
+    """The view extrapolates along the last anchor, so a pause has to tell it."""
+    trainer.start_song("user::pause-me")
+    trainer.set_pacing_mode("rhythm")
+    assert trainer.scrollAnchor["active"]
+
+    trainer.toggle_rhythm_pause()
+    assert not trainer.scrollAnchor["active"] and trainer.scrollAnchor["bps"] == 0
+
+    trainer.toggle_rhythm_pause()
+    assert trainer.scrollAnchor["active"] and trainer.scrollAnchor["bps"] > 0
