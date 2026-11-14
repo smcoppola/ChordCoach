@@ -109,7 +109,10 @@ def test_with_a_coach_the_drill_waits_for_the_introduction(trainer):
     assert not trainer.isPausedForSpeech
     chord(trainer, C, E, G)
     assert wait_for(lambda: trainer.exerciseName == "Resolve D → G")
-    assert "Resolve D" not in trainer.prompts[-1] and "D" in trainer.prompts[-1]
+    # Between pairs: one short read-aloud line, picked at random, naming the next V.
+    from logic.services.circle_tutorial import DominantMotionDrill
+    assert any(line.format(v="D") in trainer.prompts[-1]
+               for line in DominantMotionDrill.PROMPTS_BETWEEN_PAIRS)
 
 
 def test_quitting_the_drill_does_not_leak_into_the_next_lesson(trainer):

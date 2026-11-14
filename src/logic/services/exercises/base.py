@@ -26,6 +26,10 @@ class Exercise:
     needs_pedal = False
     # targetPitches is shown sorted (sequential drills keep their order).
     sorted_targets = True
+    # The pedal technique being drilled ("direct", "legato"), "" for none; and
+    # whether the pedal requirement has been met for the current attempt.
+    pedal_type = ""
+    pedal_satisfied = True
 
     def __init__(self, trainer: "ChordTrainerService"):
         self._t = trainer

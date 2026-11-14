@@ -124,3 +124,63 @@ def test_steady_pulse_ignores_hits_outside_the_window(trainer):
     for p in (60, 64, 67):
         trainer.handle_midi_note(p, True)
     assert trainer._exercises["steady_pulse"].hits == []
+
+
+# ── Sustain pedal ───────────────────────────────────────────────────────────
+
+def sustain(pedal_type, **extra):
+    ex = {"exercise_type": "sustain_pedal", "exercise_name": "C Major — pedal",
+          "root_idx": 0, "chord_type_name": "Major", "pedal_type": pedal_type}
+    ex.update(extra)
+    return ex
+
+
+@pytest.fixture
+def successes(trainer):
+    out = []
+    trainer.chordSuccess.connect(lambda name, ms: out.append(name))
+    return out
+
+
+def test_direct_pedal_with_the_chord_completes(trainer, successes):
+    trainer.present_exercise(sustain("direct"))
+    assert trainer.pedalType == "direct"
+    trainer.handle_pedal_event(True)
+    for p in (60, 64, 67):
+        trainer.handle_midi_note(p, True)
+    assert successes == ["C Major"]
+
+
+def test_legato_pedal_after_the_chord_completes(trainer, successes):
+    trainer.present_exercise(sustain("legato"))
+    for p in (60, 64, 67):
+        trainer.handle_midi_note(p, True)
+    assert successes == []  # waiting for the pedal
+    trainer.handle_pedal_event(True)
+    assert successes == ["C Major"]
+
+
+def test_no_pedal_no_completion(trainer, successes):
+    trainer.present_exercise(sustain("direct"))
+    for p in (60, 64, 67):
+        trainer.handle_midi_note(p, True)
+    assert successes == []
+
+
+def test_a_late_direct_pedal_gets_a_tip(trainer, successes):
+    tips = []
+    trainer.speakInstruction.connect(tips.append)
+    trainer.present_exercise(sustain("direct"))
+    for p in (60, 64, 67):
+        trainer.handle_midi_note(p, True)
+    trainer._hold_start_time -= 1000  # the chord went down a second ago
+    trainer.handle_pedal_event(True)
+    assert successes == [] and "exactly" in tips[-1]
+
+
+def test_the_pedal_lane_clears_when_the_next_exercise_is_not_a_pedal_drill(trainer):
+    trainer.present_exercise(sustain("legato"))
+    assert trainer.pedalType == "legato"
+    trainer.present_exercise({"exercise_type": "chord", "exercise_name": "F Major",
+                              "root_idx": 5, "chord_type_name": "Major"})
+    assert trainer.pedalType == ""

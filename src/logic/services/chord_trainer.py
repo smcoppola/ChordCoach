@@ -16,6 +16,14 @@ from logic.services.song_session import SongSession # type: ignore
 import music21
 
 class LessonState(Enum):
+    """
+    What the trainer is doing. Deliberately not everything it tracks: several
+    conditions hold *alongside* one of these and so stay flags on the trainer —
+    waiting for all keys up after a step (true while the coach starts talking,
+    and new key presses still count), a lesson waiting for the coach's goodbye
+    (true while AI_SPEAKING), and a finished lesson (true while IDLE, which is
+    what returns the view to the dashboard).
+    """
     IDLE = auto()               # Not in a lesson
     LOADING = auto()            # Initial lesson loading
     AI_SPEAKING = auto()        # Coach is speaking (or about to); input is paused
@@ -99,8 +107,6 @@ class ChordTrainerService(QObject):
         self._target_pitches: List[int] = []
         self._target_hands: List[str] = []  # "left" or "right" for each target pitch
         self._target_fingers: List[int] = [] # 1-5 for each pitch
-        self._pedal_type: str = "" # "direct", "legato", or ""
-        self._pedal_satisfied = False
         self._is_pedal_down = False
         self._pedal_down_time = 0.0
 
@@ -437,7 +443,8 @@ class ChordTrainerService(QObject):
 
     @Property(str, notify=targetChordChanged)
     def pedalType(self) -> str:  # type: ignore[reportRedeclaration]
-        return self._pedal_type
+        # Only while the current exercise is a pedal drill; '' hides the pedal lane.
+        return self._exercise.pedal_type if self.isActive else ""
 
     @Property(str, notify=lessonStateChanged)
     def exerciseName(self) -> str:  # type: ignore[reportRedeclaration]
@@ -815,7 +822,6 @@ class ChordTrainerService(QObject):
         # would empty the loaded (and cached) song data itself.
         self._target_pitches = []
         self._target_hands = []
-        self._pedal_type = ""
         self._is_holding = False
         self._consecutive_successes = 0
         # Free play is not a lesson: nothing sequenced, nothing waiting on the coach.
@@ -1046,7 +1052,6 @@ class ChordTrainerService(QObject):
         # would empty the loaded (and cached) song data itself.
         self._target_pitches = []
         self._target_hands = []
-        self._pedal_type = ""
         self._hold_tick_timer.stop()
         if self.metronome:
             self.metronome.stop()
@@ -1165,7 +1170,6 @@ class ChordTrainerService(QObject):
             self._target_intervals.clear()
             self._target_pitches = []
             self._target_hands = []
-            self._pedal_type = ""
             self._song.title = ""
             self._song.composer = ""
             self._song.key = ""
@@ -1648,14 +1652,14 @@ class ChordTrainerService(QObject):
                     delta = self._hold_start_time - self._first_note_time
                     self._is_simultaneous = (delta < 150) # 150ms is a generous 'block chord' threshold
 
-                if self._exercise.needs_pedal and not self._pedal_satisfied:
+                if self._exercise.needs_pedal and not self._exercise.pedal_satisfied:
                     # Check if they pressed the pedal slightly *before* the keys (direct pedal only)
-                    if self._pedal_type == "direct" and self._is_pedal_down:
+                    if self._exercise.pedal_type == "direct" and self._is_pedal_down:
                         pedal_timing = self._hold_start_time - self._pedal_down_time
                         if pedal_timing <= 400: # up to 400ms early
-                            self._pedal_satisfied = True
+                            self._exercise.pedal_satisfied = True
 
-                    if not self._pedal_satisfied:
+                    if not self._exercise.pedal_satisfied:
                         return # Wait for the pedal to be engaged
 
                 if self._required_hold_ms > 0:
@@ -1664,7 +1668,7 @@ class ChordTrainerService(QObject):
                     self._complete_chord()
             else:
                 # We are already holding. Re-evaluate if pedal satisfaction unlocked progression
-                if self._exercise.needs_pedal and self._pedal_satisfied:
+                if self._exercise.needs_pedal and self._exercise.pedal_satisfied:
                     if self._required_hold_ms > 0 and not self._hold_tick_timer.isActive():
                         self._hold_tick_timer.start()
                     elif self._required_hold_ms == 0:

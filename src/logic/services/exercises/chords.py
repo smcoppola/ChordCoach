@@ -59,40 +59,40 @@ class SustainPedal(Exercise):
             intervals = self._t.CHORD_TYPES.get(chord_type_name, {0, 4, 7})
         octave = int(chord_data.get("octave", 4))
 
-        self._t._pedal_type = str(chord_data.get("pedal_type", "direct"))
-        self._t._pedal_satisfied = False
+        self.pedal_type = str(chord_data.get("pedal_type", "direct"))
+        self.pedal_satisfied = False
 
         self._t._setup_target(root_idx, chord_type_name, intervals, octave, suppress_signal=True)
         self._t._target_chord_type = "Sustain Pedal"
         # We don't need UI text for pedal type since standard notation will be used,
         # but keep it in formula text for debugging or fallback if desired.
-        self._t._target_formula_text = f"Pedal: {self._t._pedal_type.capitalize()}"
+        self._t._target_formula_text = f"Pedal: {self.pedal_type.capitalize()}"
 
         # Override the target name if it was blanked out by the fallback to single note
         if not chord_type_name:
             root_name = self._t.ROOT_NOTES[root_idx]
-            self._t._target_chord_name = f"{root_name} Note ({self._t._pedal_type.capitalize()} Pedal)"
+            self._t._target_chord_name = f"{root_name} Note ({self.pedal_type.capitalize()} Pedal)"
 
         print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged for Sustain ({self._t._target_chord_name})")
         self._t.targetChordChanged.emit(self._t._target_chord_name)
 
     def on_pedal(self, is_down: bool):
         t = self._t
-        if t._pedal_satisfied:
+        if self.pedal_satisfied:
             return
-        if t._pedal_type == "direct":
+        if self.pedal_type == "direct":
             # Pedal should be pressed around the same time as the chord
             if is_down and t._is_holding:
                 pedal_timing = t._pedal_down_time - t._hold_start_time
                 if pedal_timing <= 400: # generous 400ms window
-                    t._pedal_satisfied = True
+                    self.pedal_satisfied = True
                     t._check_input()
                 else:
                     t.speakInstruction.emit("Try to press the pedal *exactly* when you strike the keys for a 'direct' pedal technique.")
-        elif t._pedal_type == "legato":
+        elif self.pedal_type == "legato":
             # Pedal should be pressed after the chord starts
             if is_down and t._is_holding:
-                t._pedal_satisfied = True
+                self.pedal_satisfied = True
                 t._check_input()
 
 
