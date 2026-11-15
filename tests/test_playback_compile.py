@@ -152,7 +152,7 @@ class FakeHardware:
         self.sent = []
         self.metronome_beats = []
 
-    def _safe_bulk_send(self, messages):
+    def bulk_send(self, messages):
         self.sent.extend(messages)
 
     def play_metronome_tick(self, beat_num):

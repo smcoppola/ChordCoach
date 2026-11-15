@@ -521,6 +521,19 @@ class MidiHardwareService(QObject):
                     self._is_sustain_pedal_down = is_down
                     self.sustainPedalChanged.emit(is_down)
 
+    @property
+    def initial_search_done(self) -> bool:
+        """True once the first device scan has finished (found or not)."""
+        return self._initial_search_done
+
+    @property
+    def is_sustain_pedal_down(self) -> bool:
+        return self._is_sustain_pedal_down
+
+    def bulk_send(self, messages: List[List[int]]):
+        """Sends a batch of MIDI messages, throttled, from any thread."""
+        self._safe_bulk_send(messages)
+
     def _safe_bulk_send(self, messages: List[List[int]]):
         """
         Dispatches a batch of MIDI messages to the main thread for throttled delivery.

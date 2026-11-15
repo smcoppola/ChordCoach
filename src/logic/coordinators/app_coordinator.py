@@ -68,6 +68,8 @@ class AppCoordinator(QObject):
         self.chord_trainer.coachNeededChanged.connect(self._on_coach_needed_changed)
         self.chord_trainer.isCircleOfFifthsModeChanged.connect(self._on_circle_mode_changed)
         self.chord_trainer.theoryVisualDirect.connect(self._on_theory_visual_received)
+        if self._circle_of_fifths_service is not None:
+            self.theoryVisualUpdated.connect(self._circle_of_fifths_service.set_tutorial_state_v2)
         
         # --- Wire Engines together ---
         self.evaluation.metronomeTick.connect(self.hw_service.play_metronome_tick)
@@ -145,7 +147,7 @@ class AppCoordinator(QObject):
             # Re-enable tools for future normal lesson sessions
             self.gemini.set_tools_disabled(False)
 
-    def _sync_coach_settings(self):
+    def sync_coach_settings(self):
         """Push current voice configs to chord trainer context."""
         self.chord_trainer.coach_personality = self.settings.coachPersonality
         self.chord_trainer.coach_brevity = self.settings.coachBrevity
@@ -167,9 +169,9 @@ class AppCoordinator(QObject):
                 if resume_prompt:
                     self.gemini.send_prompt(resume_prompt)
             elif was_reconnecting and self.chord_trainer.isActive and self.chord_trainer.isLessonMode:
-                self._sync_coach_settings()
+                self.sync_coach_settings()
             elif not self.chord_trainer.isActive and not self.evaluation.isRunning:
-                self._sync_coach_settings()
+                self.sync_coach_settings()
         elif not connected and self.hw_service.is_connected:
             if not self._is_reconnecting:
                 self.hw_service.play_sad_tone()
@@ -209,11 +211,13 @@ class AppCoordinator(QObject):
 
     @Slot()
     def _on_trainer_metronome(self):
-        """Map logical beat metrics from the trainer to standard 1..4 ticks for the hardware service."""
-        beat_num = getattr(self.chord_trainer, '_pentascale_beat_count', 0)
-        measure_beat = (beat_num % 4)
-        if measure_beat == 0:
-            measure_beat = 4
+        """
+        Clicks the trainer's metronome: beat 1 of each bar is the accented
+        click. The count is the metronome's own (negative during the lead-in);
+        this used to read an attribute that did not exist, so every click was
+        the accented one.
+        """
+        beat_num = int(self.chord_trainer.pentascaleBeatCount)
         if beat_num < 0:
             logical_beat = 4 + beat_num + 1 
         else:
@@ -237,7 +241,7 @@ class AppCoordinator(QObject):
         # Lessons are sequenced locally, so this no longer waits on the coach.
         if not self.chord_trainer.isActive:
             print("Coordinator: Evaluation finished. Starting new lesson plan generation.")
-            self._sync_coach_settings()
+            self.sync_coach_settings()
             self.chord_trainer.start_lesson_plan()
 
     # --- QML Exposed Orchestration Actions ---
@@ -314,5 +318,4 @@ class AppCoordinator(QObject):
         
         # If the chord trainer is still loading, update status to show coach is speaking
         if self.chord_trainer.isLoading:
-            self.chord_trainer._loading_status_text = "LISTEN TO YOUR COACH..."
-            self.chord_trainer.loadingStatusChanged.emit()
+            self.chord_trainer.set_loading_status("LISTEN TO YOUR COACH...")

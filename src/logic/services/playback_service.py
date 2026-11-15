@@ -448,7 +448,7 @@ class PlaybackService(QObject):
             self._cursor += 1
 
         if msgs_to_send and self._hw_service:
-            self._hw_service._safe_bulk_send(msgs_to_send)
+            self._hw_service.bulk_send(msgs_to_send)
 
         # Metronome integer-beat crossing check
         if self._metronome_enabled and self._hw_service:
@@ -508,4 +508,4 @@ class PlaybackService(QObject):
             self._sounding_notes.clear()
 
         if msgs and self._hw_service:
-            self._hw_service._safe_bulk_send(msgs)
+            self._hw_service.bulk_send(msgs)

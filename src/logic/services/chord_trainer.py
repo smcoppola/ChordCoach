@@ -1069,6 +1069,12 @@ class ChordTrainerService(QObject):
         self.lessonStateChanged.emit()
         self.targetChordChanged.emit(self._target_chord_name)
 
+    def set_loading_status(self, text: str):
+        """The line shown under the loading spinner."""
+        if text != self._loading_status_text:
+            self._loading_status_text = text
+            self.loadingStatusChanged.emit()
+
     @Slot()
     def notify_visual_received(self):
         """Unlocks the loading state when a theory visual arrives."""

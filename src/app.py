@@ -178,11 +178,12 @@ class AppState(QObject):
         self.coordinator.evalIntroPendingChanged.connect(self.evalIntroPendingChanged)
         self.coordinator.archIntroPendingChanged.connect(self.archIntroPendingChanged)
         self.coordinator.isReconnectingChanged.connect(self.isReconnectingChanged)
-        self.coordinator.theoryVisualUpdated.connect(self._circle_of_fifths.set_tutorial_state_v2)
         
         # Connect Hardware signals to AppState/QML
         self.hw_service.connectionStatusChanged.connect(self.midiConnectedChanged)
         self.hw_service.initialSearchComplete.connect(self._on_midi_initial_search_complete)
+        # Was never connected, so QML's isSustainPedalDown never updated.
+        self.hw_service.sustainPedalChanged.connect(self.sustainPedalChanged)
         # chord_trainer.midiOutRequested → hw_service.play_chord_preview is wired
         # in AppCoordinator. Connecting it here as well sent every preview twice.
 
@@ -206,7 +207,7 @@ class AppState(QObject):
 
         print("AppState.deferred_start: Connecting to Gemini AI Coach…")
         context = self.curriculum.get_curriculum_context()
-        self.coordinator._sync_coach_settings()
+        self.coordinator.sync_coach_settings()
         self._gemini.connect_service(
             context,
             voice=cast(str, self.settings.coachVoice),
@@ -218,11 +219,6 @@ class AppState(QObject):
     @Slot()
     def _on_midi_initial_search_complete(self):
         self.midiInitialSearchDoneChanged.emit(True)
-
-    @Slot(bool)
-    def _on_sustain_pedal_changed_bridge(self, is_down: bool):
-        """Bridge hardware events to QML via Property signal."""
-        self.sustainPedalChanged.emit(is_down)
 
     @Slot(str)
     def _on_ai_text(self, text: str):
@@ -250,7 +246,7 @@ class AppState(QObject):
 
     @Property(bool, notify=midiInitialSearchDoneChanged)
     def midiInitialSearchDone(self):
-        return self.hw_service._initial_search_done
+        return self.hw_service.initial_search_done
 
     @Property(bool, notify=aiConnectedChanged)
     def aiConnected(self):
@@ -274,7 +270,7 @@ class AppState(QObject):
 
     @Property(bool, notify=sustainPedalChanged)
     def isSustainPedalDown(self):
-        return self.hw_service._is_sustain_pedal_down
+        return self.hw_service.is_sustain_pedal_down
 
     @Property(QObject, constant=True)
     def chordTrainer(self):
