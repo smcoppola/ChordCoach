@@ -14,6 +14,10 @@ namespace py = pybind11;
 PYBIND11_MODULE(chordcoach_hw, m) {
   m.doc() = "ChordCoach Hardware Layer C++ Extensions";
 
+  // The clock MIDI messages are stamped with (see MidiHandler::setCallback).
+  m.def("now", &steadyNowSeconds,
+        "Seconds on the monotonic clock used to stamp MIDI messages.");
+
   // gil_scoped_release on every call that can touch WinMM/CoreMIDI: a
   // blocked driver call (zombie device-list handle) must never freeze the
   // Python interpreter — with the GIL held it would hang the entire app,

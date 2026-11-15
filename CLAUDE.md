@@ -80,7 +80,7 @@ Hardware C++ extension (chordcoach_hw) — sub-ms MIDI I/O
 
 ### Data Flow (Lesson Mode)
 
-1. MIDI keypress → C++ `chordcoach_hw` → `MidiHardwareService`
+1. MIDI keypress → C++ `chordcoach_hw` → `MidiHardwareService`. The C++ input thread stamps each message; the service converts that to a `time.perf_counter()` value and emits `midiNoteTimed` / `sustainPedalTimed`. Timing is scored at that event time (`RhythmEngine`, `MetronomeService.get_timing_offset_ms`, the trainer's `_now()`), not when the main thread got to it
 2. `AppCoordinator._dispatch_midi_note()` routes to `ChordTrainerService` or `EvaluationService`
 3. `ChordTrainerService` compares input vs. exercise spec and records the attempt
 4. On completion it asks its `LessonSequencer` for the next exercise (repeat or simplify after a struggle) and, when worth a word, prompts the coach → services update state → Qt signals → QML updates

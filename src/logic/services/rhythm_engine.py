@@ -337,34 +337,66 @@ class RhythmEngine(QObject):
 
     # ── Scoring ─────────────────────────────────────────────────────
 
-    def handle_midi_note(self, pitch: int, is_on: bool):
-        """Feeds a MIDI event into the engine. Note-offs only release held state."""
+    def handle_midi_note(self, pitch: int, is_on: bool, event_time=None):
+        """
+        Feeds a MIDI event into the engine. Note-offs only release held state.
+
+        `event_time` is when the key went down (time.perf_counter()). The note
+        is scored at the beat the playhead was on then, so a press that reached
+        this thread late is still judged where it was played.
+        """
         if not self._is_running:
             return
 
         if is_on:
             self._active_held_keys.add(pitch)
-            self._check_note_hit(pitch)
+            self._check_note_hit(pitch, self._beat_at(event_time))
         else:
             self._active_held_keys.discard(pitch)
 
-    def _check_note_hit(self, pitch: int):
+    def _beat_at(self, event_time) -> float:
+        """
+        The playhead's beat at `event_time`. `_current_beat` is the beat as of
+        the last clock tick, so this steps from there by the time difference.
+        While paused the playhead is not moving, so the current beat is the
+        answer; it is also the answer when no event time is given.
+        """
+        if event_time is None or not self._beat_timer.isActive():
+            return self._current_beat
+        beats_per_sec = (self._tempo_bpm * self._tempo_scale) / 60.0
+        delta = (event_time - self._last_tick_time) * beats_per_sec
+        # Across a loop wrap or a seek the arithmetic means nothing; a stamp
+        # more than a couple of beats away is treated as "now".
+        if abs(delta) > 2.0:
+            return self._current_beat
+        return self._current_beat + delta
+
+    def _check_note_hit(self, pitch: int, beat=None):
         """
         Scores a played pitch against the first pending note of that pitch inside
         the timing window. First-match (not nearest-match) is deliberate: it is
         the shipped onboarding behaviour, and two same-pitch notes can only both
         be in window if they sit within 0.7 beats of each other.
+
+        `beat` is where the playhead was when the key went down. When that is
+        behind the playhead, a note the miss sweep has already passed can still
+        be claimed: the press was in time, only its delivery was late.
         """
+        if beat is None:
+            beat = self._current_beat
+        late_delivery = beat < self._current_beat
+
         for i in self._order:  # earliest onset first
             note = self._notes[i]
-            if self._note_states[i] != "pending":
+            state = self._note_states[i]
+            if state != "pending" and not (late_delivery and state == "miss"):
                 continue
             if int(note.get("pitch", -1)) != pitch:
                 continue
             if not self._in_scope(i):
                 continue
 
-            time_diff = abs(self._current_beat - float(note.get("start_beat", 0.0)))
+            time_diff = abs(beat - float(note.get("start_beat", 0.0)))
             if time_diff <= self.HIT_WINDOW_BEATS:
                 self._note_states[i] = "hit"
                 self._update_accuracy()

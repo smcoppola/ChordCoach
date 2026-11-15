@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt # type: ignore
 import ctypes
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -181,6 +182,11 @@ class MidiHardwareService(QObject):
     """
     midiNoteReceived = Signal(int, bool)
     sustainPedalChanged = Signal(bool)
+    # The same events with the time the key or pedal actually moved, as a
+    # time.perf_counter() value. Scoring listens to these; the untimed signals
+    # above stay for QML and anything that only needs the state.
+    midiNoteTimed = Signal(int, bool, float)
+    sustainPedalTimed = Signal(bool, float)
     connectionStatusChanged = Signal(bool)
     initialSearchComplete = Signal()
     
@@ -483,7 +489,34 @@ class MidiHardwareService(QObject):
         except Exception as oe:
             print(f"MidiHardwareService: MIDI Output Pairing Error: {oe}")
 
-    def _on_raw_midi_data(self, deltatime: float, message: List[int]):
+    # A stamp older than this (or in the future) is a clock mix-up, not latency.
+    MAX_EVENT_AGE_SEC = 2.0
+
+    def _event_time(self, stamp: Optional[float]) -> float:
+        """
+        When a message arrived, as a time.perf_counter() value.
+
+        The C++ layer stamps each message on its input thread, on its own
+        monotonic clock. Asking that clock for the time now gives the message's
+        age, which carries over to perf_counter whatever the two epochs are.
+        Without a stamp (an extension built before timestamps) this is simply
+        the time of the callback.
+        """
+        now = time.perf_counter()
+        if stamp is None:
+            return now
+        hw_now = getattr(self.hw_module, "now", None)
+        if hw_now is None:
+            return now
+        try:
+            age = float(hw_now()) - float(stamp)
+        except Exception:
+            return now
+        if not 0.0 <= age <= self.MAX_EVENT_AGE_SEC:
+            return now
+        return now - age
+
+    def _on_raw_midi_data(self, deltatime: float, message: List[int], stamp: Optional[float] = None):
         """
         Callback executed by the C++ RtMidi thread (via pybind11) upon incoming data.
         Maps raw hex status bytes to normalized application signals.
@@ -495,6 +528,9 @@ class MidiHardwareService(QObject):
         if not message:
             return
             
+        # Read the event's time before anything else in this callback.
+        event_time = self._event_time(stamp)
+
         # 1. Mask out the channel data (lower nibble) to isolate the status command
         status = message[0] & 0xF0
         
@@ -505,11 +541,13 @@ class MidiHardwareService(QObject):
             # A Note On with velocity 0 is mathematically equivalent to a Note Off
             is_on = velocity > 0
             self.midiNoteReceived.emit(pitch, is_on)
+            self.midiNoteTimed.emit(pitch, is_on, event_time)
                 
         # 3. Process Note Off
         elif status == 0x80: 
             pitch = message[1]
             self.midiNoteReceived.emit(pitch, False)
+            self.midiNoteTimed.emit(pitch, False, event_time)
 
         # 4. Process Control Changes (Specifically CC 64 - Sustain)
         elif status == 0xB0: 
@@ -520,6 +558,7 @@ class MidiHardwareService(QObject):
                 if is_down != self._is_sustain_pedal_down:
                     self._is_sustain_pedal_down = is_down
                     self.sustainPedalChanged.emit(is_down)
+                    self.sustainPedalTimed.emit(is_down, event_time)
 
     @property
     def initial_search_done(self) -> bool:

@@ -60,7 +60,7 @@ class Pentascale(Exercise):
         self._t._is_holding = False
         self._t._waiting_for_release = False
         self._t._hold_tick_timer.stop()
-        self._t._prompt_time = time.time()
+        self._t._prompt_time = self._t._now()
         self._t._wrong_notes_count = 0
         self._t._first_note_time = 0.0
         self._t._is_simultaneous = False
@@ -144,7 +144,7 @@ class Pentascale(Exercise):
             feedback_text = ""
             timing_offset = 0.0
             if self._t.metronome and self._t.metronome.isRunning:
-                timing_offset = self._t.metronome.get_timing_offset_ms(self.index)
+                timing_offset = self._t.metronome.get_timing_offset_ms(self.index, self._t._now())
                 
                 if timing_offset < -150:
                     feedback_text = "Fast"
@@ -159,7 +159,7 @@ class Pentascale(Exercise):
 
             # Record success for this individual note
             note_name = f"{self._t.ROOT_NOTES[target_pitch % 12]} (Pentascale)"
-            latency_ms = (time.time() - self._t._prompt_time) * 1000.0
+            latency_ms = max(0.0, (self._t._now() - self._t._prompt_time) * 1000.0)
             self._t.db.record_chord_attempt(note_name, True, latency_ms, 0, False, timing_offset)
 
             self.index += 1
@@ -185,7 +185,7 @@ class Pentascale(Exercise):
                 self._t._target_hands = [hand_tag]
                 self._t.targetFingersChanged.emit()
                 self._t.targetChordChanged.emit("")
-                self._t._prompt_time = time.time()  # Reset timing for next note
+                self._t._prompt_time = self._t._now()  # Reset timing for next note
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting targetChordChanged ({self._t._target_chord_name})")
         self._t.targetChordChanged.emit(self._t._target_chord_name)
 

@@ -72,7 +72,7 @@ class SteadyPulse(Exercise):
 
         # Find the nearest beat
         # (Simplified: we track hits and timing offsets)
-        timing_offset = self._t.metronome.get_timing_offset_ms(self.current_beat)
+        timing_offset = self._t.metronome.get_timing_offset_ms(self.current_beat, self._t._now())
         
         # Only record if we haven't hit this beat yet and it's within a window
         # For now, just record it and the evaluator can deal with details

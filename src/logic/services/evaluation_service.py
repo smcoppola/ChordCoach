@@ -334,9 +334,9 @@ class EvaluationService(QObject):
 
     # ── MIDI Input Handling ─────────────────────────────────────────
 
-    def handle_midi_note(self, pitch: int, is_on: bool):
+    def handle_midi_note(self, pitch: int, is_on: bool, event_time=None):
         """Called by AppState when MIDI events arrive during evaluation."""
         if not self._is_running:
             return
 
-        self._engine.handle_midi_note(pitch, is_on)
+        self._engine.handle_midi_note(pitch, is_on, event_time)

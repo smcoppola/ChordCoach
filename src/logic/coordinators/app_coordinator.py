@@ -44,8 +44,14 @@ class AppCoordinator(QObject):
         self._active_midi_pitches: set[int] = set()  # Accumulate concurrent pitches for chord detection
         
         # --- Wire Hardware to Engines ---
-        self.hw_service.midiNoteReceived.connect(self._dispatch_midi_note)
-        self.hw_service.sustainPedalChanged.connect(self.chord_trainer.handle_pedal_event)
+        # Scoring takes the timed signals (when the key actually moved). A
+        # hardware object without them still works, untimed.
+        if hasattr(self.hw_service, "midiNoteTimed"):
+            self.hw_service.midiNoteTimed.connect(self._dispatch_midi_note)
+            self.hw_service.sustainPedalTimed.connect(self.chord_trainer.handle_pedal_event)
+        else:
+            self.hw_service.midiNoteReceived.connect(self._dispatch_midi_note)
+            self.hw_service.sustainPedalChanged.connect(self.chord_trainer.handle_pedal_event)
         
         # --- Wire AI ↔ Chord Trainer ---
         # The trainer sequences lessons itself; the coach only speaks. The
@@ -93,12 +99,13 @@ class AppCoordinator(QObject):
         return self._is_reconnecting
 
     @Slot(int, bool)
-    def _dispatch_midi_note(self, pitch: int, is_on: bool):
+    @Slot(int, bool, float)
+    def _dispatch_midi_note(self, pitch: int, is_on: bool, event_time=None):
         """Route MIDI input to whoever is active + update circle chord detection."""
         if self.evaluation.isRunning:
-            self.evaluation.handle_midi_note(pitch, is_on)
+            self.evaluation.handle_midi_note(pitch, is_on, event_time)
         else:
-            self.chord_trainer.handle_midi_note(pitch, is_on)
+            self.chord_trainer.handle_midi_note(pitch, is_on, event_time)
         
         # Accumulate pitches for circle chord detection (always, regardless of mode)
         if is_on:

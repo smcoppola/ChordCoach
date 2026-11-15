@@ -1,4 +1,5 @@
 #include <RtMidi.h>
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <pybind11/functional.h> // Required for std::function conversions
@@ -6,6 +7,15 @@
 #include <vector>
 
 namespace py = pybind11;
+
+// Seconds on the monotonic clock. Exposed to Python as chordcoach_hw.now() so
+// a message's stamp can be turned into an age ("this arrived 12 ms ago")
+// without assuming anything about the clock's epoch.
+inline double steadyNowSeconds() {
+  return std::chrono::duration<double>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 
 class MidiHandler {
 public:
@@ -84,8 +94,12 @@ public:
     return names;
   }
 
+  // The callback receives (deltatime, message, stamp). `stamp` is
+  // steadyNowSeconds() read on the input thread the moment the message
+  // arrived, before waiting for the GIL.
   void setCallback(
-      std::function<void(double, std::vector<unsigned char>)> callback) {
+      std::function<void(double, std::vector<unsigned char>, double)>
+          callback) {
     pyCallback = callback;
   }
 
@@ -93,6 +107,9 @@ private:
   static void midiInputCallback(double deltatime,
                                 std::vector<unsigned char> *message,
                                 void *userData) {
+    // Read the clock first: taking the GIL below can wait behind the UI
+    // thread, and that wait must not count against the player's timing.
+    const double stamp = steadyNowSeconds();
     MidiHandler *handler = static_cast<MidiHandler *>(userData);
 
     if (handler && handler->pyCallback && message && !message->empty()) {
@@ -101,7 +118,7 @@ private:
       py::gil_scoped_acquire acquire;
 
       try {
-        handler->pyCallback(deltatime, *message);
+        handler->pyCallback(deltatime, *message, stamp);
       } catch (py::error_already_set &e) {
         std::cerr << "Python callback exception in MIDI thread: " << e.what()
                   << std::endl;
@@ -111,5 +128,5 @@ private:
 
   RtMidiIn *midiIn = nullptr;
   bool callbackActive = false;
-  std::function<void(double, std::vector<unsigned char>)> pyCallback;
+  std::function<void(double, std::vector<unsigned char>, double)> pyCallback;
 };

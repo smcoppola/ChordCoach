@@ -88,7 +88,7 @@ class FakeMetronome:
     def stop(self):
         self.stopped += 1
 
-    def get_timing_offset_ms(self, index):
+    def get_timing_offset_ms(self, index, at=None):
         return self.offset
 
 

@@ -33,12 +33,15 @@ class StubTrainer(QObject):
         self.pentascaleBeatCount = 0
         self.loading_status = None
         self.pedal = []
+        self.pedal_times = []
+        self.notes = []
 
-    def handle_pedal_event(self, down):
+    def handle_pedal_event(self, down, event_time=None):
         self.pedal.append(down)
+        self.pedal_times.append(event_time)
 
     def handle_midi_note(self, *a):
-        pass
+        self.notes.append(a)
 
     def pause_for_speech(self):
         pass
@@ -81,6 +84,8 @@ class StubEval(QObject):
 class StubHardware(QObject):
     midiNoteReceived = Signal(int, bool)
     sustainPedalChanged = Signal(bool)
+    midiNoteTimed = Signal(int, bool, float)
+    sustainPedalTimed = Signal(bool, float)
 
     def __init__(self):
         super().__init__()
@@ -109,8 +114,17 @@ def test_a_chord_preview_is_sent_once(wired):
 
 def test_the_pedal_reaches_the_trainer(wired):
     _c, trainer, _g, hw, _circle = wired
-    hw.sustainPedalChanged.emit(True)
+    hw.sustainPedalChanged.emit(True)   # what QML listens to
+    hw.sustainPedalTimed.emit(True, 12.5)
     assert trainer.pedal == [True]
+    assert trainer.pedal_times == [12.5]
+
+
+def test_a_note_reaches_the_trainer_once_with_its_time(wired):
+    _c, trainer, _g, hw, _circle = wired
+    hw.midiNoteReceived.emit(60, True)  # what QML listens to
+    hw.midiNoteTimed.emit(60, True, 12.5)
+    assert trainer.notes == [(60, True, 12.5)]
 
 
 def test_theory_visuals_reach_the_circle_view_once(wired):

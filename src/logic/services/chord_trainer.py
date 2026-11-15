@@ -120,6 +120,8 @@ class ChordTrainerService(QObject):
         self._target_fingers: List[int] = [] # 1-5 for each pitch
         self._is_pedal_down = False
         self._pedal_down_time = 0.0
+        # Set while a MIDI event is being handled; see _now().
+        self._event_time = None
 
         # Track currently depressed keys (MIDI pitches)
         self._active_pitches: Set[int] = set()
@@ -1293,11 +1295,19 @@ class ChordTrainerService(QObject):
         return self._song.practice_trouble_spots()
 
     @Slot(bool)
-    def handle_pedal_event(self, is_down: bool):
+    @Slot(bool, float)
+    def handle_pedal_event(self, is_down: bool, event_time=None):
         """Called by AppState when a CC64 sustain pedal event occurs."""
+        self._event_time = event_time
+        try:
+            self._handle_pedal_event(is_down)
+        finally:
+            self._event_time = None
+
+    def _handle_pedal_event(self, is_down: bool):
         self._is_pedal_down = is_down
         if is_down:
-            self._pedal_down_time = time.time() * 1000.0
+            self._pedal_down_time = self._now() * 1000.0
 
         if not self.isActive or self._is_lesson_complete:
             return
@@ -1467,7 +1477,7 @@ class ChordTrainerService(QObject):
         # Calculate the absolute intervals (0-11) for the logic evaluator
         self._target_intervals = {(root_idx + interval) % 12 for interval in intervals}
 
-        self._prompt_time = time.time()
+        self._prompt_time = self._now()
         # Reset performance counters for the new target
         self._wrong_notes_count = 0
         self._first_note_time = 0.0
@@ -1571,9 +1581,25 @@ class ChordTrainerService(QObject):
         elif self._require_key_release_before_eval:
             print("ChordTrainer: Skipping immediate evaluation because key release lock is active.")
 
+    def _now(self) -> float:
+        """
+        The time to score against, on the time.perf_counter() clock: while a
+        key or pedal event is being handled, the moment it happened (stamped by
+        the MIDI layer); otherwise now.
+        """
+        return self._event_time if self._event_time is not None else time.perf_counter()
+
     @Slot(int, bool)
-    def handle_midi_note(self, pitch: int, is_on: bool):
+    @Slot(int, bool, float)
+    def handle_midi_note(self, pitch: int, is_on: bool, event_time=None):
         """Called by AppState when a MIDI note event occurs."""
+        self._event_time = event_time
+        try:
+            self._handle_midi_note(pitch, is_on)
+        finally:
+            self._event_time = None
+
+    def _handle_midi_note(self, pitch: int, is_on: bool):
         # Unconditionally process Note Off events so we never leak stuck keys.
         if not is_on:
             self._active_pitches.discard(pitch)
@@ -1606,7 +1632,7 @@ class ChordTrainerService(QObject):
 
             # Record first note time for simultaneity detection
             if self._first_note_time == 0.0:
-                self._first_note_time = time.time() * 1000.0
+                self._first_note_time = self._now() * 1000.0
 
             # Count a wrong note against the attempt, as this exercise defines one.
             self._exercise.on_note_on(pitch)
@@ -1662,7 +1688,7 @@ class ChordTrainerService(QObject):
 
             if not self._is_holding:
                 self._is_holding = True
-                self._hold_start_time = time.time() * 1000.0
+                self._hold_start_time = self._now() * 1000.0
 
                 # Calculate simultaneity: if all notes reached within 100ms of first note
                 if self._first_note_time > 0:
@@ -1733,7 +1759,7 @@ class ChordTrainerService(QObject):
                 print(f"[TIMING {datetime.now().strftime('%H:%M:%S.%f')[:-3]}] ChordTrainer: Emitting chordFailed (wrong notes)")
                 self._exercise_struggled = True
                 self.chordFailed.emit()
-                latency_ms = (time.time() - self._prompt_time) * 1000.0
+                latency_ms = max(0.0, (self._now() - self._prompt_time) * 1000.0)
                 self.db.record_chord_attempt(self._target_chord_name, False, latency_ms,
                                            self._wrong_notes_count, False)
                 self._record_chord_review(False)
@@ -1772,7 +1798,7 @@ class ChordTrainerService(QObject):
             self._hold_tick_timer.stop()
             return
 
-        elapsed = (time.time() * 1000.0) - self._hold_start_time
+        elapsed = (self._now() * 1000.0) - self._hold_start_time
 
         if elapsed >= self._required_hold_ms:
             self._hold_progress = 1.0
@@ -1783,7 +1809,7 @@ class ChordTrainerService(QObject):
         self.holdProgressChanged.emit()
 
     def _complete_chord(self):
-        latency_ms = (time.time() - self._prompt_time) * 1000.0
+        latency_ms = max(0.0, (self._now() - self._prompt_time) * 1000.0)
         print(f"ChordTrainer: SUCCESS! {self._target_chord_name} matched in {latency_ms:.1f}ms")
 
         # Record success in DB and local session stats

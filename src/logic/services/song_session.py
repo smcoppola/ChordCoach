@@ -663,7 +663,7 @@ class SongSession:
         self._t._waiting_for_release = False
         self._t._required_hold_ms = 0
         self._t._hold_tick_timer.stop()
-        self._t._prompt_time = time.time()
+        self._t._prompt_time = self._t._now()
         self._t._wrong_notes_count = 0
         self._t._first_note_time = 0.0
         self._t._is_simultaneous = False

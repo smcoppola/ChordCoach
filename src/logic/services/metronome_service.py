@@ -22,7 +22,7 @@ class MetronomeService(QObject):
         self._beat_count: int = 0
         self._is_running: bool = False
         self._lead_in_beats: int = 4
-        self._start_time: float = 0.0  # Wall-clock time when beat 0 will occur
+        self._start_time: float = 0.0  # perf_counter time when beat 0 will occur
         self._current_beat_position: float = 0.0
         self._last_tick_time: float = 0.0
 
@@ -75,7 +75,7 @@ class MetronomeService(QObject):
         self._beat_count = -lead_in_beats  # e.g., -4, -3, -2, -1, then 0 = first real beat
         interval_ms = int(60000 / bpm)
 
-        self._start_time = time.time() + (interval_ms / 1000.0 * lead_in_beats)
+        self._start_time = time.perf_counter() + (interval_ms / 1000.0 * lead_in_beats)
 
         self._current_beat_position = -float(lead_in_beats)
         self._last_tick_time = time.perf_counter()
@@ -152,12 +152,13 @@ class MetronomeService(QObject):
         """Check if the metronome is running but still in the lead-in phase."""
         return self._is_running and self._beat_count < 0
 
-    def get_timing_offset_ms(self, note_index: int) -> float:
+    def get_timing_offset_ms(self, note_index: int, at=None) -> float:
         """Calculate how many milliseconds off-beat a note was hit.
 
         Args:
             note_index: The zero-based index of the note in the sequence
                         (e.g., 0 for first pentascale note, 1 for second, etc.)
+            at: When the note was played (time.perf_counter()); now if omitted.
 
         Returns:
             Signed offset in ms. Negative = early, positive = late.
@@ -168,7 +169,7 @@ class MetronomeService(QObject):
 
         interval_sec = 60.0 / self._bpm
         expected_time = self._start_time + (note_index * interval_sec)
-        actual_time = time.time()
+        actual_time = time.perf_counter() if at is None else at
         return (actual_time - expected_time) * 1000.0
 
     # ── Internal ──────────────────────────────────────────────────────
