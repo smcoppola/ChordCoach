@@ -56,7 +56,7 @@ class _FakeTrainer:
 @pytest.fixture
 def service(tmp_user_songs_dir):
     svc = Music21Service()
-    svc._load_user_songs()
+    svc.library._load_user_songs()
     return svc
 
 
@@ -64,7 +64,7 @@ def service(tmp_user_songs_dir):
 
 def test_rename_rewrites_json_and_preserves_other_fields(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "old-song-1", title="Old Title")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     service.rename_user_song(song_id, "New Title", "New Artist")
 
@@ -84,14 +84,14 @@ def test_rename_rewrites_json_and_preserves_other_fields(service, tmp_user_songs
     assert rec["steps"][0]["duration"] == 1.0
 
     # In-memory catalog entry follows the record
-    entry = next(s for s in service._user_songs if s["id"] == song_id)
+    entry = next(s for s in service.library._user_songs if s["id"] == song_id)
     assert entry["title"] == "New Title"
     assert entry["artist"] == "New Artist"
 
 
 def test_rename_ignores_empty_title(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "keep-me-1", title="Keep Me")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     service.rename_user_song(song_id, "   ", "Whoever")
 
@@ -101,33 +101,33 @@ def test_rename_ignores_empty_title(service, tmp_user_songs_dir):
 
 def test_rename_invalidates_level_cache(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "cached-1")
-    service._load_user_songs()
-    service._level_cache[song_id] = {"steps": []}
-    service._level_cache[song_id + "::L2"] = {"steps": []}
+    service.library._load_user_songs()
+    service.library._level_cache[song_id] = {"steps": []}
+    service.library._level_cache[song_id + "::L2"] = {"steps": []}
 
     service.rename_user_song(song_id, "Renamed", "")
 
-    assert service._level_cache == {}
+    assert service.library._level_cache == {}
 
 
 # ── delete ──────────────────────────────────────────────────────────
 
 def test_delete_removes_record_and_last_source_copy(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "lonely-1", source_hash="hash-lonely")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     err = service.delete_user_song(song_id)
 
     assert err == ""
     assert not (tmp_user_songs_dir / "lonely-1.json").exists()
     assert not (tmp_user_songs_dir / "sources" / "hash-lonely.mid").exists()
-    assert all(s["id"] != song_id for s in service._user_songs)
+    assert all(s["id"] != song_id for s in service.library._user_songs)
 
 
 def test_delete_keeps_source_copy_shared_with_another_record(service, tmp_user_songs_dir):
     first = _write_song(tmp_user_songs_dir, "twin-a-1", source_hash="hash-shared")
     _write_song(tmp_user_songs_dir, "twin-b-1", source_hash="hash-shared")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     assert service.delete_user_song(first) == ""
     assert (tmp_user_songs_dir / "sources" / "hash-shared.mid").exists()
@@ -141,7 +141,7 @@ def test_delete_sweeps_pre_existing_orphan_sources(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "solo-1", source_hash="hash-solo")
     orphan = tmp_user_songs_dir / "sources" / "hash-nobody.mid"
     orphan.write_bytes(b"orphaned")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     service.delete_user_song(song_id)
 
@@ -150,7 +150,7 @@ def test_delete_sweeps_pre_existing_orphan_sources(service, tmp_user_songs_dir):
 
 def test_delete_refused_while_song_is_being_practised(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "in-use-1")
-    service._load_user_songs()
+    service.library._load_user_songs()
     # The trainer reports the ::L3 variant — the base song must still be protected
     service.set_chord_trainer(_FakeTrainer(song_id + "::L3", active=True))
 
@@ -158,12 +158,12 @@ def test_delete_refused_while_song_is_being_practised(service, tmp_user_songs_di
 
     assert err != ""
     assert (tmp_user_songs_dir / "in-use-1.json").exists()
-    assert any(s["id"] == song_id for s in service._user_songs)
+    assert any(s["id"] == song_id for s in service.library._user_songs)
 
 
 def test_delete_allowed_when_trainer_is_idle(service, tmp_user_songs_dir):
     song_id = _write_song(tmp_user_songs_dir, "idle-1")
-    service._load_user_songs()
+    service.library._load_user_songs()
     service.set_chord_trainer(_FakeTrainer(song_id, active=False))
 
     assert service.delete_user_song(song_id) == ""
@@ -181,7 +181,7 @@ def test_find_duplicates_groups_by_source_hash(service, tmp_user_songs_dir):
     _write_song(tmp_user_songs_dir, "dup-b-1", title="Dup B", source_hash="hash-dup")
     _write_song(tmp_user_songs_dir, "unique-1", title="Unique", source_hash="hash-unique")
     _write_song(tmp_user_songs_dir, "hashless-1", title="Hashless", source_hash=None)
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     groups = service.find_duplicates()
 
@@ -200,7 +200,7 @@ def test_find_duplicates_empty_library(service):
 
 def test_get_user_songs_shape_without_database(service, tmp_user_songs_dir):
     _write_song(tmp_user_songs_dir, "listed-1", title="Listed", artist="Composer")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     songs = service.get_user_songs()
 
@@ -218,7 +218,7 @@ def test_get_user_songs_shape_without_database(service, tmp_user_songs_dir):
 
 def test_get_user_songs_joins_mastery(service, tmp_user_songs_dir, tmp_path):
     song_id = _write_song(tmp_user_songs_dir, "played-1", title="Played")
-    service._load_user_songs()
+    service.library._load_user_songs()
     db = DatabaseManager(tmp_path / "mastery.db")
     db.record_song_play(filepath=song_id, title="Played", mastery_gained=42.0)
     service.set_database(db)

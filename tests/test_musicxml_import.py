@@ -9,11 +9,11 @@ def test_do_import_musicxml(tmp_user_songs_dir):
     xml_path = os.path.join(FIXTURES_DIR, "waltz_34.musicxml")
     service = Music21Service()
 
-    song_id, entry = service._do_import_musicxml(xml_path)
+    song_id, entry = service.library._do_import_musicxml(xml_path)
     assert song_id.startswith(service.USER_SONG_PREFIX)
     assert entry["title"] is not None
 
-    record = service._load_user_song_steps(song_id)
+    record = service.library._load_user_song_steps(song_id)
     assert record["schema_version"] == 2
     assert record["source_type"] == "musicxml"
     assert record["time_signatures"] == [{"offset": 0.0, "numerator": 3, "denominator": 4}]

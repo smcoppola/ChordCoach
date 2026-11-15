@@ -115,7 +115,7 @@ def tracks_dir(tmp_path):
 @pytest.fixture
 def service(tmp_user_songs_dir):
     svc = Music21Service()
-    svc._load_user_songs()
+    svc.library._load_user_songs()
     return svc
 
 
@@ -123,7 +123,7 @@ def service(tmp_user_songs_dir):
 
 def test_summaries_shape_without_database(service, tmp_user_songs_dir):
     _write_song(tmp_user_songs_dir, "shape-1", title="Shapely", level="Grade 2")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     summaries = service.get_user_song_summaries()
 
@@ -140,7 +140,7 @@ def test_summaries_shape_without_database(service, tmp_user_songs_dir):
 def test_summaries_join_mastery_from_database(service, tmp_user_songs_dir, tmp_path):
     played = _write_song(tmp_user_songs_dir, "played-1", title="Played")
     _write_song(tmp_user_songs_dir, "unplayed-1", title="Unplayed")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     db = DatabaseManager(tmp_path / "mastery.db")
     db.record_song_play(filepath=played, title="Played", mastery_gained=35.0)
@@ -157,7 +157,7 @@ def test_summaries_join_mastery_from_database(service, tmp_user_songs_dir, tmp_p
 
 def test_summaries_grade_defaults_to_zero_for_ungraded_level(service, tmp_user_songs_dir):
     _write_song(tmp_user_songs_dir, "ungraded-1", level="Imported")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     assert service.get_user_song_summaries()[0]["grade"] == 0
 
@@ -168,7 +168,7 @@ def test_summaries_sort_in_progress_then_unplayed_then_mastered(service,
     _write_song(tmp_user_songs_dir, "fresh-1", title="Never Played")
     _write_song(tmp_user_songs_dir, "learning-1", title="In Progress")
     _write_song(tmp_user_songs_dir, "known-1", title="Mastered")
-    service._load_user_songs()
+    service.library._load_user_songs()
 
     db = DatabaseManager(tmp_path / "sort.db")
     db.record_song_play(filepath="user::learning-1", title="In Progress", mastery_gained=40.0)
@@ -185,7 +185,7 @@ def test_summaries_empty_library(service):
 
 
 def test_recent_corpus_ids_exclude_imported_songs(service):
-    service._recent_songs = ["user::mine-1", "bach/bwv1.6.mxl",
+    service.catalog._recent_songs = ["user::mine-1", "bach/bwv1.6.mxl",
                              "user::mine-2", "essenFolksong/erk5.abc::7"]
 
     assert service.get_recent_corpus_ids() == ["bach/bwv1.6.mxl",
@@ -347,7 +347,7 @@ def test_trainer_recovers_from_a_bad_song_application_exercise(service, tmp_user
     from logic.services.chord_trainer import ChordTrainerService, LessonState
 
     real_id = _write_song(tmp_user_songs_dir, "real-1", title="Real Song")
-    service._load_user_songs()
+    service.library._load_user_songs()
     trainer = ChordTrainerService(DatabaseManager(tmp_path / "trainer.db"), None, None, service)
 
     statuses = []

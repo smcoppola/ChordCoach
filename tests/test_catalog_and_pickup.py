@@ -9,8 +9,8 @@ FIXTURES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixtures
 
 def test_catalog_methods_restored(tmp_user_songs_dir):
     service = Music21Service()
-    assert service._catalog is not None
-    assert len(service._flat_catalog) > 0
+    assert service.catalog._catalog is not None
+    assert len(service.catalog._flat_catalog) > 0
 
     # Test get_catalog_level top-level
     top_levels = service.get_catalog_level([])

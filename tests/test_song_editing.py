@@ -92,12 +92,12 @@ def service(tmp_user_songs_dir):
 def song(service, tmp_user_songs_dir):
     """Writes the demo record to the isolated songs dir and returns its id."""
     rec = _record()
-    service._save_user_song_record(rec)
+    service.library._save_user_song_record(rec)
     return rec["id"]
 
 
 def _stored(service, song_id):
-    with open(service._user_song_path(song_id)) as f:
+    with open(service.library._user_song_path(song_id)) as f:
         return json.load(f)
 
 
@@ -291,10 +291,10 @@ def test_manual_mode_is_not_re_inferred(service):
     record = _record()
     groups = [{"offset": 0.0, "duration": 1.0, "notes": [(60, "left"), (64, "right")]}]
 
-    service._apply_hand_mode(groups, "manual", record=record)
+    service.library._apply_hand_mode(groups, "manual", record=record)
     assert groups[0]["notes"] == [(60, "left"), (64, "right")]
 
-    service._apply_hand_mode(groups, "auto", record=record)
+    service.library._apply_hand_mode(groups, "auto", record=record)
     assert groups[0]["notes"] == [(60, "right"), (64, "right")]
 
 
@@ -396,13 +396,13 @@ def test_barlines_are_recomputed_for_the_new_end_beat(service, song):
 
 
 def test_saving_invalidates_the_level_cache(service, song):
-    service._level_cache[song] = {"steps": []}
-    service._level_cache[song + "::L2"] = {"steps": []}
+    service.library._level_cache[song] = {"steps": []}
+    service.library._level_cache[song + "::L2"] = {"steps": []}
 
     assert service.save_user_song_notes(song, service.get_user_song_notes(song)) == ""
 
-    assert song not in service._level_cache
-    assert song + "::L2" not in service._level_cache
+    assert song not in service.library._level_cache
+    assert song + "::L2" not in service.library._level_cache
 
 
 # --- Refusals --------------------------------------------------------------
@@ -465,7 +465,7 @@ def test_the_real_trainer_blocks_editing_and_deleting_its_song(qapp, service, so
     # that the real one exposes the song in play the way the guards read it.
     from logic.services.chord_trainer import ChordTrainerService
 
-    service._load_user_songs()  # delete_user_song looks the song up in the library
+    service.library._load_user_songs()  # delete_user_song looks the song up in the library
     trainer = ChordTrainerService(None, None, None, service)
     service.set_chord_trainer(trainer)
     try:
@@ -501,7 +501,7 @@ def test_rows_carry_the_finger_the_strip_colours_by(service, song):
 def test_a_step_without_fingers_still_yields_a_usable_one(service, song):
     rec = _stored(service, song)
     del rec["steps"][0]["fingers"]
-    service._save_user_song_record(rec)
+    service.library._save_user_song_record(rec)
 
     assert _find(service.get_user_song_notes(song), 60)["finger"] == 1
 
@@ -526,7 +526,7 @@ def test_notation_context_falls_back_rather_than_returning_nothing(service):
 def test_a_song_stored_without_a_metre_still_gets_one(service, song, value):
     rec = _stored(service, song)
     rec["time_signatures"] = value
-    service._save_user_song_record(rec)
+    service.library._save_user_song_record(rec)
 
     assert service.get_user_song_notation_context(song)["time_signatures"] == [
         {"offset": 0.0, "numerator": 4, "denominator": 4}
@@ -549,7 +549,7 @@ def test_notation_context_keeps_mid_piece_metre_changes_in_order(service, song):
         {"offset": 8.0, "numerator": 3, "denominator": 4},
         {"offset": 0.0, "numerator": 4, "denominator": 4},
     ]
-    service._save_user_song_record(rec)
+    service.library._save_user_song_record(rec)
 
     signatures = service.get_user_song_notation_context(song)["time_signatures"]
     assert [s["offset"] for s in signatures] == [0.0, 8.0]

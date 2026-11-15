@@ -99,7 +99,9 @@ Hardware C++ extension (chordcoach_hw) — sub-ms MIDI I/O
 | `src/logic/services/lesson_sequencer.py` | Chooses each lesson's exercises from the curriculum plan |
 | `src/logic/services/gemini_service.py` | Gemini WebSocket client with auto-reconnect |
 | `src/logic/services/database_manager.py` | SQLite schema + ORM for user sessions/progress |
-| `src/logic/services/music21_service.py` | Music theory analysis wrapper |
+| `src/logic/services/music21_service.py` | Score → steps analysis; the QML-facing front that delegates to the two below |
+| `src/logic/services/song_library.py` | Imported songs: JSON records, import, difficulty levels, note editor, rename/delete |
+| `src/logic/services/corpus_catalog.py` | Built-in corpus browser: catalogue, search, recents, corpus download |
 | `src/ui/notation_view.py` | Python/QML bridge for notation rendering |
 | `design_spec.md` | Full technical design document — read this for deep context |
 

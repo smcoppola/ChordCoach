@@ -14,7 +14,7 @@ def test_simplify_groups_meter_preservation(tmp_user_songs_dir):
     ]
 
     # Level 1 cap for RH notes is 2, LH is 1
-    simplified = service._simplify_groups(groups, level=1)
+    simplified = service.library._simplify_groups(groups, level=1)
     assert len(simplified[0]["notes"]) == 2
 
     # Score rebuild carries 3/4 meter

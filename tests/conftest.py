@@ -78,6 +78,6 @@ def tmp_user_songs_dir(tmp_path, monkeypatch):
     """Fixture that isolates user_songs directory for tests to avoid writing to live user database."""
     test_user_songs = tmp_path / "user_songs"
     test_user_songs.mkdir(parents=True, exist_ok=True)
-    from logic.services.music21_service import Music21Service
-    monkeypatch.setattr(Music21Service, "_user_songs_dir", lambda self: test_user_songs)
+    from logic.services.song_library import SongLibrary
+    monkeypatch.setattr(SongLibrary, "_user_songs_dir", lambda self: test_user_songs)
     return test_user_songs
