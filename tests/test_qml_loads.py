@@ -15,7 +15,7 @@ structural breakage this is here to catch.
 """
 
 import pytest
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QObject, QUrl
 from PySide6.QtQml import QQmlComponent, QQmlEngine
 
 
@@ -73,3 +73,77 @@ def test_views_compile(engine, qml_dir):
             )
 
     assert not failures, "QML views failed to compile:" + "".join(failures)
+
+
+def test_song_note_editor_fits_and_centers_in_main_window(engine, qml_dir, notation_fonts):
+    """SongNoteEditor must center in mainWindow rather than overflowing off the right edge."""
+    qapp = notation_fonts
+    ui_dir = qml_dir.parent
+    engine.addImportPath(str(ui_dir))
+
+    warnings = []
+    conn = engine.warnings.connect(lambda errs: warnings.extend(e.toString() for e in errs))
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(ui_dir / "main.qml")))
+    if component.isError():
+        engine.warnings.disconnect(conn)
+        pytest.fail("main.qml failed to compile:\n" +
+                    "\n".join(e.toString() for e in component.errors()))
+
+    win = component.create()
+    assert win is not None, "main.qml produced no root object"
+    try:
+        win.showNormal()
+        qapp.processEvents()
+
+        workspace = next(
+            (c for c in win.findChildren(QObject)
+             if c.metaObject().className().startswith("CenterWorkspace")),
+            None,
+        )
+        assert workspace is not None, "CenterWorkspace not found in main.qml"
+        workspace.showLibrary()
+        qapp.processEvents()
+
+        editor = next(
+            (c for c in win.findChildren(QObject)
+             if c.metaObject().className().startswith("SongNoteEditor")),
+            None,
+        )
+        assert editor is not None, "SongNoteEditor not found in LibraryView"
+
+        for w, h in [(1280, 800), (1920, 1080)]:
+            win.setWidth(w)
+            win.setHeight(h)
+            qapp.processEvents()
+            editor.open()
+            qapp.processEvents()
+            qapp.processEvents()
+
+            p = editor.property("parent")
+            assert p is not None
+            content_item = win.contentItem()
+            pt = p.mapToItem(None, editor.property("x"), editor.property("y"))
+            scene_x, scene_y = pt.x(), pt.y()
+            ew, eh = editor.property("width"), editor.property("height")
+
+            assert scene_x >= 0.0
+            assert scene_y >= 0.0
+            assert scene_x + ew <= content_item.width() + 1e-6
+            assert scene_y + eh <= content_item.height() + 1e-6
+            assert abs(scene_x - (content_item.width() - ew) / 2.0) < 1.0
+
+            editor_content = editor.property("contentItem")
+            for item in editor_content.childItems():
+                assert item.x() + item.width() <= editor_content.width() + 1.0
+            editor.close()
+            qapp.processEvents()
+
+        binding_loops = [
+            msg for msg in warnings
+            if "Binding loop" in msg and ("SongNoteEditor" in msg or "LibraryView" in msg)
+        ]
+        assert not binding_loops, "Unexpected binding loop warnings:\n" + "\n".join(binding_loops)
+    finally:
+        engine.warnings.disconnect(conn)
+        win.deleteLater()
+        qapp.processEvents()

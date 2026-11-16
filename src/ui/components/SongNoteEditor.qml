@@ -88,8 +88,16 @@ Popup {
     // Sized against the window rather than in fixed pixels, and every internal
     // dimension is a uiScale multiple. Wide, because the roll's whole point is
     // seeing a note against its neighbours.
-    width: Math.min(mainWindow.width * 0.94, 1700 * uiScale)
-    height: mainWindow.height * 0.92
+    readonly property real hostWidth: parent ? parent.width
+                                    : ((typeof mainWindow !== "undefined" && mainWindow) ? mainWindow.width : 1280)
+    readonly property real hostHeight: parent ? parent.height
+                                     : ((typeof mainWindow !== "undefined" && mainWindow) ? mainWindow.height : 800)
+
+    parent: (typeof mainWindow !== "undefined" && mainWindow && mainWindow.contentItem)
+            ? mainWindow.contentItem : null
+    anchors.centerIn: parent
+    width: Math.min(hostWidth * 0.94, 1700 * uiScale)
+    height: hostHeight * 0.92
     modal: true
     focus: true
     // Escape only — CloseOnPressOutside would silently discard unsaved edits.
@@ -480,6 +488,7 @@ Popup {
                 font.pixelSize: 10 * editor.uiScale
                 elide: Text.ElideRight
                 Layout.maximumWidth: 260 * editor.uiScale
+                Layout.minimumWidth: 0
             }
             Text {
                 text: editor.changedCount === 0
@@ -607,6 +616,7 @@ Popup {
 
             Text {
                 Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 text: editor.selectionText()
                 color: selectionBar.any ? "white" : "#888888"
                 font.pixelSize: 11 * editor.uiScale
@@ -690,6 +700,7 @@ Popup {
         // ── How to ───────────────────────────────────────────────────
         Text {
             Layout.fillWidth: true
+            Layout.minimumWidth: 0
             Layout.leftMargin: 14 * editor.uiScale
             Layout.rightMargin: 14 * editor.uiScale
             text: "Drag a note to move it  ·  drag its right end to change length  ·  "
@@ -735,9 +746,12 @@ Popup {
                 color: "#666666"
                 font.pixelSize: 10 * editor.uiScale
                 visible: editor.changedCount > 0
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                elide: Text.ElideRight
             }
 
-            Item { Layout.fillWidth: true }
+            Item { Layout.fillWidth: true; visible: editor.changedCount === 0 }
 
             Chip {
                 label: "CANCEL"

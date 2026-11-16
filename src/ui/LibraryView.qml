@@ -729,6 +729,8 @@ Rectangle {
     // ── Per-note editor (beat / duration / hand) ─────────────────────
     SongNoteEditor {
         id: noteEditor
+        parent: (typeof mainWindow !== "undefined" && mainWindow && mainWindow.contentItem)
+                ? mainWindow.contentItem : root
         anchors.centerIn: parent
         onSaved: root.statusMessage = "Saved your note edits."
     }
