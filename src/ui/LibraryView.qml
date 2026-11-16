@@ -509,7 +509,7 @@ Rectangle {
             id: card
             required property var modelData
 
-            width: 340 * root.uiScale
+            width: Math.max(384 * root.uiScale, buttonRow.implicitWidth + 28 * root.uiScale)
             height: 172 * root.uiScale
             radius: 12 * root.uiScale
             color: cardMouse.containsMouse ? "#1f1f22" : "#1c1c1e"
@@ -630,6 +630,7 @@ Rectangle {
                 Item { Layout.fillHeight: true }
 
                 RowLayout {
+                    id: buttonRow
                     Layout.fillWidth: true
                     spacing: 6 * root.uiScale
 

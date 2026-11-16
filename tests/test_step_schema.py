@@ -85,3 +85,21 @@ def test_groups_from_steps():
     assert groups[0]["offset"] == 0.0
     assert groups[0]["duration"] == 1.5
     assert groups[0]["notes"] == [(60, "right"), (48, "left")]
+
+
+def test_migrate_repairs_truncated_barlines():
+    rec = {
+        "schema_version": 2,
+        "id": "user::truncated-1",
+        "title": "Truncated",
+        "time_signatures": [{"offset": 0.0, "numerator": 4, "denominator": 4}],
+        "barlines": [4.0],
+        "steps": [
+            {"offset": 0.0, "pitches": [60], "durations": [1.0], "duration": 1.0},
+            {"offset": 18.0, "pitches": [64], "durations": [2.0], "duration": 2.0},
+        ],
+    }
+
+    migrated = migrate_record(rec)
+    assert migrated["barlines"] == [4.0, 8.0, 12.0, 16.0, 20.0]
+    assert migrate_record(migrated) == migrated

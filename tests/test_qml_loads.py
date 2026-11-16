@@ -147,3 +147,54 @@ def test_song_note_editor_fits_and_centers_in_main_window(engine, qml_dir, notat
         engine.warnings.disconnect(conn)
         win.deleteLater()
         qapp.processEvents()
+
+
+def test_library_song_card_buttons_fit_inside_card(engine, qml_dir, notation_fonts):
+    """Every action PillButton on a LibraryView song card must stay inside the card."""
+    qapp = notation_fonts
+    ui_dir = qml_dir.parent
+    engine.addImportPath(str(ui_dir))
+
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(ui_dir / "LibraryView.qml")))
+    if component.isError():
+        pytest.fail("LibraryView.qml failed to compile:\n" +
+                    "\n".join(e.toString() for e in component.errors()))
+
+    view = component.create()
+    assert view is not None, "LibraryView.qml produced no object"
+    try:
+        view.setWidth(1020)
+        view.setHeight(800)
+        view.setProperty("userSongs", [{
+            "id": "user::long-title-1",
+            "title": "(Auradj) Gushing Over Magical Girls   Gentle Memories",
+            "artist": "Imported MIDI",
+            "level": "Grade 4",
+            "key": "A Major",
+            "source_type": "midi",
+            "hand_mode": "auto",
+            "play_count": 0,
+            "mastery": 0,
+            "last_played": "",
+        }])
+        qapp.processEvents()
+        qapp.processEvents()
+
+        def walk(item):
+            yield item
+            for ch in item.childItems():
+                yield from walk(ch)
+
+        edit_btn = next((it for it in walk(view) if it.property("text") == "✎  EDIT"), None)
+        assert edit_btn is not None, "Could not find song card EDIT button"
+
+        row = edit_btn.parentItem()
+        col = row.parentItem()
+        card = col.parentItem()
+
+        assert col.x() + row.x() + row.width() <= card.width() + 1e-6
+        for btn in row.childItems():
+            assert col.x() + row.x() + btn.x() + btn.width() <= card.width() + 1e-6
+    finally:
+        view.deleteLater()
+        qapp.processEvents()

@@ -41,6 +41,7 @@ def parse_and_quantize(file_path: str) -> dict:
     quantized = _quantize_groups(groups, to_beats)
     if single_track:
         assign_hands(quantized)
+        _trim_hand_overlaps(quantized)
 
     time_signatures = _extract_time_signatures(pm, to_beats)
     tempo_map = _extract_tempo_map(pm, to_beats)
@@ -361,8 +362,11 @@ def _quantize_groups(groups, to_beats: _BeatConverter) -> List[dict]:
         for g in result:
             g["offset"] = round((g["offset"] - base) / GRID) * GRID
 
-    # Trim durations that overlap the next onset in the same hand (live
-    # legato bleed makes notation unreadable otherwise)
+    return _trim_hand_overlaps(result)
+
+
+def _trim_hand_overlaps(result: List[dict]) -> List[dict]:
+    """Trim durations that overlap the next onset in the same hand."""
     for i, g in enumerate(result):
         g_hands = {h for _, h in g["notes"]}
         for nxt in result[i + 1:]:
@@ -372,5 +376,4 @@ def _quantize_groups(groups, to_beats: _BeatConverter) -> List[dict]:
             if gap > 0:
                 g["duration"] = max(GRID, min(g["duration"], gap))
             break
-
     return result

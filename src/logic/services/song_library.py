@@ -8,7 +8,13 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 import music21
 from music21 import note
-from logic.utils.step_schema import CURRENT_SCHEMA_VERSION, migrate_record, compute_barlines, groups_from_steps
+from logic.utils.step_schema import (
+    CURRENT_SCHEMA_VERSION,
+    migrate_record,
+    compute_barlines,
+    groups_from_steps,
+    barlines_are_truncated,
+)
 from core.bootstrap import get_user_data_dir
 
 USER_SONG_PREFIX = "user::"
@@ -166,7 +172,23 @@ class SongLibrary(QObject):
                 with open(json_path, "r") as f:
                     rec = json.load(f)
                 if "id" in rec and "title" in rec:
-                    rec = migrate_record(rec)
+                    steps = rec.get("steps") or []
+                    end_beat = max(
+                        (float(s.get("offset", 0.0)) + float(max(s["durations"]) if s.get("durations") else s.get("duration", 0.0))
+                         for s in steps),
+                        default=0.0,
+                    )
+                    if (
+                        rec.get("source_type", "midi") == "midi"
+                        and rec.get("hand_mode", "auto") != "manual"
+                        and rec.get("quantized_groups")
+                        and barlines_are_truncated(rec.get("barlines") or [], rec.get("time_signatures") or [], end_beat)
+                    ):
+                        rec = self._rebuild_user_song_record(rec)
+                        with open(json_path, "w") as f_out:
+                            json.dump(rec, f_out, indent=2)
+                    else:
+                        rec = migrate_record(rec)
                     self._user_songs.append({
                         "id": rec["id"],
                         "title": rec["title"],
@@ -529,7 +551,7 @@ class SongLibrary(QObject):
         return groups
 
     def _rebuild_user_song_record(self, record: dict) -> dict:
-        from logic.services.midi_ingestor import HAND_ALGO_VERSION
+        from logic.services.midi_ingestor import HAND_ALGO_VERSION, _trim_hand_overlaps
         groups = [
             {"offset": g["offset"], "duration": g["duration"],
              "notes": [(int(p), h) for p, h in g["notes"]]}
@@ -538,6 +560,7 @@ class SongLibrary(QObject):
         if not groups:
             return record
         self._apply_hand_mode(groups, record.get("hand_mode", "auto"), record=record)
+        _trim_hand_overlaps(groups)
         score, _kn, _ks = self._build_score_from_groups(
             groups,
             key_name=record.get("key"),
@@ -694,7 +717,8 @@ class SongLibrary(QObject):
         """
         try:
             with open(self._user_song_path(song_id), "r") as f:
-                return [float(b) for b in (json.load(f).get("barlines") or [])]
+                record = migrate_record(json.load(f))
+                return [float(b) for b in (record.get("barlines") or [])]
         except Exception:
             return []
 

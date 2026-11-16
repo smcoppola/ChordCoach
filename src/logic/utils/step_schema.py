@@ -60,7 +60,31 @@ def migrate_record(record: dict) -> dict:
         migrated_steps.append(s)
 
     rec["steps"] = migrated_steps
+    if migrated_steps:
+        end_beat = max(
+            (float(s.get("offset", 0.0)) + float(s.get("duration", 0.0)) for s in migrated_steps),
+            default=0.0,
+        )
+        if barlines_are_truncated(rec.get("barlines") or [], rec["time_signatures"], end_beat):
+            rec["barlines"] = compute_barlines(rec["time_signatures"], end_beat)
     return rec
+
+
+def barlines_are_truncated(barlines: List[float], time_signatures: List[Dict[str, Any]], end_beat: float) -> bool:
+    """Returns True when stored barlines end more than one bar before `end_beat`."""
+    if end_beat <= 0:
+        return False
+    sigs = sorted(
+        time_signatures or [{"offset": 0.0, "numerator": 4, "denominator": 4}],
+        key=lambda ts: float(ts.get("offset", 0.0)),
+    )
+    active = sigs[0]
+    for ts in sigs:
+        if float(ts.get("offset", 0.0)) <= end_beat + 1e-5:
+            active = ts
+    bar_len = float(active.get("numerator", 4)) * (4.0 / float(active.get("denominator", 4)))
+    last_barline = float(barlines[-1]) if barlines else 0.0
+    return (end_beat - last_barline) > bar_len + 1e-4
 
 
 def compute_barlines(time_signatures: List[Dict[str, Any]], end_beat: float) -> List[float]:

@@ -379,14 +379,16 @@ class Music21Service(QObject):
                 'rests': step_data['rests']
             })
 
+        max_off = round(sorted_offsets[-1] + offset_map[sorted_offsets[-1]]['duration'], 4) if sorted_offsets else 0.0
         barlines_set = set()
         for part_obj in all_parts:
             for m in part_obj.getElementsByClass(music21.stream.Measure):
                 if float(m.offset) > 0:
                     barlines_set.add(float(m.offset))
         barlines = sorted(list(barlines_set))
-        if not barlines:
-            max_off = round(sorted_offsets[-1] + offset_map[sorted_offsets[-1]]['duration'], 4) if sorted_offsets else 0.0
+        last_ts = time_signatures[-1] if time_signatures else {"numerator": 4, "denominator": 4}
+        last_bar_len = float(last_ts.get("numerator", 4)) * (4.0 / float(last_ts.get("denominator", 4)))
+        if not barlines or (max_off - barlines[-1] > last_bar_len + 1e-4):
             barlines = compute_barlines(time_signatures, max_off)
 
         extra_meta = {
@@ -447,16 +449,16 @@ class Music21Service(QObject):
                 if pitches:
                     if off > last_off:
                         r_dur = off - last_off
-                        m_curr.append(note.Rest(quarterLength=r_dur))
+                        m_curr.insert(last_off, note.Rest(quarterLength=r_dur))
                     if len(pitches) == 1:
                         el = note.Note(pitch=m21pitch.Pitch(midi=pitches[0]), quarterLength=dur)
                     else:
                         m21_pitches = [m21pitch.Pitch(midi=p) for p in pitches]
                         el = chord.Chord(m21_pitches, quarterLength=dur)
-                    m_curr.append(el)
-                    last_off = off + dur
+                    m_curr.insert(off, el)
+                    last_off = max(last_off, off + dur)
 
-            part_obj.append(m_curr)
+            part_obj.insert(0.0, m_curr)
 
         score.append(p_rh)
         score.append(p_lh)

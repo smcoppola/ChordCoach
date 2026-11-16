@@ -558,3 +558,39 @@ def test_notation_context_keeps_mid_piece_metre_changes_in_order(service, song):
 
 def test_notation_context_resolves_a_difficulty_level_suffix(service, song):
     assert service.get_user_song_notation_context(song + "::L2")["bpm"] == 100.0
+
+
+def test_build_and_extract_preserves_offsets_and_full_barlines(service, tmp_user_songs_dir):
+    time_sigs = [
+        {"offset": 0.0, "numerator": 4, "denominator": 4},
+        {"offset": 12.0, "numerator": 3, "denominator": 4},
+    ]
+    groups = [
+        {"offset": 0.0, "duration": 1.0, "notes": [(65, "right")]},
+        {"offset": 1.25, "duration": 0.75, "notes": [(50, "left"), (67, "right")]},
+        # Gap across beat 4.0 (previously caused makeNotation to create only Measure 2 at 4.0)
+        {"offset": 5.25, "duration": 0.75, "notes": [(67, "right")]},
+        {"offset": 6.75, "duration": 0.5, "notes": [(48, "left"), (67, "right")]},
+        # Overlapping same-hand durations before _trim_hand_overlaps
+        {"offset": 8.0, "duration": 1.5, "notes": [(60, "right")]},
+        {"offset": 8.75, "duration": 0.5, "notes": [(62, "right")]},
+        # Past mid-piece 3/4 time signature at 12.0
+        {"offset": 15.0, "duration": 1.0, "notes": [(72, "right")]},
+    ]
+
+    score, _kn, _ks = service._build_score_from_groups(groups, time_signatures=time_sigs)
+    steps, barlines, _meta = service._extract_steps_from_score(score)
+
+    played = {round(s["offset"], 4): sorted(s["pitches"]) for s in steps if s["pitches"]}
+    expected = {round(g["offset"], 4): sorted(p for p, _h in g["notes"]) for g in groups}
+    assert played == expected
+    assert barlines == [4.0, 8.0, 12.0, 15.0]
+
+    # get_user_song_barlines repairs a truncated stored barline list via migrate_record
+    rec = _record("user::truncated-1")
+    rec["time_signatures"] = time_sigs
+    rec["barlines"] = [4.0]
+    rec["steps"] = steps
+    service.library._save_user_song_record(rec)
+
+    assert service.get_user_song_barlines("user::truncated-1") == [4.0, 8.0, 12.0, 15.0]
