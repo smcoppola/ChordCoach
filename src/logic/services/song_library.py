@@ -813,6 +813,9 @@ class SongLibrary(QObject):
                 continue
             seen.add((si, ni))
 
+            if bool(row.get("deleted", False)):
+                continue
+
             beat = self._snap_to_grid(row.get("beat"), GRID, 0.0)
             duration = self._snap_to_grid(row.get("duration"), GRID, GRID)
             hand = "left" if str(row.get("hand", "")).lower().startswith("l") else "right"
@@ -844,11 +847,15 @@ class SongLibrary(QObject):
 
             buckets.setdefault(beat, []).append(entry)
 
-        # Editing is modify-only, so a count mismatch means the list is not the
-        # one we handed out. Refuse rather than silently dropping notes.
+        # Every original note must still be accounted for (edited, untouched,
+        # or flagged deleted). Refuse rather than silently dropping notes on a
+        # truncated payload.
         if len(seen) != expected:
             return (f"That edit doesn't match the song "
                     f"({expected} notes expected, {len(seen)} received). Nothing was saved.")
+
+        if not buckets:
+            return "A song must keep at least one note."
 
         # Rests hang off the step's offset rather than off any note, so they are
         # reattached by offset — including to offsets whose notes all moved away,

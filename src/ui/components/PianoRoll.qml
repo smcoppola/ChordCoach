@@ -238,6 +238,8 @@ Item {
             e.alignStarts();
         } else if (event.key === Qt.Key_End && shift) {
             e.extendToEnd();
+        } else if ((event.key === Qt.Key_Delete || event.key === Qt.Key_Backspace) && !shift) {
+            e.deleteSelection();
         } else if (event.key === Qt.Key_Space) {
             roll.previewNoteRequested();
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {

@@ -5,11 +5,10 @@
 // one object with no visuals is what makes them testable without a mouse — see
 // tests/test_note_edits.py.
 //
-// The contract with Python is unchanged from the table editor this replaced:
-// editing is modify-only. Notes are never added, removed or re-pitched, and
-// `notes` is never reordered, so the list that goes back to
-// save_user_song_notes is the one that came out of get_user_song_notes with
-// only beat, duration and hand altered.
+// The contract with Python is that notes are never added, re-pitched, or
+// reordered: `notes` keeps every loaded row in place (with `deleted: true`
+// marking removals) so `save_user_song_notes` can match every unchanged or
+// edited row by provenance and drop the deleted ones.
 
 import QtQuick
 
@@ -74,11 +73,12 @@ QtObject {
             // Copied: values handed across the Qt boundary are not reliably
             // mutable in place, and every edit below mutates.
             working.push({ beat: r.beat, duration: r.duration, hand: r.hand,
+                           deleted: false,
                            pitch: r.pitch, name: r.name,
                            measure: root.measureFor(r.beat),
                            finger: r.finger,
                            step_index: r.step_index, note_index: r.note_index });
-            original.push({ beat: r.beat, duration: r.duration, hand: r.hand });
+            original.push({ beat: r.beat, duration: r.duration, hand: r.hand, deleted: false });
         }
         root.notes = working;
         root.pristine = original;
@@ -112,14 +112,16 @@ QtObject {
     }
 
     function _selectable(i) {
-        return root.handFilter === "all" || root.notes[i].hand === root.handFilter;
+        return !root.notes[i].deleted
+            && (root.handFilter === "all" || root.notes[i].hand === root.handFilter);
     }
 
     function isSelected(i) { return root.selected[i] === true; }
 
     function isChanged(i) {
         var a = root.notes[i], b = root.pristine[i];
-        return a.beat !== b.beat || a.duration !== b.duration || a.hand !== b.hand;
+        return a.beat !== b.beat || a.duration !== b.duration
+            || a.hand !== b.hand || a.deleted !== b.deleted;
     }
 
     // Ascending.
@@ -242,7 +244,7 @@ QtObject {
         var out = [];
         for (var i = 0; i < indices.length; i++) {
             var n = root.notes[indices[i]];
-            out.push({ i: indices[i], beat: n.beat, duration: n.duration, hand: n.hand });
+            out.push({ i: indices[i], beat: n.beat, duration: n.duration, hand: n.hand, deleted: n.deleted });
         }
         return out;
     }
@@ -254,6 +256,7 @@ QtObject {
             n.beat = s.beat;
             n.duration = s.duration;
             n.hand = s.hand;
+            n.deleted = s.deleted;
             n.measure = root.measureFor(s.beat);
         }
         root._touch();
@@ -265,9 +268,9 @@ QtObject {
         for (var i = 0; i < before.length; i++) {
             var s = before[i];
             var n = root.notes[s.i];
-            if (n.beat !== s.beat || n.duration !== s.duration || n.hand !== s.hand) {
+            if (n.beat !== s.beat || n.duration !== s.duration || n.hand !== s.hand || n.deleted !== s.deleted) {
                 changedBefore.push(s);
-                changedAfter.push({ i: s.i, beat: n.beat, duration: n.duration, hand: n.hand });
+                changedAfter.push({ i: s.i, beat: n.beat, duration: n.duration, hand: n.hand, deleted: n.deleted });
             }
         }
         if (changedBefore.length === 0) return;
@@ -426,6 +429,16 @@ QtObject {
         root._touch();
     }
 
+    function deleteSelection() {
+        if (root.selectedCount === 0 || root._gesture !== null) return;
+        var indices = root.selectedIndices();
+        var before = root._snapshot(indices);
+        for (var i = 0; i < indices.length; i++) root.notes[indices[i]].deleted = true;
+        root._commit(before);
+        root._setSelection([]);
+        root._touch();
+    }
+
     function resetSelection() {
         if (root.selectedCount === 0 || root._gesture !== null) return;
         var indices = root.selectedIndices();
@@ -435,6 +448,7 @@ QtObject {
             n.beat = p.beat;
             n.duration = p.duration;
             n.hand = p.hand;
+            n.deleted = p.deleted;
             n.measure = root.measureFor(p.beat);
         }
         root._commit(before);
@@ -465,6 +479,7 @@ QtObject {
         var out = [];
         for (var i = 0; i < root.notes.length; i++) {
             var n = root.notes[i];
+            if (n.deleted) continue;
             if (n.beat >= beat1 || (n.beat + n.duration) <= beat0) continue;
             out.push(i);
         }
@@ -483,20 +498,23 @@ QtObject {
     }
 
     function pitchRange() {
-        if (root.notes.length === 0) return { lo: 60, hi: 72 };
-        var lo = 127, hi = 0;
+        var lo = 127, hi = 0, any = false;
         for (var i = 0; i < root.notes.length; i++) {
-            var p = root.notes[i].pitch;
-            if (p < lo) lo = p;
-            if (p > hi) hi = p;
+            var n = root.notes[i];
+            if (n.deleted) continue;
+            any = true;
+            if (n.pitch < lo) lo = n.pitch;
+            if (n.pitch > hi) hi = n.pitch;
         }
-        return { lo: lo, hi: hi };
+        return any ? { lo: lo, hi: hi } : { lo: 60, hi: 72 };
     }
 
     function endBeat() {
         var end = 0;
         for (var i = 0; i < root.notes.length; i++) {
-            var e = root.notes[i].beat + root.notes[i].duration;
+            var n = root.notes[i];
+            if (n.deleted) continue;
+            var e = n.beat + n.duration;
             if (e > end) end = e;
         }
         return end;

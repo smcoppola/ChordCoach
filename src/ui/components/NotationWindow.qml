@@ -192,7 +192,7 @@ QtObject {
         var list = root.notes || [];
         for (var i = 0; i < list.length; i++) {
             var n = list[i];
-            if (!n) continue;
+            if (!n || n.deleted) continue;
             var beat = n.beat || 0.0;
             var duration = n.duration || 0.0;
             // Overlap, not onset: a note held over from the previous bar is part

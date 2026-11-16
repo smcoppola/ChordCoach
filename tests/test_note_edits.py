@@ -438,3 +438,40 @@ def test_edits_save_through_the_song_library(qapp, edits, tmp_user_songs_dir):
     assert chord["fingers"] == [5, 1, 3]
     assert top["hands"] == ["left"]
     assert saved["hand_mode"] == "manual"
+
+
+# --- Deleting ------------------------------------------------------------------
+
+def test_delete_selection_hides_notes_and_clears_selection(loaded):
+    loaded.selectOnly(0)   # pitch 48 at 0.0..2.0 (lowest pitch)
+    loaded.toggle(4)       # pitch 74 at 6.0..7.0 (highest pitch & latest endBeat)
+    loaded.deleteSelection()
+
+    assert _selection(loaded) == []
+    assert loaded.property("primary") == -1
+    assert loaded.property("changedCount") == 2
+    assert [int(i) for i in _py(loaded.indicesInRange(0.0, 10.0))] == [1, 2, 3]
+    assert _py(loaded.noteAt(0.5, 48)) == -1
+    assert _py(loaded.noteAt(6.5, 74)) == -1
+
+    loaded.selectAll()
+    assert _selection(loaded) == [1, 2, 3]
+    assert _py(loaded.pitchRange()) == {"lo": 64, "hi": 72}
+    assert loaded.endBeat() == pytest.approx(4.5)
+
+
+def test_delete_selection_can_be_undone_and_redone(loaded):
+    loaded.selectOnly(4)
+    loaded.deleteSelection()
+    assert loaded.property("changedCount") == 1
+    assert 4 not in [int(i) for i in _py(loaded.indicesInRange(0.0, 10.0))]
+
+    loaded.undo()
+    assert loaded.property("changedCount") == 0
+    assert 4 in [int(i) for i in _py(loaded.indicesInRange(0.0, 10.0))]
+    assert _py(loaded.noteAt(6.5, 74)) == 4
+
+    loaded.redo()
+    assert loaded.property("changedCount") == 1
+    assert 4 not in [int(i) for i in _py(loaded.indicesInRange(0.0, 10.0))]
+    assert _py(loaded.noteAt(6.5, 74)) == -1

@@ -5,9 +5,9 @@
 // hands inferred by track or by a Viterbi pass — and a live recording gets
 // them wrong in recognisable ways: a note a 16th late, a chord smeared across
 // two grid positions, a whole passage shifted, a hand misjudged. This is where
-// those are put right. Modify only: notes cannot be added or removed, and
-// pitch is fixed, so the note count that goes back to Python always matches
-// the one that came out (save_user_song_notes refuses the save otherwise).
+// those are put right. Notes cannot be added and pitch is fixed, so every row
+// keeps its original provenance (deletions are flagged `deleted: true` and
+// dropped on save; save_user_song_notes refuses an incomplete or empty list).
 //
 // Three parts, top to bottom:
 //   - a notation strip showing the bar the selected note lives in, engraved
@@ -242,6 +242,7 @@ Popup {
         var out = [];
         for (var i = 0; i < edits.notes.length; i++) {
             var n = edits.notes[i];
+            if (n.deleted) continue;
             if (n.beat >= end || (n.beat + n.duration) <= start) continue;
             out.push({ pitch: n.pitch, beat: n.beat, duration: n.duration });
         }
@@ -690,6 +691,12 @@ Popup {
                 onClicked: edits.extendToEnd()
             }
             Chip {
+                label: "DELETE"
+                accent: editor.danger
+                enabled: selectionBar.any
+                onClicked: edits.deleteSelection()
+            }
+            Chip {
                 label: "↺ RESET"
                 accent: "#888888"
                 enabled: selectionBar.any
@@ -705,7 +712,7 @@ Popup {
             Layout.rightMargin: 14 * editor.uiScale
             text: "Drag a note to move it  ·  drag its right end to change length  ·  "
                 + "double-click to switch hand  ·  ← → nudge  ·  Alt ← → length  ·  "
-                + "L / R hand  ·  A line up  ·  Ctrl+Z undo  ·  Ctrl+wheel zoom"
+                + "L / R hand  ·  A line up  ·  Del delete  ·  Ctrl+Z undo  ·  Ctrl+wheel zoom"
             color: "#666666"
             font.pixelSize: 10 * editor.uiScale
             elide: Text.ElideRight

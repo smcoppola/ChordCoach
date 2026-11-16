@@ -594,3 +594,30 @@ def test_build_and_extract_preserves_offsets_and_full_barlines(service, tmp_user
     service.library._save_user_song_record(rec)
 
     assert service.get_user_song_barlines("user::truncated-1") == [4.0, 8.0, 12.0, 15.0]
+
+
+# --- Deleting ----------------------------------------------------------------
+
+def test_deleting_a_note_removes_it_from_steps_and_quantized_groups(service, song):
+    rows = service.get_user_song_notes(song)
+    _find(rows, 64)["deleted"] = True
+    _find(rows, 48)["deleted"] = True
+
+    assert service.save_user_song_notes(song, rows) == ""
+
+    stored = _stored(service, song)
+    assert [s["offset"] for s in stored["steps"]] == [0.0]
+    assert stored["steps"][0]["pitches"] == [60]
+    assert stored["quantized_groups"][0]["notes"] == [[60, "right"]]
+
+
+def test_deleting_every_note_in_a_song_is_refused(service, song):
+    rows = service.get_user_song_notes(song)
+    before = _stored(service, song)["steps"]
+    for r in rows:
+        r["deleted"] = True
+
+    msg = service.save_user_song_notes(song, rows)
+
+    assert "at least one note" in msg
+    assert _stored(service, song)["steps"] == before
